@@ -95,3 +95,30 @@ function displayOrderPopup(quote) {
 }
 
 
+
+// Function to fetch unconfirmed transactions for a specific asset
+async function fetchUnconfirmedTransactions(asset) {
+  const url = `https://xchain.io/api/mempool/${asset}`;
+  const response = await fetch(url);
+  const data = await response.json();
+  
+  return data;
+}
+
+// Function to check if there are unconfirmed transactions that might affect the market
+async function checkForUnconfirmedTransactions(asset) {
+  const unconfirmedTransactions = await fetchUnconfirmedTransactions(asset);
+  
+  // Logic to check if any of the unconfirmed transactions might affect the market order
+  // This will depend on the specifics of how the XChain market works
+  // For now, let's assume we simply check if there are any unconfirmed transactions
+  
+  if (unconfirmedTransactions.total > 0) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+
+
