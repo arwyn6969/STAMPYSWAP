@@ -1,0 +1,11 @@
+body {
+  font-family: Arial, sans-serif;
+}
+
+#token-input-section {
+  margin-bottom: 20px;
+}
+
+#available-pairs-section {
+  margin-top: 20px;
+}
