@@ -4,6 +4,7 @@ import { TradeForm } from './components/TradeForm';
 import { QRSigner } from './components/QRSigner';
 import { DepthChart } from './components/DepthChart';
 import { BalanceDisplay } from './components/BalanceDisplay';
+import { PairSelector } from './components/PairSelector';
 import { getOrders, type ComposeResult, type Order } from './lib/counterparty';
 import './App.css';
 
@@ -69,47 +70,34 @@ function App() {
         </div>
       </header>
 
-      {/* Pair Selector */}
-      <div className="card mb-2">
-        <div className="flex justify-between items-center mb-1">
-          <h3>Trading Pair</h3>
-          <div className="flex items-center gap-1">
-            {lastRefresh && (
-              <span className="text-muted" style={{ fontSize: '0.75rem' }}>
-                Updated {lastRefresh.toLocaleTimeString()}
-              </span>
-            )}
-            <button 
-              className="btn-icon" 
-              onClick={fetchOrders}
-              disabled={loading}
-              title="Refresh orders"
-            >
-              {loading ? <span className="spinner"></span> : '↻'}
-            </button>
-          </div>
+      {/* Pair Selector with Quick Select and Dropdown */}
+      <PairSelector
+        asset1={asset1}
+        asset2={asset2}
+        onPairChange={(base, quote) => {
+          setAsset1(base);
+          setAsset2(quote);
+        }}
+      />
+
+      {/* Refresh Button */}
+      {asset1 && asset2 && (
+        <div className="flex justify-end items-center gap-1 mb-2">
+          {lastRefresh && (
+            <span className="text-muted" style={{ fontSize: '0.75rem' }}>
+              Updated {lastRefresh.toLocaleTimeString()}
+            </span>
+          )}
+          <button 
+            className="btn-icon" 
+            onClick={fetchOrders}
+            disabled={loading}
+            title="Refresh orders"
+          >
+            {loading ? <span className="spinner"></span> : '↻'}
+          </button>
         </div>
-        <div className="grid-2">
-          <div>
-            <label>Base Asset</label>
-            <input
-              type="text"
-              value={asset1}
-              onChange={(e) => setAsset1(e.target.value.toUpperCase())}
-              placeholder="e.g. XCP"
-            />
-          </div>
-          <div>
-            <label>Quote Asset</label>
-            <input
-              type="text"
-              value={asset2}
-              onChange={(e) => setAsset2(e.target.value.toUpperCase())}
-              placeholder="e.g. PEPECASH"
-            />
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* Depth Chart - Visual price/depth display */}
       <div className="card mb-2">

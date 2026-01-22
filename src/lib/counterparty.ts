@@ -124,3 +124,45 @@ export async function broadcastTransaction(signedHex: string): Promise<string> {
   const data = await res.json();
   return data.result?.tx_hash || data.result;
 }
+
+export interface MarketPair {
+  quote: string;
+  orderCount: number;
+}
+
+/**
+ * Get all active markets (pairs with open orders) for a base asset
+ * Fetches orders for the base asset and aggregates unique quote assets
+ */
+export async function getMarketsForBase(baseAsset: string): Promise<MarketPair[]> {
+  try {
+    // Get all open orders where this asset is being given or received
+    const url = `${API_BASE}/assets/${baseAsset}/orders?status=open&verbose=true`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    
+    const data = await res.json();
+    const orders: Order[] = data.result || [];
+    
+    // Count orders per quote asset
+    const pairCounts = new Map<string, number>();
+    
+    for (const order of orders) {
+      // Determine which asset is the "quote" (the other side of the trade)
+      const quote = order.give_asset === baseAsset ? order.get_asset : order.give_asset;
+      pairCounts.set(quote, (pairCounts.get(quote) || 0) + 1);
+    }
+    
+    // Convert to array and sort by order count
+    const markets: MarketPair[] = Array.from(pairCounts.entries())
+      .map(([quote, orderCount]) => ({ quote, orderCount }))
+      .sort((a, b) => b.orderCount - a.orderCount);
+    
+    return markets;
+  } catch {
+    return [];
+  }
+}
+
+// Popular base assets for quick selection
+export const POPULAR_BASES = ['XCP', 'BTC', 'PEPECASH', 'RAREPEPE'];
