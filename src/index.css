@@ -318,7 +318,9 @@ label {
 
 /* Badge */
 .badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
   font-size: 0.625rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -326,10 +328,28 @@ label {
   border-radius: 4px;
   background: rgba(99, 102, 241, 0.2);
   color: var(--accent-primary);
-  max-width: 120px;
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pair-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.625rem;
+}
+
+.pair-separator {
+  color: var(--text-muted);
+  margin: 0 0.125rem;
+}
+
+.order-asset {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
 }
 
 /* QR Code container */

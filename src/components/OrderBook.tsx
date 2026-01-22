@@ -1,4 +1,5 @@
 import type { Order } from '../lib/counterparty';
+import { AssetIcon } from './AssetIcon';
 
 interface OrderBookProps {
   orders: Order[];
@@ -24,7 +25,13 @@ export function OrderBook({ orders, asset1, asset2, loading, error }: OrderBookP
     <div className="card">
       <div className="flex justify-between items-center mb-2">
         <h2>Order Book</h2>
-        <span className="badge">{asset1}/{asset2}</span>
+        <span className="badge pair-badge">
+          <AssetIcon asset={asset1} size={16} />
+          <span>{asset1}</span>
+          <span className="pair-separator">/</span>
+          <AssetIcon asset={asset2} size={16} />
+          <span>{asset2}</span>
+        </span>
       </div>
 
       {loading && (
@@ -56,9 +63,9 @@ export function OrderBook({ orders, asset1, asset2, loading, error }: OrderBookP
             <thead>
               <tr>
                 <th>Type</th>
+                <th>Asset</th>
                 <th>Price</th>
                 <th>Amount</th>
-                <th>Total</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -69,16 +76,20 @@ export function OrderBook({ orders, asset1, asset2, loading, error }: OrderBookP
                   ? order.get_quantity / order.give_quantity 
                   : order.give_quantity / order.get_quantity;
                 const amount = isSell ? order.give_remaining : order.get_remaining;
-                const total = price * amount;
+                const tradeAsset = isSell ? order.give_asset : order.get_asset;
 
                 return (
                   <tr key={order.tx_hash}>
                     <td className={isSell ? 'text-error' : 'text-success'}>
                       {isSell ? 'SELL' : 'BUY'}
                     </td>
-                    <td>{price.toFixed(8)}</td>
-                    <td>{order.give_quantity_normalized || (amount / 100000000).toFixed(8)}</td>
-                    <td className="truncate">{(total / 100000000).toFixed(4)} {asset2}</td>
+                    <td>
+                      <span className="order-asset">
+                        <AssetIcon asset={tradeAsset} size={18} showStampNumber />
+                      </span>
+                    </td>
+                    <td>{price.toFixed(6)}</td>
+                    <td>{order.give_quantity_normalized || (amount / 100000000).toFixed(4)}</td>
                     <td>
                       <span className="badge">{order.status}</span>
                     </td>
