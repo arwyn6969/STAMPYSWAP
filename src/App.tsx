@@ -3,6 +3,7 @@ import { OrderBook } from './components/OrderBook';
 import { TradeForm } from './components/TradeForm';
 import { QRSigner } from './components/QRSigner';
 import { DepthChart } from './components/DepthChart';
+import { BalanceDisplay } from './components/BalanceDisplay';
 import { getOrders, type ComposeResult, type Order } from './lib/counterparty';
 import './App.css';
 
@@ -142,7 +143,7 @@ function App() {
       </div>
 
       {/* Main Grid */}
-      <div className="grid-2 gap-2">
+      <div className="grid-3 gap-2">
         <OrderBook orders={orders} asset1={asset1} asset2={asset2} loading={loading} error={error} />
         <TradeForm 
           userAddress={userAddress} 
@@ -150,6 +151,7 @@ function App() {
           giveAssetDefault={asset1}
           getAssetDefault={asset2}
         />
+        <BalanceDisplay userAddress={userAddress} />
       </div>
 
       {/* QR Signer Modal */}
