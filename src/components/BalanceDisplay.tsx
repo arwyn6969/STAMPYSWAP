@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getBalances, type Balance } from '../lib/counterparty';
+import { AssetIcon } from './AssetIcon';
 
 interface BalanceDisplayProps {
   userAddress: string;
@@ -89,7 +90,10 @@ export function BalanceDisplay({ userAddress }: BalanceDisplayProps) {
             
             return (
               <div key={balance.asset} className="balance-item">
-                <span className="balance-asset truncate">{balance.asset}</span>
+                <span className="balance-asset">
+                  <AssetIcon asset={balance.asset} size={20} showStampNumber />
+                  <span className="truncate" style={{ maxWidth: '80px' }}>{balance.asset}</span>
+                </span>
                 <span className="balance-amount">
                   {qty.toLocaleString(undefined, { maximumFractionDigits: 8 })}
                 </span>
