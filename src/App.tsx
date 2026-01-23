@@ -5,6 +5,7 @@ import { QRSigner } from './components/QRSigner';
 import { DepthChart } from './components/DepthChart';
 import { BalanceDisplay } from './components/BalanceDisplay';
 import { PairSelector } from './components/PairSelector';
+import { WalletConnect } from './components/WalletConnect';
 import { getOrders, type ComposeResult, type Order } from './lib/counterparty';
 import './App.css';
 
@@ -40,13 +41,6 @@ function App() {
     fetchOrders();
   }, [fetchOrders]);
 
-  const handleConnect = () => {
-    const demoAddress = prompt('Enter your Bitcoin address:');
-    if (demoAddress) {
-      setUserAddress(demoAddress);
-    }
-  };
-
   return (
     <div className="app">
       <header className="flex justify-between items-center mb-3">
@@ -54,20 +48,11 @@ function App() {
           <h1>STAMPYSWAP</h1>
           <p className="text-muted">Counterparty DEX Interface</p>
         </div>
-        <div>
-          {userAddress ? (
-            <div className="flex items-center gap-1">
-              <span className="badge">{userAddress.slice(0, 8)}...{userAddress.slice(-6)}</span>
-              <button className="btn-secondary" onClick={() => setUserAddress('')}>
-                Disconnect
-              </button>
-            </div>
-          ) : (
-            <button className="btn-primary" onClick={handleConnect}>
-              Connect Wallet
-            </button>
-          )}
-        </div>
+        <WalletConnect
+          connectedAddress={userAddress}
+          onConnect={setUserAddress}
+          onDisconnect={() => setUserAddress('')}
+        />
       </header>
 
       {/* Pair Selector with Quick Select and Dropdown */}

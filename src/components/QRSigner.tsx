@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { ComposeResult } from '../lib/counterparty';
+import { detectWallet, signAndBroadcast, type WalletProvider } from '../lib/wallet';
 
 interface QRSignerProps {
   composeResult: ComposeResult | null;
@@ -7,9 +9,35 @@ interface QRSignerProps {
 }
 
 export function QRSigner({ composeResult, onClose }: QRSignerProps) {
+  const [signing, setSigning] = useState(false);
+  const [signResult, setSignResult] = useState<{ success: boolean; txid?: string; error?: string } | null>(null);
+  const [walletType] = useState<WalletProvider | null>(() => detectWallet());
+
   if (!composeResult) return null;
 
   const txHex = composeResult.rawtransaction;
+  const psbtHex = composeResult.psbt;
+
+  const handleWalletSign = async () => {
+    if (!psbtHex && !txHex) return;
+    
+    setSigning(true);
+    setSignResult(null);
+    
+    try {
+      // Use PSBT if available, otherwise raw tx
+      const txToSign = psbtHex || txHex;
+      const txid = await signAndBroadcast(txToSign);
+      setSignResult({ success: true, txid });
+    } catch (err) {
+      setSignResult({ 
+        success: false, 
+        error: err instanceof Error ? err.message : 'Failed to sign transaction' 
+      });
+    } finally {
+      setSigning(false);
+    }
+  };
 
   return (
     <div 
@@ -30,47 +58,111 @@ export function QRSigner({ composeResult, onClose }: QRSignerProps) {
         style={{ maxWidth: '400px', textAlign: 'center' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2>Sign with Freewallet</h2>
-        <p className="text-muted mb-2">
-          Scan this QR code with Freewallet to sign and broadcast the transaction.
-        </p>
+        <h2>Sign Transaction</h2>
+        
+        {/* Success State */}
+        {signResult?.success && (
+          <div className="empty-state">
+            <div className="empty-state-icon">✅</div>
+            <div className="empty-state-title">Transaction Broadcast!</div>
+            <div className="empty-state-text">
+              <a 
+                href={`https://xchain.io/tx/${signResult.txid}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: 'var(--accent-primary)' }}
+              >
+                View on XChain →
+              </a>
+            </div>
+            <button className="btn-primary" onClick={onClose} style={{ marginTop: '1rem' }}>
+              Done
+            </button>
+          </div>
+        )}
 
-        <div className="qr-container mb-2">
-          <QRCodeSVG 
-            value={txHex} 
-            size={256}
-            level="L"
-            includeMargin
-          />
-        </div>
+        {/* Error State */}
+        {signResult?.success === false && (
+          <div className="empty-state">
+            <div className="empty-state-icon">❌</div>
+            <div className="empty-state-title">Signing Failed</div>
+            <div className="empty-state-text text-error">{signResult.error}</div>
+            <button className="btn-secondary" onClick={() => setSignResult(null)} style={{ marginTop: '1rem' }}>
+              Try Again
+            </button>
+          </div>
+        )}
 
-        <div style={{ marginBottom: '1rem' }}>
-          <label>Transaction Hex</label>
-          <textarea
-            readOnly
-            value={txHex}
-            style={{
-              width: '100%',
-              height: '80px',
-              fontSize: '0.625rem',
-              fontFamily: 'monospace',
-              resize: 'none',
-              background: 'var(--bg-secondary)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '8px',
-              padding: '0.5rem',
-              color: 'var(--text-muted)',
-            }}
-          />
-        </div>
+        {/* Normal State - Show signing options */}
+        {!signResult && (
+          <>
+            {/* Wallet Signing Option */}
+            {walletType && (
+              <div className="mb-2">
+                <button 
+                  className="btn-primary" 
+                  onClick={handleWalletSign}
+                  disabled={signing}
+                  style={{ width: '100%' }}
+                >
+                  {signing ? (
+                    <span className="flex items-center gap-1" style={{ justifyContent: 'center' }}>
+                      <span className="spinner"></span> Signing...
+                    </span>
+                  ) : (
+                    <>
+                      {walletType === 'leather' && '🔷 '}
+                      {walletType === 'xverse' && '🟣 '}
+                      Sign with {walletType.charAt(0).toUpperCase() + walletType.slice(1)}
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
 
-        <p className="text-warning" style={{ fontSize: '0.75rem', marginBottom: '1rem' }}>
-          ⏱️ This code expires in 60 seconds
-        </p>
+            <div className="divider mb-2">
+              <span className="text-muted" style={{ fontSize: '0.75rem' }}>
+                {walletType ? 'or scan with Freewallet' : 'Scan with Freewallet'}
+              </span>
+            </div>
 
-        <button className="btn-secondary" onClick={onClose}>
-          Close
-        </button>
+            <div className="qr-container mb-2">
+              <QRCodeSVG 
+                value={txHex} 
+                size={200}
+                level="L"
+                includeMargin
+              />
+            </div>
+
+            <details style={{ textAlign: 'left', marginBottom: '1rem' }}>
+              <summary className="text-muted" style={{ fontSize: '0.75rem', cursor: 'pointer' }}>
+                View transaction hex
+              </summary>
+              <textarea
+                readOnly
+                value={txHex}
+                style={{
+                  width: '100%',
+                  height: '60px',
+                  fontSize: '0.625rem',
+                  fontFamily: 'monospace',
+                  resize: 'none',
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '8px',
+                  padding: '0.5rem',
+                  color: 'var(--text-muted)',
+                  marginTop: '0.5rem',
+                }}
+              />
+            </details>
+
+            <button className="btn-secondary" onClick={onClose}>
+              Cancel
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
