@@ -553,6 +553,48 @@ label {
   font-size: 1rem;
 }
 
+/* Wallet Dropdown Menu */
+.wallet-dropdown {
+  position: relative;
+}
+
+.wallet-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.5rem;
+  min-width: 160px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.wallet-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.wallet-menu-item:hover {
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.wallet-menu-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 0.25rem 0;
+}
+
 /* Depth Chart */
 .depth-chart {
   padding: 1rem;

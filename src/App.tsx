@@ -50,7 +50,7 @@ function App() {
         </div>
         <WalletConnect
           connectedAddress={userAddress}
-          onConnect={setUserAddress}
+          onConnect={(address) => setUserAddress(address)}
           onDisconnect={() => setUserAddress('')}
         />
       </header>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { ComposeResult } from '../lib/counterparty';
-import { detectWallet, signAndBroadcast, type WalletProvider } from '../lib/wallet';
+import { getCurrentConnection, signAndBroadcast } from '../lib/wallet';
 
 interface QRSignerProps {
   composeResult: ComposeResult | null;
@@ -11,12 +11,16 @@ interface QRSignerProps {
 export function QRSigner({ composeResult, onClose }: QRSignerProps) {
   const [signing, setSigning] = useState(false);
   const [signResult, setSignResult] = useState<{ success: boolean; txid?: string; error?: string } | null>(null);
-  const [walletType] = useState<WalletProvider | null>(() => detectWallet());
 
   if (!composeResult) return null;
 
   const txHex = composeResult.rawtransaction;
   const psbtHex = composeResult.psbt;
+  
+  // Check current connection to determine signing capability
+  const connection = getCurrentConnection();
+  const canWalletSign = connection && connection.walletType !== 'manual';
+  const walletType = connection?.walletType;
 
   const handleWalletSign = async () => {
     if (!psbtHex && !txHex) return;
@@ -25,7 +29,6 @@ export function QRSigner({ composeResult, onClose }: QRSignerProps) {
     setSignResult(null);
     
     try {
-      // Use PSBT if available, otherwise raw tx
       const txToSign = psbtHex || txHex;
       const txid = await signAndBroadcast(txToSign);
       setSignResult({ success: true, txid });
@@ -96,8 +99,8 @@ export function QRSigner({ composeResult, onClose }: QRSignerProps) {
         {/* Normal State - Show signing options */}
         {!signResult && (
           <>
-            {/* Wallet Signing Option */}
-            {walletType && (
+            {/* Wallet Signing Option - Only if we have wallet connection */}
+            {canWalletSign && (
               <div className="mb-2">
                 <button 
                   className="btn-primary" 
@@ -113,18 +116,29 @@ export function QRSigner({ composeResult, onClose }: QRSignerProps) {
                     <>
                       {walletType === 'leather' && '🔷 '}
                       {walletType === 'xverse' && '🟣 '}
-                      Sign with {walletType.charAt(0).toUpperCase() + walletType.slice(1)}
+                      Sign with {walletType && walletType.charAt(0).toUpperCase() + walletType.slice(1)}
                     </>
                   )}
                 </button>
+                <p className="text-muted" style={{ fontSize: '0.625rem', marginTop: '0.5rem' }}>
+                  Your wallet will prompt you to review and sign the transaction.
+                </p>
               </div>
             )}
 
+            {/* QR Code for Freewallet - Always shown as fallback or primary */}
             <div className="divider mb-2">
               <span className="text-muted" style={{ fontSize: '0.75rem' }}>
-                {walletType ? 'or scan with Freewallet' : 'Scan with Freewallet'}
+                {canWalletSign ? 'or scan with Freewallet' : 'Scan with Freewallet Mobile'}
               </span>
             </div>
+
+            {/* Watch-only warning */}
+            {connection?.walletType === 'manual' && (
+              <p className="text-warning" style={{ fontSize: '0.75rem', marginBottom: '1rem' }}>
+                ⚠️ Watch-only address. Use Freewallet to sign.
+              </p>
+            )}
 
             <div className="qr-container mb-2">
               <QRCodeSVG 
@@ -134,6 +148,10 @@ export function QRSigner({ composeResult, onClose }: QRSignerProps) {
                 includeMargin
               />
             </div>
+
+            <p className="text-muted" style={{ fontSize: '0.625rem', marginBottom: '1rem' }}>
+              Open Freewallet app → Scan QR → Confirm transaction
+            </p>
 
             <details style={{ textAlign: 'left', marginBottom: '1rem' }}>
               <summary className="text-muted" style={{ fontSize: '0.75rem', cursor: 'pointer' }}>
