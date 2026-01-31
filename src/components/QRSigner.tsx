@@ -142,7 +142,7 @@ export function QRSigner({ composeResult, onClose }: QRSignerProps) {
 
             <div className="qr-container mb-2">
               <QRCodeSVG 
-                value={txHex} 
+                value={`counterparty:?action=signtx&tx=${txHex}`} 
                 size={200}
                 level="L"
                 includeMargin
@@ -150,7 +150,7 @@ export function QRSigner({ composeResult, onClose }: QRSignerProps) {
             </div>
 
             <p className="text-muted" style={{ fontSize: '0.625rem', marginBottom: '1rem' }}>
-              Open Freewallet app → Scan QR → Confirm transaction
+              Open Freewallet app → Tools → Scan QR → Confirm to sign &amp; broadcast
             </p>
 
             <details style={{ textAlign: 'left', marginBottom: '1rem' }}>

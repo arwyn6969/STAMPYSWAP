@@ -22,6 +22,8 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
   const [error, setError] = useState<string | null>(null);
   const [connection, setConnection] = useState<WalletConnection | null>(null);
   const [showWalletMenu, setShowWalletMenu] = useState(false);
+  const [showManualInput, setShowManualInput] = useState(false);
+  const [manualAddress, setManualAddress] = useState('');
 
   // Detect wallets and restore session on mount
   useEffect(() => {
@@ -66,13 +68,22 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
     onDisconnect();
   };
 
-  const handleManualEntry = () => {
-    const address = prompt('Enter your Bitcoin address (watch-only):');
-    if (address && address.trim()) {
-      const conn = connectManual(address.trim());
+  const handleManualEntryClick = () => {
+    setShowManualInput(true);
+    setShowWalletMenu(false);
+    setTimeout(() => {
+        const input = document.querySelector('.modal-overlay input') as HTMLInputElement;
+        if(input) input.focus();
+    }, 100);
+  };
+
+  const confirmManualEntry = () => {
+    if (manualAddress && manualAddress.trim()) {
+      const conn = connectManual(manualAddress.trim());
       setConnection(conn);
       onConnect(conn.paymentAddress, false);
-      setShowWalletMenu(false);
+      setShowManualInput(false);
+      setManualAddress('');
     }
   };
 
@@ -121,6 +132,41 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
         </span>
       )}
       
+      {/* Manual Entry Modal */}
+      {showManualInput && (
+        <div className="modal-overlay" style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }} onClick={() => setShowManualInput(false)}>
+          <div className="card" onClick={e => e.stopPropagation()} style={{ minWidth: '320px' }}>
+            <h3>Enter Address</h3>
+            <p className="text-muted" style={{ fontSize: '0.9em' }}>Watch-only mode (signing required via Freewallet)</p>
+            <input 
+              type="text" 
+              className="form-control" 
+              autoFocus
+              placeholder="bc1q..." 
+              value={manualAddress}
+              onChange={e => setManualAddress(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') confirmManualEntry();
+                if (e.key === 'Escape') setShowManualInput(false);
+              }}
+              style={{ width: '100%', margin: '1rem 0' }}
+            />
+            <div className="flex gap-1 justify-end">
+              <button className="btn-secondary" onClick={() => setShowManualInput(false)}>Cancel</button>
+              <button className="btn-primary" onClick={confirmManualEntry}>Connect</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Single wallet detected - show direct connect */}
       {availableWallets.length === 1 && (
         <button 
@@ -175,7 +221,7 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
               <div className="wallet-menu-divider"></div>
               <button 
                 className="wallet-menu-item text-muted"
-                onClick={handleManualEntry}
+                onClick={handleManualEntryClick}
               >
                 👁️ Watch Address
               </button>
@@ -187,7 +233,7 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
       {/* No wallets detected - show manual entry */}
       {availableWallets.length === 0 && (
         <div className="flex items-center gap-1">
-          <button className="btn-primary" onClick={handleManualEntry}>
+          <button className="btn-primary" onClick={handleManualEntryClick}>
             Connect Wallet
           </button>
           <span className="text-muted" style={{ fontSize: '0.625rem' }}>
