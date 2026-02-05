@@ -134,15 +134,31 @@ export interface MarketPair {
  * Get all active markets (pairs with open orders) for a base asset
  * Fetches orders for the base asset and aggregates unique quote assets
  */
-export async function getMarketsForBase(baseAsset: string): Promise<MarketPair[]> {
+/**
+ * Get raw open orders involving a specific asset (either giving or receiving)
+ */
+export async function getOrdersForAsset(asset: string, status: 'open' | 'all' = 'open'): Promise<Order[]> {
   try {
-    // Get all open orders where this asset is being given or received
-    const url = `${API_BASE}/assets/${baseAsset}/orders?status=open&verbose=true`;
+    const url = `${API_BASE}/assets/${asset}/orders?status=${status}&verbose=true`;
     const res = await fetch(url);
     if (!res.ok) return [];
     
     const data = await res.json();
-    const orders: Order[] = data.result || [];
+    return data.result || [];
+  } catch (e) {
+    console.error(`Error fetching orders for ${asset}:`, e);
+    return [];
+  }
+}
+
+/**
+ * Get all active markets (pairs with open orders) for a base asset
+ * Fetches orders for the base asset and aggregates unique quote assets
+ */
+export async function getMarketsForBase(baseAsset: string): Promise<MarketPair[]> {
+  try {
+    // Get all open orders where this asset is being given or received
+    const orders = await getOrdersForAsset(baseAsset);
     
     // Count orders per quote asset
     const pairCounts = new Map<string, number>();

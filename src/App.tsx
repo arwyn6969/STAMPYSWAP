@@ -6,6 +6,8 @@ import { DepthChart } from './components/DepthChart';
 import { BalanceDisplay } from './components/BalanceDisplay';
 import { PairSelector } from './components/PairSelector';
 import { WalletConnect } from './components/WalletConnect';
+import { OpportunityScanner } from './components/OpportunityScanner';
+import { type TradeOpportunity } from './lib/agent/OpportunityMatcher';
 import { getOrders, type ComposeResult, type Order } from './lib/counterparty';
 import './App.css';
 
@@ -18,9 +20,14 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [prefillOrder, setPrefillOrder] = useState<{
+    giveAsset: string;
+    getAsset: string;
+    giveQuantity: number;
+    getQuantity: number;
+  } | null>(null);
 
-  // Fetch orders when pair changes
-  const fetchOrders = useCallback(async () => {
+   const fetchOrders = useCallback(async () => {
     if (!asset1 || !asset2) return;
     
     setLoading(true);
@@ -40,6 +47,64 @@ function App() {
   useEffect(() => {
     fetchOrders();
   }, [fetchOrders]);
+
+  const handleOrderSweep = (target: Order, sweepSet: Order[]) => {
+    // Calculate the 'Counter Order' required to fill this sweep
+    // If we are sweeping ASKS (Sellers): We are BUYING.
+    // We Give: Quote Asset (e.g. PEPE)
+    // We Get: Base Asset (e.g. XCP)
+    // Note: Counterparty terminology is from the Order Creator's perspective.
+    
+    const isAsk = target.give_asset === asset1;
+    
+    let totalGive = 0;
+    let totalGet = 0;
+
+    sweepSet.forEach(o => {
+      // Aggregate the AMOUNTS from the existing orders
+      totalGive += o.give_remaining; // They Give X
+      totalGet += o.get_remaining;   // They Get Y
+    });
+
+    // Our Order (The Counter) inverses the specific assets
+    if (isAsk) {
+      // They are Selling Asset1 (Give) for Asset2 (Get)
+      // We want to BUY Asset1.
+      // So We Give: Asset2 (Their Get)
+      // We Get: Asset1 (Their Give)
+      setPrefillOrder({
+        giveAsset: asset2,
+        getAsset: asset1,
+        giveQuantity: totalGet, // We match what they want
+        getQuantity: totalGive  // We request what they have
+      });
+    } else {
+      // They are Buying Asset1
+      // We want to SELL Asset1
+      setPrefillOrder({
+        giveAsset: asset1,
+        getAsset: asset2,
+        giveQuantity: totalGet, // We give what they want
+        getQuantity: totalGive  // We get what they offer
+      });
+    }
+  };
+
+  const handleOpportunitySelect = (opp: TradeOpportunity) => {
+    // We want to SELL our asset to fill this order
+    // They want 'opp.asset' (Get)
+    // They give 'opp.order.give_asset' (Give)
+    
+    // So WE Give: opp.asset
+    // WE Get: opp.order.give_asset
+    
+    setPrefillOrder({
+      giveAsset: opp.asset,
+      getAsset: opp.order.give_asset,
+      giveQuantity: opp.order.get_remaining, // We give what they want
+      getQuantity: opp.order.give_remaining  // We get what they give
+    });
+  };
 
   return (
     <div className="app">
@@ -117,14 +182,28 @@ function App() {
 
       {/* Main Grid */}
       <div className="grid-3 gap-2">
-        <OrderBook orders={orders} asset1={asset1} asset2={asset2} loading={loading} error={error} />
+        <OrderBook 
+          orders={orders} 
+          asset1={asset1} 
+          asset2={asset2} 
+          loading={loading} 
+          error={error}
+          onOrderClick={handleOrderSweep} 
+        />
         <TradeForm 
           userAddress={userAddress} 
           onOrderComposed={setComposeResult}
           giveAssetDefault={asset1}
           getAssetDefault={asset2}
+          prefill={prefillOrder}
         />
-        <BalanceDisplay userAddress={userAddress} />
+        <div className="flex flex-col gap-2">
+          <OpportunityScanner 
+             userAddress={userAddress} 
+             onSelect={handleOpportunitySelect}
+          />
+          <BalanceDisplay userAddress={userAddress} />
+        </div>
       </div>
 
       {/* QR Signer Modal */}

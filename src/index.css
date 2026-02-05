@@ -849,3 +849,20 @@ label {
   }
 }
 
+
+/* Sweep Interaction Colors */
+:root {
+  --bg-success-light: rgba(74, 222, 128, 0.15);
+  --bg-error-light: rgba(248, 113, 113, 0.15);
+}
+
+.bg-success-light { background-color: var(--bg-success-light); }
+.bg-error-light { background-color: var(--bg-error-light); }
+.cursor-pointer { cursor: pointer; }
+.transition-colors { transition: background-color 0.1s ease; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: fadeIn 0.15s ease-out forwards; }

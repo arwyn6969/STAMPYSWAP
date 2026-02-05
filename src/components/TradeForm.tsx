@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { composeOrder, type ComposeResult } from '../lib/counterparty';
 
 interface TradeFormProps {
@@ -6,13 +6,21 @@ interface TradeFormProps {
   onOrderComposed: (result: ComposeResult) => void;
   giveAssetDefault?: string;
   getAssetDefault?: string;
+  prefill?: {
+    giveAsset: string;
+    getAsset: string;
+    giveQuantity: number;
+    getQuantity: number;
+    lock?: boolean;
+  } | null;
 }
 
 export function TradeForm({ 
   userAddress, 
   onOrderComposed,
   giveAssetDefault = 'XCP',
-  getAssetDefault = ''
+  getAssetDefault = '',
+  prefill
 }: TradeFormProps) {
   const [giveAsset, setGiveAsset] = useState(giveAssetDefault);
   const [giveQuantity, setGiveQuantity] = useState('');
@@ -21,6 +29,16 @@ export function TradeForm({
   const [expiration, setExpiration] = useState('100');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (prefill) {
+      setGiveAsset(prefill.giveAsset);
+      setGetAsset(prefill.getAsset);
+      // Convert Satoshis to floats for display
+      setGiveQuantity((prefill.giveQuantity / 100000000).toFixed(8));
+      setGetQuantity((prefill.getQuantity / 100000000).toFixed(8));
+    }
+  }, [prefill]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
