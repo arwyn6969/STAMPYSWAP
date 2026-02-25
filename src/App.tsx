@@ -3,31 +3,26 @@ import { OrderBook } from './components/OrderBook';
 import { TradeForm } from './components/TradeForm';
 import { QRSigner } from './components/QRSigner';
 import { DepthChart } from './components/DepthChart';
-import { BalanceDisplay } from './components/BalanceDisplay';
+import { PortfolioGrid } from './components/PortfolioGrid';
 import { PairSelector } from './components/PairSelector';
+import { WatchlistToolbar } from './components/WatchlistToolbar';
+import { useWatchlist } from './hooks/useWatchlist';
 import { WalletConnect } from './components/WalletConnect';
 import { OpportunityScanner } from './components/OpportunityScanner';
+import { TransactionDrawer, type TrackedTransaction } from './components/TransactionDrawer';
+import { ShoppingCartMacro, type MacroOrderParams } from './components/ShoppingCartMacro';
 import { type TradeOpportunity } from './lib/agent/OpportunityMatcher';
 import {
   getOrders,
   getTransactionStatus,
+  composeOrder,
   type ComposeResult,
   type Order,
-  type TransactionState,
   type TransactionStatus,
 } from './lib/counterparty';
 import './App.css';
 
-type TrackedLifecycle = 'broadcasted' | TransactionStatus;
-
-interface TrackedTransaction {
-  txid: string;
-  status: TrackedLifecycle;
-  confirmations: number;
-  source?: TransactionState['source'];
-  lastChecked: Date | null;
-  error: string | null;
-}
+export type TrackedLifecycle = 'broadcasted' | TransactionStatus;
 
 function App() {
   const [userAddress, setUserAddress] = useState('');
@@ -45,7 +40,12 @@ function App() {
     giveQuantity: bigint;
     getQuantity: bigint;
   } | null>(null);
-  const [trackedTx, setTrackedTx] = useState<TrackedTransaction | null>(null);
+  const [trackedTxs, setTrackedTxs] = useState<TrackedTransaction[]>([]);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [selectedPortfolioAssets, setSelectedPortfolioAssets] = useState<string[]>([]);
+  const [macroQueue, setMacroQueue] = useState<MacroOrderParams[]>([]);
+  const { watchlist, isStarred, togglePair, removePair } = useWatchlist();
   const ordersRequestId = useRef(0);
 
   const handleWalletConnect = useCallback((address: string, canSign = false) => {
@@ -57,6 +57,8 @@ function App() {
     setUserAddress('');
     setWalletCanSign(false);
     setComposeResult(null);
+    setSelectedPortfolioAssets([]);
+    setIsCartOpen(false);
   }, []);
 
   const fetchOrders = useCallback(async () => {
@@ -132,6 +134,16 @@ function App() {
     }
   };
 
+  const handleOrderCompete = (target: Order) => {
+    // Copy the exact parameters of the target order to easily create a competing order
+    setPrefillOrder({
+      giveAsset: target.give_asset,
+      getAsset: target.get_asset,
+      giveQuantity: target.give_remaining,
+      getQuantity: target.get_remaining,
+    });
+  };
+
   const handleOpportunitySelect = (opp: TradeOpportunity) => {
     setPrefillOrder({
       giveAsset: opp.asset,
@@ -141,90 +153,133 @@ function App() {
     });
   };
 
-  const handleTransactionBroadcast = useCallback((txid: string) => {
-    setTrackedTx({
-      txid,
-      status: 'broadcasted',
-      confirmations: 0,
-      lastChecked: new Date(),
-      error: null,
+  const handleTogglePortfolioAsset = useCallback((asset: string) => {
+    setSelectedPortfolioAssets(prev => {
+      if (prev.includes(asset)) return prev.filter(a => a !== asset);
+      return [...prev, asset];
     });
   }, []);
 
-  const refreshTrackedTx = useCallback(async () => {
-    const txid = trackedTx?.txid;
-    if (!txid) return;
-
-    setTrackedTx((prev) => {
-      if (!prev || prev.txid !== txid) return prev;
-      return { ...prev, error: null };
+  const handleTransactionBroadcast = useCallback((txid: string) => {
+    setTrackedTxs(prev => {
+      if (prev.some(t => t.txid === txid)) return prev;
+      return [{
+        txid,
+        status: 'broadcasted',
+        confirmations: 0,
+        lastChecked: new Date(),
+        error: null,
+      }, ...prev];
     });
+    setIsDrawerOpen(true);
+    
+    // Automatically proceed to the next macro after broadcast
+    setMacroQueue(prev => {
+      if (prev.length > 0) {
+        setComposeResult(null); // Auto-close QR modal if there are more items to sign
+        return prev.slice(1);
+      }
+      return prev;
+    });
+  }, []);
 
+  const refreshTrackedTx = useCallback(async (txid: string) => {
     try {
       const state = await getTransactionStatus(txid);
-      setTrackedTx((prev) => {
-        if (!prev || prev.txid !== txid) return prev;
+      setTrackedTxs(prev => prev.map(tx => {
+        if (tx.txid !== txid) return tx;
         return {
-          ...prev,
+          ...tx,
           status: state.status,
           confirmations: state.confirmations,
           source: state.source,
           lastChecked: new Date(),
           error: null,
         };
-      });
+      }));
 
       if (state.status === 'confirmed') {
         void fetchOrders();
       }
     } catch (err) {
-      setTrackedTx((prev) => {
-        if (!prev || prev.txid !== txid) return prev;
+      setTrackedTxs(prev => prev.map(tx => {
+        if (tx.txid !== txid) return tx;
         return {
-          ...prev,
+          ...tx,
           lastChecked: new Date(),
           error: err instanceof Error ? err.message : 'Unable to refresh transaction status',
         };
-      });
+      }));
     }
-  }, [trackedTx?.txid, fetchOrders]);
+  }, [fetchOrders]);
 
   useEffect(() => {
-    if (!trackedTx?.txid) return;
-    if (trackedTx.status === 'confirmed' || trackedTx.status === 'failed') return;
+    const pendingTxs = trackedTxs.filter(tx => tx.status !== 'confirmed' && tx.status !== 'failed');
+    if (pendingTxs.length === 0) return;
 
-    void refreshTrackedTx();
+    // Refresh immediately for new ones
+    for (const tx of pendingTxs) {
+      void refreshTrackedTx(tx.txid);
+    }
+
     const timerId = window.setInterval(() => {
-      void refreshTrackedTx();
+      for (const tx of pendingTxs) {
+        void refreshTrackedTx(tx.txid);
+      }
     }, 15000);
 
     return () => {
       window.clearInterval(timerId);
     };
-  }, [trackedTx?.txid, trackedTx?.status, refreshTrackedTx]);
+  }, [trackedTxs, refreshTrackedTx]);
 
-  const getTrackedStatusMessage = useCallback((tx: TrackedTransaction): string => {
-    if (tx.status === 'confirmed') {
-      const suffix = tx.confirmations === 1 ? '' : 's';
-      return `Confirmed (${tx.confirmations} confirmation${suffix}).`;
-    }
-    if (tx.status === 'mempool') {
-      return 'In mempool. Waiting for first confirmation.';
-    }
-    if (tx.status === 'failed') {
-      return 'Transaction appears rejected or dropped.';
-    }
-    if (tx.status === 'unknown') {
-      return 'Broadcasted, but network status is currently unknown.';
-    }
-    return 'Broadcasted. Waiting for mempool visibility.';
+  const handleDismissTx = useCallback((txid: string) => {
+    setTrackedTxs(prev => prev.filter(tx => tx.txid !== txid));
   }, []);
 
-  const trackedTxStatusClass = trackedTx?.status === 'confirmed'
-    ? 'badge-success'
-    : trackedTx?.status === 'failed'
-      ? 'text-error'
-      : 'badge-primary';
+  const handleClearCompleted = useCallback(() => {
+    setTrackedTxs(prev => prev.filter(tx => tx.status !== 'confirmed' && tx.status !== 'failed'));
+  }, []);
+
+  const pendingCount = trackedTxs.filter(t => t.status !== 'confirmed' && t.status !== 'failed').length;
+
+  // Process macro queue when it changes
+  useEffect(() => {
+    if (macroQueue.length === 0 || composeResult !== null || !userAddress) return;
+    
+    let cancelled = false;
+    const nextOrder = macroQueue[0];
+    
+    const composeNext = async () => {
+      try {
+        const result = await composeOrder({
+          address: userAddress,
+          give_asset: nextOrder.give_asset,
+          give_quantity: nextOrder.give_quantity,
+          get_asset: nextOrder.get_asset,
+          get_quantity: nextOrder.get_quantity,
+          expiration: nextOrder.expiration
+        });
+        if (!cancelled) setComposeResult(result);
+      } catch (err) {
+        if (!cancelled) {
+          alert(`Failed to compose order for ${nextOrder.give_asset}: ${err instanceof Error ? err.message : String(err)}`);
+          // Shift and continue? Or stop? Let's stop the queue on error to be safe.
+          setMacroQueue([]);
+        }
+      }
+    };
+    
+    void composeNext();
+    
+    return () => { cancelled = true; };
+  }, [macroQueue, composeResult, userAddress]);
+
+  const handleExecuteBatch = useCallback((params: MacroOrderParams[]) => {
+    setMacroQueue(params);
+    setSelectedPortfolioAssets([]); // clear selection
+    setIsCartOpen(false); // close cart
+  }, []);
 
   return (
     <div className="app">
@@ -238,17 +293,50 @@ function App() {
             </p>
           )}
         </div>
-        <WalletConnect
-          connectedAddress={userAddress}
-          onConnect={handleWalletConnect}
-          onDisconnect={handleWalletDisconnect}
-        />
+        <div className="flex gap-2 items-center">
+          <button 
+            className="btn-secondary flex items-center gap-1" 
+            style={{ padding: '0.375rem 0.75rem', position: 'relative' }}
+            onClick={() => setIsDrawerOpen(true)}
+          >
+            📋 Tx Center
+            {pendingCount > 0 && (
+              <span className="badge badge-primary absolute -top-2 -right-2 rounded-full px-1.5 min-w-[1.25rem] h-5 flex items-center justify-center">
+                {pendingCount}
+              </span>
+            )}
+          </button>
+          <WalletConnect
+            connectedAddress={userAddress}
+            onConnect={handleWalletConnect}
+            onDisconnect={handleWalletDisconnect}
+          />
+        </div>
       </header>
+
+      <WatchlistToolbar 
+        watchlist={watchlist}
+        currentBase={asset1}
+        currentQuote={asset2}
+        onSelectPair={(base, quote) => {
+          ordersRequestId.current += 1;
+          setAsset1(base);
+          setAsset2(quote);
+          setLoading(false);
+          setOrders([]);
+          setError(null);
+          setLastRefresh(null);
+          setPrefillOrder(null);
+        }}
+        onRemovePair={removePair}
+      />
 
       {/* Pair Selector with Quick Select and Dropdown */}
       <PairSelector
         asset1={asset1}
         asset2={asset2}
+        isStarred={isStarred(asset1, asset2)}
+        onToggleStar={() => togglePair(asset1, asset2)}
         onPairChange={(base, quote) => {
           ordersRequestId.current += 1;
           setAsset1(base);
@@ -280,56 +368,7 @@ function App() {
         </div>
       )}
 
-      {trackedTx && (
-        <div className="card mb-2">
-          <div className="flex justify-between items-center mb-1">
-            <h3>Latest Transaction</h3>
-            <span className={`badge ${trackedTxStatusClass}`}>{trackedTx.status.toUpperCase()}</span>
-          </div>
-          <div className="text-muted mb-1" style={{ fontSize: '0.75rem' }}>
-            Tx: {trackedTx.txid}
-          </div>
-          <div className="mb-1" style={{ fontSize: '0.875rem' }}>
-            {getTrackedStatusMessage(trackedTx)}
-          </div>
-          {trackedTx.source && (
-            <div className="text-muted mb-1" style={{ fontSize: '0.75rem' }}>
-              Source: {trackedTx.source}
-            </div>
-          )}
-          {trackedTx.lastChecked && (
-            <div className="text-muted mb-1" style={{ fontSize: '0.75rem' }}>
-              Last checked: {trackedTx.lastChecked.toLocaleTimeString()}
-            </div>
-          )}
-          {trackedTx.error && (
-            <div className="text-error mb-1" style={{ fontSize: '0.75rem' }}>
-              {trackedTx.error}
-            </div>
-          )}
-          <div className="flex gap-1">
-            <button
-              className="btn-secondary"
-              onClick={() => void refreshTrackedTx()}
-              disabled={trackedTx.status === 'confirmed' || trackedTx.status === 'failed'}
-            >
-              Refresh Status
-            </button>
-            <a
-              className="btn-secondary"
-              href={`https://mempool.space/tx/${trackedTx.txid}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
-            >
-              Open Explorer
-            </a>
-            <button className="btn-secondary" onClick={() => setTrackedTx(null)}>
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Removed old single trackedTx card */}
 
       {/* Depth Chart - Visual price/depth display */}
       <div className="card mb-2">
@@ -371,6 +410,7 @@ function App() {
           loading={loading} 
           error={error}
           onOrderClick={handleOrderSweep} 
+          onOrderCompete={handleOrderCompete}
         />
         <TradeForm 
           userAddress={userAddress} 
@@ -378,22 +418,53 @@ function App() {
           giveAssetDefault={asset1}
           getAssetDefault={asset2}
           prefill={prefillOrder}
+          orders={orders}
         />
         <div className="flex flex-col gap-2">
+          <PortfolioGrid 
+            userAddress={userAddress} 
+            selectedAssets={selectedPortfolioAssets}
+            onToggleAsset={handleTogglePortfolioAsset}
+            onClearSelection={() => setSelectedPortfolioAssets([])}
+            onProceedToCart={() => setIsCartOpen(true)}
+          />
           <OpportunityScanner 
              userAddress={userAddress} 
              onSelect={handleOpportunitySelect}
+             assetFilter={selectedPortfolioAssets.length === 1 ? selectedPortfolioAssets[0] : null}
           />
-          <BalanceDisplay userAddress={userAddress} />
         </div>
       </div>
 
       {/* QR Signer Modal */}
       <QRSigner 
         composeResult={composeResult} 
-        onClose={() => setComposeResult(null)}
+        onClose={() => {
+          setComposeResult(null);
+          if (macroQueue.length > 0) {
+            // Cancel the queue if user dismisses modal
+            setMacroQueue([]);
+          }
+        }}
         onBroadcast={handleTransactionBroadcast}
         onTrackTxid={handleTransactionBroadcast}
+      />
+
+      <TransactionDrawer 
+        transactions={trackedTxs}
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        onDismiss={handleDismissTx}
+        onRefresh={refreshTrackedTx}
+        onClearCompleted={handleClearCompleted}
+      />
+
+      <ShoppingCartMacro 
+        userAddress={userAddress}
+        selectedAssets={selectedPortfolioAssets}
+        isOpen={isCartOpen}
+        onClose={() => setIsCartOpen(false)}
+        onExecuteBatch={handleExecuteBatch}
       />
     </div>
   );

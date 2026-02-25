@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   composeOrder,
   getAssetDivisibility,
   type ComposeResult,
+  type Order,
 } from '../lib/counterparty';
 import { baseUnitsToInputString, displayToBaseUnits } from '../lib/quantity';
 
@@ -18,6 +19,7 @@ interface TradeFormProps {
     getQuantity: bigint;
     lock?: boolean;
   } | null;
+  orders?: Order[];
 }
 
 export function TradeForm({ 
@@ -25,7 +27,8 @@ export function TradeForm({
   onOrderComposed,
   giveAssetDefault = 'XCP',
   getAssetDefault = '',
-  prefill
+  prefill,
+  orders = []
 }: TradeFormProps) {
   const [giveAsset, setGiveAsset] = useState(giveAssetDefault);
   const [giveQuantity, setGiveQuantity] = useState('');
@@ -78,6 +81,55 @@ export function TradeForm({
       setGetQuantity(baseUnitsToInputString(prefill.getQuantity, getDivisible));
     }
   }, [prefill, giveDivisible, getDivisible]);
+
+  const spreadWarning = useMemo(() => {
+    if (!orders || orders.length === 0) return null;
+    if (!giveAsset || !getAsset || !giveQuantity || !getQuantity) return null;
+    if (loading) return null;
+
+    const opposingOrders = orders.filter(
+      (o) => o.give_asset === getAsset && o.get_asset === giveAsset && o.status === 'open'
+    );
+
+    if (opposingOrders.length === 0) return null;
+
+    const getBestMarketRate = () => {
+      let best = 0;
+      for (const o of opposingOrders) {
+        const theirGive = Number(o.give_remaining) / (getDivisible ? 1e8 : 1);
+        const theirGet = Number(o.get_remaining) / (giveDivisible ? 1e8 : 1);
+        const rate = theirGive / theirGet;
+        if (rate > best) best = rate;
+      }
+      return best;
+    };
+
+    const bestMarketRate = getBestMarketRate();
+    if (bestMarketRate <= 0) return null;
+
+    const userGive = parseFloat(giveQuantity);
+    const userGet = parseFloat(getQuantity);
+    if (!userGive || !userGet) return null;
+
+    const userRate = userGet / userGive;
+
+    if (userRate < bestMarketRate) {
+      const worseByPercent = ((bestMarketRate - userRate) / bestMarketRate) * 100;
+      if (worseByPercent > 20) {
+        return { 
+          level: 'danger', 
+          message: `DANGER: You are bidding ${worseByPercent.toFixed(1)}% worse than the current market floor!` 
+        };
+      } else if (worseByPercent > 10) {
+        return { 
+          level: 'warning', 
+          message: `Warning: You are bidding ${worseByPercent.toFixed(1)}% worse than the current market spread.` 
+        };
+      }
+    }
+
+    return null;
+  }, [orders, giveAsset, getAsset, giveQuantity, getQuantity, giveDivisible, getDivisible, loading]);
 
   useEffect(() => {
     if (prefill) return;
@@ -203,6 +255,21 @@ export function TradeForm({
         </div>
 
         {error && <p className="text-error" style={{ fontSize: '0.875rem' }}>{error}</p>}
+        {spreadWarning && (
+          <div 
+            className={`card text-${spreadWarning.level === 'danger' ? 'error' : 'warning'} bg-${spreadWarning.level === 'danger' ? 'error' : 'warning'}-light`} 
+            style={{ 
+              padding: '0.75rem', 
+              border: `1px solid var(--${spreadWarning.level === 'danger' ? 'error' : 'warning'})`,
+              animation: spreadWarning.level === 'danger' ? 'pulse 2s infinite' : 'none'
+            }}
+          >
+             <p style={{ fontSize: '0.875rem', fontWeight: 'bold' }}>
+               {spreadWarning.level === 'danger' ? '🚨 Extreme Slippage Detected' : '⚠️ Slippage Warning'}
+             </p>
+             <p style={{ fontSize: '0.75rem' }}>{spreadWarning.message}</p>
+          </div>
+        )}
 
         <button 
           type="submit" 

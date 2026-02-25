@@ -6,9 +6,11 @@ interface PairSelectorProps {
   asset1: string;
   asset2: string;
   onPairChange: (base: string, quote: string) => void;
+  isStarred?: boolean;
+  onToggleStar?: () => void;
 }
 
-export function PairSelector({ asset1, asset2, onPairChange }: PairSelectorProps) {
+export function PairSelector({ asset1, asset2, onPairChange, isStarred, onToggleStar }: PairSelectorProps) {
   const [markets, setMarkets] = useState<MarketPair[]>([]);
   const [loadingMarkets, setLoadingMarkets] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -106,13 +108,25 @@ export function PairSelector({ asset1, asset2, onPairChange }: PairSelectorProps
       <div className="flex justify-between items-center mb-1">
         <h3>Trading Pair</h3>
         {asset1 && asset2 && (
-          <span className="badge pair-badge">
-            <AssetIcon asset={asset1} size={16} />
-            <span>{asset1}</span>
-            <span className="pair-separator">/</span>
-            <AssetIcon asset={asset2} size={16} />
-            <span>{asset2}</span>
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="badge pair-badge">
+              <AssetIcon asset={asset1} size={16} />
+              <span>{asset1}</span>
+              <span className="pair-separator">/</span>
+              <AssetIcon asset={asset2} size={16} />
+              <span>{asset2}</span>
+            </span>
+            {onToggleStar && (
+              <button 
+                className="btn-icon" 
+                onClick={onToggleStar}
+                title={isStarred ? "Remove from watchlist" : "Add to watchlist"}
+                style={{ fontSize: '1.2rem', padding: '0.2rem' }}
+              >
+                {isStarred ? '⭐' : '☆'}
+              </button>
+            )}
+          </div>
         )}
       </div>
 

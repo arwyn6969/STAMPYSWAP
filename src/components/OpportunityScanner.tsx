@@ -6,9 +6,10 @@ import { AssetIcon } from './AssetIcon';
 interface OpportunityScannerProps {
   userAddress: string;
   onSelect: (opp: TradeOpportunity) => void;
+  assetFilter?: string | null;
 }
 
-export function OpportunityScanner({ userAddress, onSelect }: OpportunityScannerProps) {
+export function OpportunityScanner({ userAddress, onSelect, assetFilter }: OpportunityScannerProps) {
   const [opportunities, setOpportunities] = useState<TradeOpportunity[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
@@ -26,7 +27,7 @@ export function OpportunityScanner({ userAddress, onSelect }: OpportunityScanner
       const balances = await getBalances(userAddress);
       
       // 2. Find matches
-      const matches = await OpportunityMatcher.findMatches(balances);
+      const matches = await OpportunityMatcher.findMatches(balances, undefined, assetFilter ?? undefined);
       if (requestId !== scanRequestId.current) return;
       setOpportunities(matches);
     } catch (e) {
@@ -38,7 +39,7 @@ export function OpportunityScanner({ userAddress, onSelect }: OpportunityScanner
         setLoading(false);
       }
     }
-  }, [userAddress]);
+  }, [userAddress, assetFilter]);
 
   // Auto-scan on mount/address change? Maybe better not to spam API. 
   // Let's make it a button or auto-scan once.

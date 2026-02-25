@@ -10,9 +10,10 @@ interface OrderBookProps {
   loading: boolean;
   error: string | null;
   onOrderClick?: (order: Order, sweepSet: Order[]) => void;
+  onOrderCompete?: (order: Order) => void;
 }
 
-export function OrderBook({ orders, asset1, asset2, loading, error, onOrderClick }: OrderBookProps) {
+export function OrderBook({ orders, asset1, asset2, loading, error, onOrderClick, onOrderCompete }: OrderBookProps) {
   const [hoveredOrder, setHoveredOrder] = useState<Order | null>(null);
   const [divisibility, setDivisibility] = useState<Record<string, boolean>>({});
 
@@ -178,7 +179,30 @@ export function OrderBook({ orders, asset1, asset2, loading, error, onOrderClick
           </span>
         </td>
         <td>{price.toFixed(6)}</td>
-        <td>{displayAmount}</td>
+        <td>
+          <div className="flex justify-between items-center">
+            <span>{displayAmount}</span>
+            {onOrderCompete && (
+              <button
+                className="btn-secondary"
+                style={{ 
+                  padding: '0.125rem 0.375rem', 
+                  fontSize: '0.625rem', 
+                  opacity: isHovered ? 1 : 0.3, 
+                  transition: 'opacity 0.2s',
+                  marginLeft: '0.5rem'
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOrderCompete(order);
+                }}
+                title="Copy order parameters to compete"
+              >
+                Copy
+              </button>
+            )}
+          </div>
+        </td>
       </tr>
     );
   };

@@ -41,6 +41,7 @@ export class OpportunityMatcher {
       getOrdersForAsset,
       getAssetDivisibility,
     },
+    assetFilter?: string,
   ): Promise<TradeOpportunity[]> {
     const opportunities: TradeOpportunity[] = [];
 
@@ -49,6 +50,7 @@ export class OpportunityMatcher {
     for (const balance of balances) {
       if (balance.quantity <= 0n) continue;
       const key = balance.asset.toUpperCase();
+      if (assetFilter && key !== assetFilter.toUpperCase()) continue;
       balanceByAsset.set(key, (balanceByAsset.get(key) ?? 0n) + balance.quantity);
     }
 

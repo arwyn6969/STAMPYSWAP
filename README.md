@@ -129,6 +129,9 @@ Base: `https://stampchain.io/api/v2`
 
 ## Future Enhancements
 
+- [ ] Agentic Market Maker macros (Shopping Cart execution)
+- [ ] Token-specific Opportunity Scanner
+- [ ] Visual Portfolio Selector for Stamp Assets
 - [ ] UI end-to-end test coverage (wallet/sign/broadcast flow)
 - [ ] Favorite/recent pairs
 - [ ] Testnet toggle
