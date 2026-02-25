@@ -8,14 +8,34 @@ interface AssetIconProps {
 }
 
 export function AssetIcon({ asset, size = 24, showStampNumber = false }: AssetIconProps) {
-  const [stampInfo, setStampInfo] = useState<StampInfo | null>(null);
-  const [imgError, setImgError] = useState(false);
+  const [stampLookup, setStampLookup] = useState<{ asset: string; info: StampInfo | null }>({
+    asset: '',
+    info: null,
+  });
+  const [failedIconKey, setFailedIconKey] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isNumericAsset(asset)) {
-      getStampInfo(asset).then(setStampInfo);
-    }
+    let cancelled = false;
+    if (!isNumericAsset(asset)) return undefined;
+
+    getStampInfo(asset)
+      .then((info) => {
+        if (!cancelled) {
+          setStampLookup({ asset, info });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStampLookup({ asset, info: null });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [asset]);
+
+  const stampInfo = stampLookup.asset === asset ? stampLookup.info : null;
 
   // Determine image source
   let imgSrc: string;
@@ -24,6 +44,8 @@ export function AssetIcon({ asset, size = 24, showStampNumber = false }: AssetIc
   } else {
     imgSrc = getAssetIconUrl(asset);
   }
+  const iconKey = `${asset}:${imgSrc}`;
+  const imgError = failedIconKey === iconKey;
 
   // Display name
   const displayName = stampInfo 
@@ -34,11 +56,12 @@ export function AssetIcon({ asset, size = 24, showStampNumber = false }: AssetIc
     <span className="asset-icon-wrapper" title={displayName}>
       {!imgError ? (
         <img
+          key={iconKey}
           src={imgSrc}
           alt={asset}
           className="asset-icon"
           style={{ width: size, height: size }}
-          onError={() => setImgError(true)}
+          onError={() => setFailedIconKey(iconKey)}
         />
       ) : (
         <span 

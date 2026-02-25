@@ -866,3 +866,91 @@ label {
   to { opacity: 1; transform: translateY(0); }
 }
 .animate-fade-in { animation: fadeIn 0.15s ease-out forwards; }
+
+/* Compatibility utilities for components using utility-style class names */
+.relative { position: relative; }
+.absolute { position: absolute; }
+.top-12 { top: 3rem; }
+.left-0 { left: 0; }
+.right-0 { right: 0; }
+.z-10 { z-index: 10; }
+.mx-4 {
+  margin-left: 1rem;
+  margin-right: 1rem;
+}
+.mt-1 { margin-top: 0.25rem; }
+.p-2 { padding: 0.5rem; }
+.p-3 { padding: 0.75rem; }
+.px-1 {
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+}
+.px-2 {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+.rounded { border-radius: 8px; }
+.shadow-lg { box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35); }
+.pointer-events-none { pointer-events: none; }
+.border {
+  border: 1px solid var(--border-color);
+}
+.border-l-4 {
+  border-left-width: 4px;
+  border-left-style: solid;
+}
+.border-success { border-color: var(--success); }
+.border-base-content\/10 { border-color: rgba(255, 255, 255, 0.1); }
+.border-base-content\/20 { border-color: rgba(255, 255, 255, 0.2); }
+.bg-base-100 { background: var(--bg-secondary); }
+.bg-base-200 { background: var(--bg-card); }
+.hover\:bg-neutral:hover { background: rgba(255, 255, 255, 0.08); }
+.max-h-60 { max-height: 15rem; }
+.overflow-y-auto { overflow-y: auto; }
+.text-sm { font-size: 0.875rem; }
+.text-xs { font-size: 0.75rem; }
+.text-xl { font-size: 1.25rem; }
+.text-\[10px\] { font-size: 10px; }
+.font-bold { font-weight: 700; }
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+.opacity-50 { opacity: 0.5; }
+.opacity-60 { opacity: 0.6; }
+.opacity-70 { opacity: 0.7; }
+.opacity-80 { opacity: 0.8; }
+.uppercase { text-transform: uppercase; }
+.tracking-wide { letter-spacing: 0.05em; }
+.justify-end { justify-content: flex-end; }
+.justify-center { justify-content: center; }
+.grid { display: grid; }
+.grid-cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.btn-xs {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+}
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+}
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.badge-primary {
+  background: rgba(99, 102, 241, 0.2);
+  color: var(--accent-primary);
+}
+.badge-success {
+  background: rgba(34, 197, 94, 0.2);
+  color: var(--success);
+}
+.form-control { width: 100%; }
+.animate-pulse {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

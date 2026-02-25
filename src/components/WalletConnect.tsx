@@ -4,8 +4,7 @@ import {
   connectWallet, 
   connectManual,
   disconnect,
-  getStoredConnection,
-  getCurrentConnection,
+  restoreStoredConnection,
   type WalletConnection, 
   type WalletProvider 
 } from '../lib/wallet';
@@ -29,21 +28,15 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
   useEffect(() => {
     const wallets = detectAllWallets();
     setAvailableWallets(wallets);
-    
-    // Try to restore previous connection
-    const stored = getStoredConnection();
-    if (stored && !connectedAddress) {
-      // We have a stored address but app doesn't know about it
-      // Re-notify the app
-      onConnect(stored.address, stored.walletType !== 'manual');
+
+    const restored = restoreStoredConnection();
+    if (restored) {
+      setConnection(restored);
+      if (!connectedAddress) {
+        onConnect(restored.paymentAddress, restored.walletType !== 'manual');
+      }
     }
-    
-    // Check if we have a live connection
-    const current = getCurrentConnection();
-    if (current) {
-      setConnection(current);
-    }
-  }, []);
+  }, [connectedAddress, onConnect]);
 
   const handleConnect = async (walletType?: WalletProvider) => {
     setConnecting(true);
@@ -71,19 +64,19 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
   const handleManualEntryClick = () => {
     setShowManualInput(true);
     setShowWalletMenu(false);
-    setTimeout(() => {
-        const input = document.querySelector('.modal-overlay input') as HTMLInputElement;
-        if(input) input.focus();
-    }, 100);
   };
 
   const confirmManualEntry = () => {
-    if (manualAddress && manualAddress.trim()) {
+    if (!manualAddress || !manualAddress.trim()) return;
+    try {
       const conn = connectManual(manualAddress.trim());
       setConnection(conn);
       onConnect(conn.paymentAddress, false);
       setShowManualInput(false);
       setManualAddress('');
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Invalid address');
     }
   };
 

@@ -14,20 +14,40 @@ export function PairSelector({ asset1, asset2, onPairChange }: PairSelectorProps
   const [showDropdown, setShowDropdown] = useState(false);
   const [customQuote, setCustomQuote] = useState('');
   const [isCustomMode, setIsCustomMode] = useState(false);
+  const [baseInput, setBaseInput] = useState(asset1);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setBaseInput(asset1);
+  }, [asset1]);
 
   // Fetch markets when base asset changes
   useEffect(() => {
     if (!asset1) return;
     
+    let cancelled = false;
     const fetchMarkets = async () => {
       setLoadingMarkets(true);
-      const data = await getMarketsForBase(asset1);
-      setMarkets(data);
-      setLoadingMarkets(false);
+      try {
+        const data = await getMarketsForBase(asset1);
+        if (cancelled) return;
+        setMarkets(data);
+      } finally {
+        if (!cancelled) {
+          setLoadingMarkets(false);
+        }
+      }
     };
     
-    fetchMarkets();
+    fetchMarkets().catch(() => {
+      if (!cancelled) {
+        setLoadingMarkets(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [asset1]);
 
   // Close dropdown when clicking outside
@@ -41,8 +61,27 @@ export function PairSelector({ asset1, asset2, onPairChange }: PairSelectorProps
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const commitBaseInput = () => {
+    const normalized = baseInput.trim().toUpperCase();
+    if (!normalized) {
+      setBaseInput(asset1);
+      return;
+    }
+    if (normalized === asset1) return;
+    onPairChange(normalized, '');
+    setCustomQuote('');
+    setShowDropdown(true);
+    setIsCustomMode(false);
+  };
+
   const handleBaseSelect = (base: string) => {
-    onPairChange(base, '');
+    const normalized = base.trim().toUpperCase();
+    if (!normalized) return;
+    setBaseInput(normalized);
+    if (normalized !== asset1) {
+      onPairChange(normalized, '');
+    }
+    setCustomQuote('');
     setShowDropdown(true);
     setIsCustomMode(false);
   };
@@ -100,8 +139,15 @@ export function PairSelector({ asset1, asset2, onPairChange }: PairSelectorProps
           <label>Base Asset</label>
           <input
             type="text"
-            value={asset1}
-            onChange={(e) => handleBaseSelect(e.target.value.toUpperCase())}
+            value={baseInput}
+            onChange={(e) => setBaseInput(e.target.value.toUpperCase())}
+            onBlur={commitBaseInput}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                commitBaseInput();
+              }
+            }}
             placeholder="e.g. XCP"
           />
         </div>

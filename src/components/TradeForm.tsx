@@ -1,5 +1,10 @@
 import { useState, useEffect } from 'react';
-import { composeOrder, type ComposeResult } from '../lib/counterparty';
+import {
+  composeOrder,
+  getAssetDivisibility,
+  type ComposeResult,
+} from '../lib/counterparty';
+import { baseUnitsToInputString, displayToBaseUnits } from '../lib/quantity';
 
 interface TradeFormProps {
   userAddress: string;
@@ -9,8 +14,8 @@ interface TradeFormProps {
   prefill?: {
     giveAsset: string;
     getAsset: string;
-    giveQuantity: number;
-    getQuantity: number;
+    giveQuantity: bigint;
+    getQuantity: bigint;
     lock?: boolean;
   } | null;
 }
@@ -29,16 +34,56 @@ export function TradeForm({
   const [expiration, setExpiration] = useState('100');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [assetDivisibility, setAssetDivisibility] = useState<Record<string, boolean>>({});
+
+  const giveDivisible = giveAsset ? (assetDivisibility[giveAsset] ?? true) : true;
+  const getDivisible = getAsset ? (assetDivisibility[getAsset] ?? true) : true;
+
+  useEffect(() => {
+    let cancelled = false;
+    const assets = [giveAsset, getAsset]
+      .map((asset) => asset.trim().toUpperCase())
+      .filter(Boolean);
+    const uniqueAssets = Array.from(new Set(assets));
+    if (uniqueAssets.length === 0) return undefined;
+
+    const load = async () => {
+      const entries = await Promise.all(
+        uniqueAssets.map(async (asset) => [asset, await getAssetDivisibility(asset)] as const),
+      );
+      if (cancelled) return;
+      setAssetDivisibility((prev) => {
+        const next = { ...prev };
+        for (const [asset, divisible] of entries) {
+          next[asset] = divisible;
+        }
+        return next;
+      });
+    };
+
+    load().catch(() => {
+      // Use default divisibility fallback when metadata calls fail.
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [giveAsset, getAsset]);
 
   useEffect(() => {
     if (prefill) {
       setGiveAsset(prefill.giveAsset);
       setGetAsset(prefill.getAsset);
-      // Convert Satoshis to floats for display
-      setGiveQuantity((prefill.giveQuantity / 100000000).toFixed(8));
-      setGetQuantity((prefill.getQuantity / 100000000).toFixed(8));
+      setGiveQuantity(baseUnitsToInputString(prefill.giveQuantity, giveDivisible));
+      setGetQuantity(baseUnitsToInputString(prefill.getQuantity, getDivisible));
     }
-  }, [prefill]);
+  }, [prefill, giveDivisible, getDivisible]);
+
+  useEffect(() => {
+    if (prefill) return;
+    setGiveAsset(giveAssetDefault);
+    setGetAsset(getAssetDefault);
+  }, [giveAssetDefault, getAssetDefault, prefill]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,12 +101,15 @@ export function TradeForm({
     setError(null);
 
     try {
-      // Convert to satoshis (assuming divisible assets)
-      const giveQty = Math.round(parseFloat(giveQuantity) * 100000000);
-      const getQty = Math.round(parseFloat(getQuantity) * 100000000);
+      const giveQty = displayToBaseUnits(giveQuantity, giveDivisible);
+      const getQty = displayToBaseUnits(getQuantity, getDivisible);
+      const expirationValue = Number.parseInt(expiration, 10);
 
-      if (isNaN(giveQty) || isNaN(getQty) || giveQty <= 0 || getQty <= 0) {
+      if (giveQty <= 0n || getQty <= 0n) {
         throw new Error('Invalid quantities');
+      }
+      if (!Number.isFinite(expirationValue) || expirationValue <= 0) {
+        throw new Error('Expiration must be a positive integer');
       }
 
       const result = await composeOrder({
@@ -70,7 +118,7 @@ export function TradeForm({
         give_quantity: giveQty,
         get_asset: getAsset.toUpperCase(),
         get_quantity: getQty,
-        expiration: parseInt(expiration, 10),
+        expiration: expirationValue,
       });
 
       onOrderComposed(result);
@@ -102,12 +150,17 @@ export function TradeForm({
             <label>Amount</label>
             <input
               type="number"
-              step="0.00000001"
+              step={giveDivisible ? '0.00000001' : '1'}
               min="0"
               placeholder="0.00000000"
               value={giveQuantity}
               onChange={(e) => setGiveQuantity(e.target.value)}
             />
+            {!giveDivisible && (
+              <p className="text-muted" style={{ fontSize: '0.625rem', marginTop: '0.25rem' }}>
+                This asset is indivisible and only allows whole units.
+              </p>
+            )}
           </div>
         </div>
 
@@ -125,12 +178,17 @@ export function TradeForm({
             <label>Amount</label>
             <input
               type="number"
-              step="0.00000001"
+              step={getDivisible ? '0.00000001' : '1'}
               min="0"
               placeholder="0.00000000"
               value={getQuantity}
               onChange={(e) => setGetQuantity(e.target.value)}
             />
+            {!getDivisible && (
+              <p className="text-muted" style={{ fontSize: '0.625rem', marginTop: '0.25rem' }}>
+                This asset is indivisible and only allows whole units.
+              </p>
+            )}
           </div>
         </div>
 
@@ -152,7 +210,7 @@ export function TradeForm({
           disabled={loading || !isFormValid}
         >
           {loading ? (
-            <span className="flex items-center justify-content gap-1">
+            <span className="flex items-center justify-center gap-1">
               <span className="spinner"></span> Composing...
             </span>
           ) : (

@@ -2,15 +2,20 @@ import { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { ComposeResult } from '../lib/counterparty';
 import { getCurrentConnection, signAndBroadcast } from '../lib/wallet';
+import { extractTxid } from '../lib/transaction';
 
 interface QRSignerProps {
   composeResult: ComposeResult | null;
   onClose: () => void;
+  onBroadcast?: (txid: string) => void;
+  onTrackTxid?: (txid: string) => void;
 }
 
-export function QRSigner({ composeResult, onClose }: QRSignerProps) {
+export function QRSigner({ composeResult, onClose, onBroadcast, onTrackTxid }: QRSignerProps) {
   const [signing, setSigning] = useState(false);
   const [signResult, setSignResult] = useState<{ success: boolean; txid?: string; error?: string } | null>(null);
+  const [manualTxidInput, setManualTxidInput] = useState('');
+  const [manualTxidError, setManualTxidError] = useState<string | null>(null);
 
   if (!composeResult) return null;
 
@@ -19,19 +24,20 @@ export function QRSigner({ composeResult, onClose }: QRSignerProps) {
   
   // Check current connection to determine signing capability
   const connection = getCurrentConnection();
-  const canWalletSign = connection && connection.walletType !== 'manual';
+  const hasWalletConnection = Boolean(connection && connection.walletType !== 'manual');
+  const canWalletSign = Boolean(hasWalletConnection && psbtHex);
   const walletType = connection?.walletType;
 
   const handleWalletSign = async () => {
-    if (!psbtHex && !txHex) return;
+    if (!psbtHex) return;
     
     setSigning(true);
     setSignResult(null);
     
     try {
-      const txToSign = psbtHex || txHex;
-      const txid = await signAndBroadcast(txToSign);
+      const txid = await signAndBroadcast(psbtHex);
       setSignResult({ success: true, txid });
+      onBroadcast?.(txid);
     } catch (err) {
       setSignResult({ 
         success: false, 
@@ -40,6 +46,17 @@ export function QRSigner({ composeResult, onClose }: QRSignerProps) {
     } finally {
       setSigning(false);
     }
+  };
+
+  const handleTrackTxid = () => {
+    const txid = extractTxid(manualTxidInput);
+    if (!txid) {
+      setManualTxidError('Enter a valid 64-character transaction ID or explorer URL.');
+      return;
+    }
+    setManualTxidError(null);
+    setManualTxidInput(txid);
+    onTrackTxid?.(txid);
   };
 
   return (
@@ -126,6 +143,12 @@ export function QRSigner({ composeResult, onClose }: QRSignerProps) {
               </div>
             )}
 
+            {hasWalletConnection && !psbtHex && (
+              <p className="text-warning" style={{ fontSize: '0.75rem', marginBottom: '1rem' }}>
+                Wallet signing is unavailable for this compose result (missing PSBT). Use QR signing instead.
+              </p>
+            )}
+
             {/* QR Code for Freewallet - Always shown as fallback or primary */}
             <div className="divider mb-2">
               <span className="text-muted" style={{ fontSize: '0.75rem' }}>
@@ -152,6 +175,32 @@ export function QRSigner({ composeResult, onClose }: QRSignerProps) {
             <p className="text-muted" style={{ fontSize: '0.625rem', marginBottom: '1rem' }}>
               Open Freewallet app → Tools → Scan QR → Confirm to sign &amp; broadcast
             </p>
+
+            <div style={{ textAlign: 'left', marginBottom: '1rem' }}>
+              <label style={{ marginBottom: '0.25rem' }}>Track Broadcasted Tx</label>
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  placeholder="Paste txid or explorer URL"
+                  value={manualTxidInput}
+                  onChange={(e) => setManualTxidInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleTrackTxid();
+                    }
+                  }}
+                />
+                <button className="btn-secondary" type="button" onClick={handleTrackTxid}>
+                  Track
+                </button>
+              </div>
+              {manualTxidError && (
+                <p className="text-error" style={{ fontSize: '0.75rem', marginTop: '0.5rem' }}>
+                  {manualTxidError}
+                </p>
+              )}
+            </div>
 
             <details style={{ textAlign: 'left', marginBottom: '1rem' }}>
               <summary className="text-muted" style={{ fontSize: '0.75rem', cursor: 'pointer' }}>

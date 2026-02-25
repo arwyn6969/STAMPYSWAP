@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
-import type { Order } from '../lib/counterparty';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { getAssetDivisibility, type Order } from '../lib/counterparty';
+import { baseUnitsToNumber, calculatePrice } from '../lib/quantity';
 
 interface DepthChartProps {
   orders: Order[];
@@ -8,6 +9,42 @@ interface DepthChartProps {
 }
 
 export function DepthChart({ orders, asset1, asset2 }: DepthChartProps) {
+  const [divisibility, setDivisibility] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const assets = [asset1, asset2].filter(Boolean);
+    const uniqueAssets = Array.from(new Set(assets));
+    if (uniqueAssets.length === 0) return undefined;
+
+    const load = async () => {
+      const entries = await Promise.all(
+        uniqueAssets.map(async (asset) => [asset, await getAssetDivisibility(asset)] as const),
+      );
+      if (cancelled) return;
+      setDivisibility((prev) => {
+        const next = { ...prev };
+        for (const [asset, divisible] of entries) {
+          next[asset] = divisible;
+        }
+        return next;
+      });
+    };
+
+    load().catch(() => {
+      // Fall back to default divisibility assumptions.
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [asset1, asset2]);
+
+  const isDivisible = useCallback(
+    (asset: string) => divisibility[asset] ?? true,
+    [divisibility],
+  );
+
   const { buyOrders, sellOrders, maxDepth, midPrice, spread } = useMemo(() => {
     const buys: { price: number; cumulative: number }[] = [];
     const sells: { price: number; cumulative: number }[] = [];
@@ -15,25 +52,63 @@ export function DepthChart({ orders, asset1, asset2 }: DepthChartProps) {
     // Separate and sort orders
     const buyList = orders
       .filter(o => o.get_asset === asset1 && o.status === 'open')
-      .sort((a, b) => b.give_quantity / b.get_quantity - a.give_quantity / a.get_quantity);
+      .sort((a, b) => {
+        const priceA = calculatePrice(
+          a.give_quantity,
+          isDivisible(a.give_asset),
+          a.get_quantity,
+          isDivisible(a.get_asset),
+        );
+        const priceB = calculatePrice(
+          b.give_quantity,
+          isDivisible(b.give_asset),
+          b.get_quantity,
+          isDivisible(b.get_asset),
+        );
+        return priceB - priceA;
+      });
     
     const sellList = orders
       .filter(o => o.give_asset === asset1 && o.status === 'open')
-      .sort((a, b) => a.get_quantity / a.give_quantity - b.get_quantity / b.give_quantity);
+      .sort((a, b) => {
+        const priceA = calculatePrice(
+          a.get_quantity,
+          isDivisible(a.get_asset),
+          a.give_quantity,
+          isDivisible(a.give_asset),
+        );
+        const priceB = calculatePrice(
+          b.get_quantity,
+          isDivisible(b.get_asset),
+          b.give_quantity,
+          isDivisible(b.give_asset),
+        );
+        return priceA - priceB;
+      });
 
     // Build cumulative depth for buys
     let cumBuy = 0;
     buyList.forEach(o => {
-      const price = o.give_quantity / o.get_quantity;
-      cumBuy += o.get_remaining;
+      const price = calculatePrice(
+        o.give_quantity,
+        isDivisible(o.give_asset),
+        o.get_quantity,
+        isDivisible(o.get_asset),
+      );
+      cumBuy += baseUnitsToNumber(o.get_remaining, isDivisible(asset1));
       buys.push({ price, cumulative: cumBuy });
     });
 
     // Build cumulative depth for sells
     let cumSell = 0;
     sellList.forEach(o => {
-      const price = o.get_quantity / o.give_quantity;
-      cumSell += o.give_remaining;
+      const price = calculatePrice(
+        o.get_quantity,
+        isDivisible(o.get_asset),
+        o.give_quantity,
+        isDivisible(o.give_asset),
+      );
+      cumSell += baseUnitsToNumber(o.give_remaining, isDivisible(asset1));
       sells.push({ price, cumulative: cumSell });
     });
 
@@ -55,7 +130,7 @@ export function DepthChart({ orders, asset1, asset2 }: DepthChartProps) {
       midPrice,
       spread
     };
-  }, [orders, asset1]);
+  }, [orders, asset1, isDivisible]);
 
   if (orders.length === 0) {
     return (

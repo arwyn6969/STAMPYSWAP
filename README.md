@@ -3,7 +3,7 @@
 A lightweight, non-custodial DEX interface for **Counterparty (XCP)** and **Bitcoin Stamps** assets.
 
 ![Dark Theme](https://img.shields.io/badge/Theme-Dark-black)
-![React](https://img.shields.io/badge/React-18-61dafb)
+![React](https://img.shields.io/badge/React-19-61dafb)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
 ![Version](https://img.shields.io/badge/Version-1.5-purple)
 
@@ -17,6 +17,7 @@ A lightweight, non-custodial DEX interface for **Counterparty (XCP)** and **Bitc
 - 🔐 **Non-Custodial** — Your keys never leave your wallet
 - 🔷 **Leather/Xverse Support** — Browser wallet signing with PSBT
 - 📱 **Freewallet QR** — Scan to sign with Freewallet mobile app
+- ⏱️ **Transaction Tracking** — Auto-poll mempool/confirmation status after broadcast
 - ⚡ **Real-time Data** — Direct connection to Counterparty & Stampchain APIs
 
 ## Quick Start
@@ -27,9 +28,18 @@ npm install
 
 # Run development server
 npm run dev
+
+# Run lint + unit tests
+npm run lint
+npm run test
+
+# Run all quality gates
+npm run check
 ```
 
 Open [http://localhost:5173](http://localhost:5173) in your browser.
+
+Pull requests and pushes are automatically validated in CI using `npm run check`.
 
 ## How to Trade
 
@@ -42,7 +52,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 5. **Create Order** — Fill in amounts and click "Create Order"
 6. **Sign Transaction**:
    - **With Wallet**: Click "Sign with Leather/Xverse" — wallet prompts for approval
-   - **With Freewallet**: Scan QR code → Tools → Sign Transaction → Broadcast
+   - **With Freewallet**: Scan QR code → Tools → Sign Transaction → Broadcast, then paste txid to track status
 7. **Done!** — Transaction is broadcast to the network
 
 ## Signing Methods
@@ -101,7 +111,7 @@ Base: `https://stampchain.io/api/v2`
 ## Tech Stack
 
 - **Vite** — Fast dev server and build (~74KB gzipped)
-- **React 18** — UI framework
+- **React 19** — UI framework
 - **TypeScript** — Type safety
 - **qrcode.react** — QR code generation
 - **Leather/Xverse APIs** — Browser wallet integration
@@ -119,7 +129,7 @@ Base: `https://stampchain.io/api/v2`
 
 ## Future Enhancements
 
-- [ ] Transaction status polling
+- [ ] UI end-to-end test coverage (wallet/sign/broadcast flow)
 - [ ] Favorite/recent pairs
 - [ ] Testnet toggle
 - [ ] Dispenser support

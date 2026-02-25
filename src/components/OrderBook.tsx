@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react';
-import type { Order } from '../lib/counterparty';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import { getAssetDivisibility, type Order } from '../lib/counterparty';
 import { AssetIcon } from './AssetIcon';
+import { calculatePrice, formatBaseUnits } from '../lib/quantity';
 
 interface OrderBookProps {
   orders: Order[];
@@ -13,6 +14,41 @@ interface OrderBookProps {
 
 export function OrderBook({ orders, asset1, asset2, loading, error, onOrderClick }: OrderBookProps) {
   const [hoveredOrder, setHoveredOrder] = useState<Order | null>(null);
+  const [divisibility, setDivisibility] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const assets = [asset1, asset2].filter(Boolean);
+    const uniqueAssets = Array.from(new Set(assets));
+    if (uniqueAssets.length === 0) return undefined;
+
+    const load = async () => {
+      const entries = await Promise.all(
+        uniqueAssets.map(async (asset) => [asset, await getAssetDivisibility(asset)] as const),
+      );
+      if (cancelled) return;
+      setDivisibility((prev) => {
+        const next = { ...prev };
+        for (const [asset, divisible] of entries) {
+          next[asset] = divisible;
+        }
+        return next;
+      });
+    };
+
+    load().catch(() => {
+      // Fall back to default divisibility assumptions.
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [asset1, asset2]);
+
+  const isDivisible = useCallback(
+    (asset: string) => divisibility[asset] ?? true,
+    [divisibility],
+  );
 
   // Split and Sort orders to make "Sweeping" intuitive
   // Asks (Sellers): We want the CHEAPEST first (Price Ascending)
@@ -21,21 +57,41 @@ export function OrderBook({ orders, asset1, asset2, loading, error, onOrderClick
     const askList = orders
       .filter(o => o.give_asset === asset1 && o.status === 'open')
       .sort((a, b) => {
-        const priceA = a.get_quantity / a.give_quantity;
-        const priceB = b.get_quantity / b.give_quantity;
+        const priceA = calculatePrice(
+          a.get_quantity,
+          isDivisible(a.get_asset),
+          a.give_quantity,
+          isDivisible(a.give_asset),
+        );
+        const priceB = calculatePrice(
+          b.get_quantity,
+          isDivisible(b.get_asset),
+          b.give_quantity,
+          isDivisible(b.give_asset),
+        );
         return priceA - priceB;
       });
 
     const bidList = orders
       .filter(o => o.get_asset === asset1 && o.status === 'open')
       .sort((a, b) => {
-        const priceA = a.give_quantity / a.get_quantity;
-        const priceB = b.give_quantity / b.get_quantity;
+        const priceA = calculatePrice(
+          a.give_quantity,
+          isDivisible(a.give_asset),
+          a.get_quantity,
+          isDivisible(a.get_asset),
+        );
+        const priceB = calculatePrice(
+          b.give_quantity,
+          isDivisible(b.give_asset),
+          b.get_quantity,
+          isDivisible(b.get_asset),
+        );
         return priceB - priceA; // Descending
       });
 
     return { asks: askList, bids: bidList };
-  }, [orders, asset1]);
+  }, [orders, asset1, isDivisible]);
 
   // Calculate the "Sweep Set" (The orders that would be filled)
   const sweepSet = useMemo(() => {
@@ -56,8 +112,8 @@ export function OrderBook({ orders, asset1, asset2, loading, error, onOrderClick
     if (sweepSet.length === 0) return null;
     
     const count = sweepSet.length;
-    let totalGive = 0;
-    let totalGet = 0;
+    let totalGive = 0n;
+    let totalGet = 0n;
 
     sweepSet.forEach(o => {
       totalGive += o.give_remaining;
@@ -65,16 +121,18 @@ export function OrderBook({ orders, asset1, asset2, loading, error, onOrderClick
     });
 
     const isAsk = sweepSet[0].give_asset === asset1;
-    
-    // Avg Price calculation
-    // If scanning Asks (Selling Base): Price = Total Get (Quote) / Total Give (Base)
-    // If scanning Bids (Buying Base): Price = Total Give (Quote) / Total Get (Base)
-    const avgPrice = isAsk 
-      ? totalGet / totalGive 
-      : totalGive / totalGet;
+    const avgPrice = isAsk
+      ? calculatePrice(totalGet, isDivisible(asset2), totalGive, isDivisible(asset1))
+      : calculatePrice(totalGive, isDivisible(asset2), totalGet, isDivisible(asset1));
+    const getDisplay = isAsk
+      ? formatBaseUnits(totalGive, isDivisible(asset1))
+      : formatBaseUnits(totalGet, isDivisible(asset1));
+    const payDisplay = isAsk
+      ? formatBaseUnits(totalGet, isDivisible(asset2))
+      : formatBaseUnits(totalGive, isDivisible(asset2));
 
-    return { count, totalGive, totalGet, avgPrice, isAsk };
-  }, [sweepSet, asset1]);
+    return { count, avgPrice, isAsk, getDisplay, payDisplay };
+  }, [sweepSet, asset1, asset2, isDivisible]);
 
 
   if (!asset1 || !asset2) {
@@ -89,12 +147,13 @@ export function OrderBook({ orders, asset1, asset2, loading, error, onOrderClick
   }
 
   const renderRow = (order: Order, isSell: boolean) => {
-    const price = isSell 
-      ? order.get_quantity / order.give_quantity 
-      : order.give_quantity / order.get_quantity;
+    const price = isSell
+      ? calculatePrice(order.get_quantity, isDivisible(order.get_asset), order.give_quantity, isDivisible(order.give_asset))
+      : calculatePrice(order.give_quantity, isDivisible(order.give_asset), order.get_quantity, isDivisible(order.get_asset));
     
     const amount = isSell ? order.give_remaining : order.get_remaining;
     const tradeAsset = isSell ? order.give_asset : order.get_asset;
+    const displayAmount = formatBaseUnits(amount, isDivisible(tradeAsset));
     const isHovered = sweepSet.includes(order);
     const isTarget = hoveredOrder === order;
 
@@ -119,7 +178,7 @@ export function OrderBook({ orders, asset1, asset2, loading, error, onOrderClick
           </span>
         </td>
         <td>{price.toFixed(6)}</td>
-        <td>{order.give_quantity_normalized || (amount / 100000000).toFixed(4)}</td>
+        <td>{displayAmount}</td>
       </tr>
     );
   };
@@ -147,8 +206,8 @@ export function OrderBook({ orders, asset1, asset2, loading, error, onOrderClick
             <span className="badge badge-primary">Avg Price: {sweepStats.avgPrice.toFixed(6)}</span>
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs opacity-80">
-            <div>Get: {sweepStats.isAsk ? sweepStats.totalGive.toFixed(4) : sweepStats.totalGet.toFixed(4)} {asset1}</div>
-            <div>Pay: {sweepStats.isAsk ? sweepStats.totalGet.toFixed(4) : sweepStats.totalGive.toFixed(4)} {asset2}</div>
+            <div>Get: {sweepStats.getDisplay} {asset1}</div>
+            <div>Pay: {sweepStats.payDisplay} {asset2}</div>
           </div>
           <div className="mt-1 text-center text-[10px] uppercase tracking-wide opacity-60">
             Click to Auto-Fill

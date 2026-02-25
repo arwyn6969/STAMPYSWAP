@@ -23,8 +23,14 @@ export interface WalletConnection {
 
 export type WalletProvider = 'leather' | 'xverse' | 'unisat' | 'manual' | 'unknown';
 
+interface StoredWalletConnection {
+  address: string;
+  walletType: WalletProvider;
+}
+
 // Session storage keys
 const STORAGE_KEY = 'stampyswap_wallet';
+const MAINNET_ADDRESS_REGEX = /^(bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/;
 
 // Current connection state (in-memory)
 let currentConnection: WalletConnection | null = null;
@@ -48,12 +54,20 @@ export function detectAllWallets(): WalletProvider[] {
     wallets.push('xverse');
   }
   
-  // @ts-expect-error - wallet provider
-  if (window.unisat) {
-    wallets.push('unisat');
-  }
-  
   return wallets;
+}
+
+function isWalletProviderAvailable(walletType: WalletProvider): boolean {
+  if (typeof window === 'undefined') return false;
+  if (walletType === 'leather') {
+    // @ts-expect-error - wallet provider
+    return Boolean(window.LeatherProvider || window.HiroWalletProvider);
+  }
+  if (walletType === 'xverse') {
+    // @ts-expect-error - wallet provider
+    return Boolean(window.XverseProviders?.BitcoinProvider);
+  }
+  return false;
 }
 
 /**
@@ -64,16 +78,56 @@ export function detectWallet(): WalletProvider | null {
   return wallets.length > 0 ? wallets[0] : null;
 }
 
+function isStoredWalletConnection(value: unknown): value is StoredWalletConnection {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  const walletType = record.walletType;
+  return (
+    typeof record.address === 'string' &&
+    (walletType === 'leather' ||
+      walletType === 'xverse' ||
+      walletType === 'unisat' ||
+      walletType === 'manual' ||
+      walletType === 'unknown')
+  );
+}
+
+function inferAddressType(address: string): BitcoinAddress['addressType'] {
+  if (address.startsWith('bc1p')) return 'p2tr';
+  if (address.startsWith('bc1')) return 'p2wpkh';
+  if (address.startsWith('3')) return 'p2sh';
+  return 'p2pkh';
+}
+
+function buildConnection(address: string, walletType: WalletProvider): WalletConnection {
+  const normalizedAddress = address.trim();
+  const addressType = inferAddressType(normalizedAddress);
+  return {
+    addresses: [{
+      address: normalizedAddress,
+      publicKey: '',
+      purpose: 'payment',
+      addressType,
+    }],
+    paymentAddress: normalizedAddress,
+    ordinalsAddress: normalizedAddress,
+    walletType,
+  };
+}
+
 /**
  * Get stored connection from session storage
  */
-export function getStoredConnection(): { address: string; walletType: WalletProvider } | null {
+export function getStoredConnection(): StoredWalletConnection | null {
   if (typeof window === 'undefined') return null;
   
   try {
     const stored = sessionStorage.getItem(STORAGE_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored);
+      if (isStoredWalletConnection(parsed)) {
+        return parsed;
+      }
     }
   } catch {
     // Ignore parse errors
@@ -109,6 +163,30 @@ export function clearStoredConnection(): void {
 }
 
 /**
+ * Restore an in-memory connection from session storage.
+ * Manual connections can always be restored. Extension wallets are restored
+ * only when the matching provider is currently available.
+ */
+export function restoreStoredConnection(): WalletConnection | null {
+  const stored = getStoredConnection();
+  if (!stored) return null;
+
+  if (!isValidBitcoinAddress(stored.address)) {
+    clearStoredConnection();
+    return null;
+  }
+
+  if (stored.walletType !== 'manual' && !isWalletProviderAvailable(stored.walletType)) {
+    clearStoredConnection();
+    return null;
+  }
+
+  const restored = buildConnection(stored.address, stored.walletType);
+  currentConnection = restored;
+  return restored;
+}
+
+/**
  * Get current in-memory connection
  */
 export function getCurrentConnection(): WalletConnection | null {
@@ -122,6 +200,11 @@ export function getCurrentConnection(): WalletConnection | null {
 export function canSign(): boolean {
   if (!currentConnection) return false;
   return currentConnection.walletType !== 'manual';
+}
+
+export function isValidBitcoinAddress(address: string): boolean {
+  const trimmed = address.trim();
+  return MAINNET_ADDRESS_REGEX.test(trimmed);
 }
 
 // Connect to Leather wallet
@@ -219,20 +302,14 @@ export async function connectWallet(preferredType?: WalletProvider): Promise<Wal
  * Connect with manual address entry (watch-only, cannot sign)
  */
 export function connectManual(address: string): WalletConnection {
-  const connection: WalletConnection = {
-    addresses: [{
-      address,
-      publicKey: '',
-      purpose: 'payment',
-      addressType: 'p2wpkh',
-    }],
-    paymentAddress: address,
-    ordinalsAddress: address,
-    walletType: 'manual',
-  };
+  if (!isValidBitcoinAddress(address)) {
+    throw new Error('Invalid Bitcoin mainnet address');
+  }
+
+  const connection = buildConnection(address, 'manual');
   
   currentConnection = connection;
-  storeConnection(address, 'manual');
+  storeConnection(connection.paymentAddress, 'manual');
   
   return connection;
 }
