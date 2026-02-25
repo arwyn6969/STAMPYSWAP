@@ -89,6 +89,10 @@ src/
     └── WalletConnect.tsx      # Wallet connection button
 ```
 
+## Agentic Market Making
+
+The `/scripts` directory contains specialized Node.js tools and documentation designed to algorithmically seed the DEX using your high-supply assets (e.g., `FAUXCORNCASH`, `DANKROSECASH`). See [scripts/README_Botless_Market_Making.md](./scripts/README_Botless_Market_Making.md) for strategy execution.
+
 ## APIs
 
 ### Counterparty Core API v2

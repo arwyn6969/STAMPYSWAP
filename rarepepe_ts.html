@@ -1,0 +1,2125 @@
+<!DOCTYPE html>
+<html class="no-js" lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>RAREPEPE Asset Information</title>
+    <link rel="canonical" href="https://tokenscan.io/asset/RAREPEPE" />
+    <meta name="description" content="">
+    <meta name="robots"      content="index, follow">
+    <meta name="viewport"    content="width=device-width, initial-scale=1.0">
+    <link type="image/ico" rel="icon"       href="/img/favicon.ico">
+    <link type="text/css"  rel="stylesheet" href="/css/bootstrap.min.css">
+    <link type="text/css"  rel="stylesheet" href="/css/font-awesome.min.css">
+    <link type="text/css"  rel="stylesheet" href="/css/jquery.dataTables.min.css"/>
+    <link type="text/css"  rel="stylesheet" href="/css/highcharts.css">
+    <link type="text/css"  rel="stylesheet" href="/css/rateit.css">
+    <link text="text/css"  rel="stylesheet" href="/css/prism.css">
+    <link type="text/css"  rel="stylesheet" href="/css/tokenscan.css">
+    <!-- Bare minimum JS loaded here - jQuery only  -->
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/jquery.min.js"></script>
+</head> 
+<body>
+    <div class="topnav navbar navbar-inverse navbar-static-top" role="navigation">
+        <div class="container">
+            <div class="navbar-header">
+                <div class="navbar-brand">
+                    <a href="/" title="TokenScan - Counterparty Block Explorer"><img src="/img/header-tokenscan-logo.png" alt="TokenScan - Counterparty Block Explorer" border="0"/></a>
+                </div>
+                <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target=".navbar-collapse">
+                    <span class="sr-only">Toggle navigation</span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                </button>
+            </div>
+            <div class="collapse navbar-collapse">
+                <ul class="nav navbar-nav">
+                    <li class="dropdown">
+                        <a href="#" title="Data" class="dropdown-toggle" data-toggle="dropdown"><i class="fa fa-database fa-lg"></i> Networks <span class="caret"></span></a>
+                        <ul class="dropdown-menu" role="menu" style="width:230px">
+                            <li><a href="https://cp20.tokenscan.io"                    title="Counterparty 2.0 (Mainnet)"     ><i class="pull-left fa fa-lg fa-counterparty"></i> Counterparty 2.0 (Mainnet)</a></li>
+                            <li><a href="https://cp20-testnet.tokenscan.io"            title="Counterparty 2.0 (Testnet)"     ><i class="pull-left fa fa-lg fa-counterparty"></i> Counterparty 2.0 (Testnet)</a></li>
+                            <li><a href="https://classic.tokenscan.io"                 title="Counterparty Classic (Mainnet)" ><i class="pull-left fa fa-lg fa-counterparty"></i> Counterparty Classic (Mainnet)</a></li>
+                            <li><a href="https://classic-testnet.tokenscan.io"         title="Counterparty Classic (Testnet)" ><i class="pull-left fa fa-lg fa-counterparty"></i> Counterparty Classic (Testnet)</a></li>
+                            <li><a href="https://dogeparty.tokenscan.io"               title="Dogeparty (Mainnet)"            ><i class="pull-left fa fa-lg fa-dogeparty"></i> Dogeparty (Mainnet)</a></li>
+                            <li><a href="https://dogeparty-testnet.tokenscan.io"       title="Dogeparty (Testnet)"            ><i class="pull-left fa fa-lg fa-dogeparty"></i> Dogeparty (Testnet)</a></li>
+                        <!--
+                            <li><a href="https://btns.tokenscan.io"                    title="BTNS (Counterparty Mainnet)"><i class="pull-left fa fa-lg fa-btns"></i> BTNS (Counterparty Mainnet)</a></li>
+                            <li><a href="https://btns-testnet.tokenscan.io"            title="BTNS (Counterparty Testnet)"><i class="pull-left fa fa-lg fa-btns"></i> BTNS (Counterparty Testnet)</a></li>
+                            <li><a href="https://btns-dogeparty.tokenscan.io"          title="BTNS (Dogeparty Mainnet)"   ><i class="pull-left fa fa-lg fa-btns-yellow"></i> BTNS (Dogeparty Mainnet)</a></li>
+                            <li><a href="https://btns-dogeparty-testnet.tokenscan.io"  title="BTNS (Dogeparty Testnet)"   ><i class="pull-left fa fa-lg fa-btns-yellow"></i> BTNS (Dogeparty Testnet)</a></li>
+                        -->
+                        </ul>
+                    </li>
+                    <li class="dropdown">
+                        <a href="#" title="Data" class="dropdown-toggle" data-toggle="dropdown"><i class="fa fa-tachometer fa-lg"></i> Data <span class="caret"></span></a>
+                        <ul class="dropdown-menu" role="menu">
+                            <li class="dropdown-submenu">
+                                <a href="/assets"       title="Counterparty Assets"><i class="fa fa-lg fa-database"></i> Assets</a>
+                                <ul class="dropdown-menu">
+                                    <li><a href="/assets"       ><i class="fa fa-lg fa-database"></i> All Assets</a></li>
+                                    <li><a href="/assets?type=1"><i class="fa fa-lg fa-sort-alpha-asc"></i> Named Assets</a></li>
+                                    <li><a href="/assets?type=3"><i class="fa fa-lg fa-sitemap"></i> Subassets</a></li>
+                                    <li><a href="/assets?type=2"><i class="fa fa-lg fa-sort-numeric-asc"></i> Numeric Assets</a></li>
+                                    <li><a href="/assets?type=5"><i class="fa fa-lg fa-sitemap"></i> Numeric Subassets</a></li>
+                                </ul>
+                            </li>
+                            <li><a href="/bets"         title="Counterparty Bets"         ><i class="fa fa-lg fa-bullseye"></i> Bets</a></li>
+                            <li><a href="/blocks"       title="Counterparty Blocks"       ><i class="fa fa-lg fa-chain"></i> Blocks</a></li>
+                            <li><a href="/broadcasts"   title="Counterparty Broadcasts"   ><i class="fa fa-lg fa-bullhorn"></i> Broadcasts</a></li>
+                            <li><a href="/burns"        title="Counterparty Burns"        ><i class="fa fa-lg fa-fire"></i> Burns</a></li>
+                            <li><a href="/destructions" title="Counterparty Destructions" ><i class="fa fa-lg fa-trash"></i> Destructions</a></li>
+                            <li><a href="/dispensers"   title="Counterparty Dispensers"   ><i class="fa fa-lg fa-arrows-h"></i> Dispensers</a></li>
+                            <li><a href="/dispenses"    title="Counterparty Dispenses"    ><i class="fa fa-lg fa-btc"></i> Dispenses</a></li>
+                            <li><a href="/dividends"    title="Counterparty Dividends"    ><i class="fa fa-lg fa-sitemap"></i> Dividends</a></li>
+                            <li><a href="/issuances"    title="Counterparty Issuances"    ><i class="fa fa-lg fa-print"></i> Issuances</a></li>
+                            <li><a href="/markets"      title="Counterparty Markets"      ><i class="fa fa-lg fa-exchange"></i> Markets</a></li>
+                            <li><a href="/mempool"      title="Counterparty Mempool"      ><i class="fa fa-lg fa-clock-o"></i> Mempool</a></li>
+                            <li><a href="/orders"       title="Counterparty Orders"       ><i class="fa fa-lg fa-book"></i> Orders</a></li>
+                            <li><a href="/sends"        title="Counterparty Sends"        ><i class="fa fa-lg fa-send"></i> Sends</a></li>
+                            <li><a href="/sweeps"       title="Counterparty Sweeps"       ><i class="fa fa-lg fa-truck"></i> Sweeps</a></li>
+                        </ul>
+                    </li>
+                    <li><a href="/api"   itle="Counterparty API"><i class="fa fa-cogs fa-lg"></i> API</a></li>
+                    <li class="dropdown">
+                        <a href="#" title="Data" class="dropdown-toggle" data-toggle="dropdown"><i class="fa fa-gear fa-lg"></i> More <span class="caret"></span></a>
+                        <ul class="dropdown-menu" role="menu">
+                            <li><a href="/about"       title="About"><i class="fa fa-info-circle fa-lg"></i> About</a></li>
+                            <li><a href="/advertise"   title="Advertise"><i class="fa fa-info-circle fa-lg"></i> Advertise</a></li>
+                            <li><a href="https://freewallet.io" title="FreeWallet.io" target="_blank"><i class="fa fa-freewallet fa-lg"></i> FreeWallet.io</a></li>
+                            <!-- <li><a href="/collections" title="NFT Collections"><i class="fa fa-info-circle fa-lg"></i> NFT Collections</a></li> -->
+                            <li class="dropdown-submenu">
+                                <a href="#" title="Settings"><i class="fa fa-lg fa-gear"></i> Settings</a>
+                                <ul class="dropdown-menu">
+                                    <li><a href="#" id="numerics-toggle"><i class="fa fa-lg fa-sort-numeric-asc"></i> <span>Hide</span> Numeric Assets</a></li>
+                                </ul>
+                            </li>
+
+                        </ul>
+                    </li>
+                </ul>
+                <form action="/search" class="navbar-form navbar-right" role="search" method="GET">
+                    <div class="input-group">
+                        <input type="text" name="query" class="form-control" placeholder="Type here to search&hellip;">
+                        <span class="input-group-btn">
+                            <button type="submit" class="btn btn-success"><i class="fa fa-search fa-lg"></i></button>
+                        </span>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sponsored Link-->
+    <div class="container">
+        <div class="row">
+            <div class="col-xs-12">
+                <div class=" panel panel-primary">
+                    <div class="tokenscan-sponsored-link">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Content wrapper -->
+    <div id="wrapper">
+        <div class="container" role="main">
+            <!--
+            <div class="alert alert-danger fade in center bold">
+                NOTICE: The Counterparty ledger experienced a <a href="https://counterpartyclassic.io/news/counterparty-community-update-oct-25-2024/">ledger fork</a> at block #866,000 and now 2 ledgers exist.
+                <br>This site is showing the <a href="https://cp20.tokenscan.io">Counterparty 2.0 ledger</a>. You may also view the <a href="https://classic.tokenscan.io" title="Counterparty Classic">Counterparty Classic ledger</a>.
+            </div>
+            -->
+
+            
+            <div id="page-wrapper">
+
+<!-- Basic Asset Information -->
+<div class="row">
+    <div class="col-xs-12 col-md-6">
+        <div class="panel panel-primary table-responsive" id="asset-info">
+            <div class="panel-heading">
+                <i class="fa fa-lg fa-info-circle"></i> <span class="display-asset-name"></span> Asset Information
+            </div>
+            <div class="panel-content">
+                <table width="100%">
+                <tr>
+                    <td width="*%">
+                        <table class="table table-condensed table-striped table-bordered no-bottom-margin no-bottom-border asset-info">
+                        <tbody>
+                        <tr>
+                            <th>Asset&nbsp;Name</th>
+                            <td id="asset-name"></td>
+                        <tr>
+                        <tr>
+                            <th class="no-bottom-border">Description</th>
+                            <td id="asset-description"></div></td>
+                        </tr>
+                        </tbody>
+                        </table>
+                    </td>
+                    <td width="65" valign="middle" align="center"><img src="/icon/RAREPEPE.png" id="assetIcon" border="0"></td>
+                </tr>
+                </table>
+                <table class="table table-condensed table-striped table-bordered no-bottom-margin no-bottom-border asset-info">
+                <tbody>
+                <tr>
+                    <th class="no-bottom-border">Total Supply</th>
+                    <td id="asset-supply" width="*"></td>
+                </tr>
+                </tbody>
+                </table>
+                <table class="table table-condensed table-striped table-bordered no-bottom-margin no-bottom-border asset-info">
+                <tbody>
+                <tr>
+                    <th class="no-bottom-border">Divisible</th>
+                    <td id="asset-divisible"></td>
+                    <th width="100" class="no-bottom-border">Locked</th>
+                    <td id="asset-locked"></div></td>
+                </tr>
+                </tbody>
+                </table>
+                <table class="table table-condensed table-striped  table-bordered no-bottom-margin no-bottom-border asset-info">
+                <tbody>
+                <tr>
+                    <th class="no-bottom-border">Owner / Issuer</th>
+                    <td id="asset-owner"></td>
+                </tr>
+                </tbody>
+                </table>
+            </div>
+        </div>        
+    </div>
+
+    <div class="col-xs-12 col-md-6">
+        <div class="panel panel-primary table-responsive" id="asset-info">
+            <div class="panel-heading">
+                <i class="fa fa-lg fa-exchange"></i> <span class="display-asset-name"></span> Market Information
+            </div>
+            <div class="panel-content">
+                <table class="table table-condensed table-striped table-bordered no-bottom-margin no-bottom-border asset-info">
+                <tbody>
+                <tr>
+                    <th>Marketcap</th>
+                    <td>$<span id="market-marketcap-usd">0.00</span></td>
+                    <td><span id="market-marketcap-btc">0.00000000</span> BTC</td>
+                </tr>
+                <tr>
+                    <th>BTC Price</th>
+                    <td>$<span id="market-btc-price-usd">0.00</span></td>
+                    <td><span id="market-btc-price-btc">0.00000000</span> BTC</td>
+                </tr>
+                <tr>
+                    <th>BTC Floor</th>
+                    <td>$<span id="market-btc-floor-usd">0.00</span></td>
+                    <td><span id="market-btc-floor-btc">0.00000000</span> BTC</td>
+                </tr>
+                <tr>
+                    <th>XCP Price</th>
+                    <td>$<span id="market-xcp-price-usd">0.00</span></td>
+                    <td><span id="market-xcp-price-xcp">0.00000000</span> XCP</td>
+                </tr>
+                <tr>
+                    <th>XCP Floor</th>
+                    <td>$<span id="market-xcp-floor-usd">0.00</span></td>
+                    <td><span id="market-xcp-floor-xcp">0.00000000</span> XCP</td>
+                </tr>
+                </tbody>
+                </table>
+            </div>
+        </div>        
+    </div>
+
+</div>
+
+<!-- Basic Asset Information -->
+<div class="row">
+    <div class="col-xs-12">
+        <div class="panel panel-primary table-responsive" id="asset-info">
+
+            <div class="panel-content">
+
+                <!-- Reputation Information-->
+                <div id="reputationInfo" style="display: none;">
+                    <a name="reputation"></a>
+                    <div class="panel-heading primary-middle panel-heading-lg centered-icons no-link-arrow">
+                        <i class="fa fa-shield fa-lg"></i> <span class="display-asset-name"></span> Reputation
+                        <a href="https://reputation.coindaddy.io/xcp/asset/RAREPEPE" class="btn btn-xs btn-success pull-right"><i class="fa fa-bullhorn"></i> Leave Feedback</a>
+                    </div>
+                    <table width="100%" class="table table-condensed table-striped table-bordered no-bottom-margin top-border">
+                    <thead>
+                    <tr class="info">
+                        <th width="25%" class="center">Current Rating</th>
+                        <th width="25%" class="center">Last 30 Days</th>
+                        <th width="25%" class="center">6 months ago</th>
+                        <th width="25%" class="center hidden-xs">1 Year ago</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr>
+                        <td id="rating_current" class="center"></td>
+                        <td id="rating_30day"   class="center"></td>
+                        <td id="rating_6month"  class="center"></td>
+                        <td id="rating_1year"   class="center hidden-xs"></td>
+                    </tr>
+                    </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- Counterparty Transactions -->
+<div class="row">
+    <div class="col-xs-12">
+
+        <ul class="nav nav-tabs tabs-small" id="data-tabs">
+            <li class="tab active">
+                <a href="#info"       data-toggle="tab"><i class="fa fa-paperclip"></i> Information</a>
+            </li>
+            <li class="tab"><a href="#destructions" data-toggle="tab" id="tab-destructions"><i class="fa fa-trash"></i> Destructions</a></li>
+            <li class="tab"><a href="#dispensers"   data-toggle="tab" id="tab-dispensers"  ><i class="fa fa-arrows-h"></i> Dispensers</a></li>
+            <li class="tab"><a href="#dispenses"    data-toggle="tab" id="tab-dispenses"   ><i class="fa fa-btc"></i> Dispenses</a></li>
+            <li class="tab"><a href="#dividends"    data-toggle="tab" id="tab-dividends"   ><i class="fa fa-sitemap"></i> Dividends</a></li>
+            <li class="tab"><a href="#holders"      data-toggle="tab" id="tab-holders"     ><i class="fa fa-user"></i> Holders</a></li>
+            <li class="tab"><a href="#fairmints"    data-toggle="tab" id="tab-fairmints"   ><i class="fa fa-print"></i> Fairmints</a></li>
+            <li class="tab"><a href="#fairminters"  data-toggle="tab" id="tab-fairminters" ><i class="fa fa-ticket"></i> Fairminters</a></li>
+            <li class="tab"><a href="#issuances"    data-toggle="tab" id="tab-issuances"   ><i class="fa fa-bank"></i> Issuances</a></li>
+            <li class="tab"><a href="#markets"      data-toggle="tab" id="tab-markets"     ><i class="fa fa-exchange"></i> Markets</a></li>
+            <li class="tab"><a href="#orders"       data-toggle="tab" id="tab-orders"      ><i class="fa fa-book"></i> Orders</a></li>
+            <li class="tab"><a href="#sends"        data-toggle="tab" id="tab-sends"       ><i class="fa fa-send"></i> Sends</a></li>
+            <li class="tab"><a href="#subassets"    data-toggle="tab" id="tab-subassets"   style="display: none;"><i class="fa fa-child"></i> Subassets</a></li>
+            <li class="tab"><a href="#mempool"      data-toggle="tab" id="tab-mempool"     ><i class="fa fa-clock-o"></i> Unconfirmed</a></li>
+            <li id="data-last-tab">
+                <a class="btn dropdown-toggle" data-toggle="dropdown" href="#">
+                    <i class="fa fa-lg fa-list"></i> More <span class="caret"></span>
+                </a>
+                <ul class="dropdown-menu" id="data-tabs-more">
+                    <!-- Tabs get inserted here -->
+                </ul>
+            </li>
+        </ul>
+        <div class="tab-content clearfix">
+
+            <!-- Additional Asset Information -->
+            <div class="tab-pane active" id="info">
+                <div class="panel panel-primary table-responsive">
+                    <!-- Default page if no enhanced asset info is found-->
+                    <div id="additionalInfoNotAvailable" class="panel-body">
+                        <center>No additional information is available at this time</center>
+                    </div>
+
+                    <!-- Official Card Indicator-->
+                    <div id="officialCard" style="display: none;" ></div>
+
+                    <!-- Custom HTML Content -->
+                    <div class="panel-heading panel-heading-lg primary-middle" id="custom-content-header" style="display: none;"><i class="fa fa-lg fa-exclamation-circle"></i> Custom Content</div>
+                    <div class="custom-content-wrapper" id="custom-content-wrapper" style="display: none;">
+                        <div class="text-center" id="customContentWarning">
+                            <div class="alert alert-danger text-center" role="alert" id="customContentWarningDanger">
+                                Loading custom content can be potentially dangerous, as it allows unknown and untrusted code to run in your browser!
+                            </div>
+                            <a class="btn btn-lg btn-success margin-top-5" id="loadCustomContentButton"><i class="fa fa-lg fa-play"></i> Load Content</a>
+                        </div>
+                        <!-- iFrame to load custom content -->
+                        <iframe id="customContentViewer" style="display:none;" frameborder=0 allowfullscreen scrolling="no"></iframe>
+                    </div>
+
+
+                    <!-- Digital Artwork  -->
+                    <div id="digitalArtInfo" style="display: none;">
+                        <div class="panel-heading panel-heading-lg primary-middle" id="artwork-information" style="display:none;"><i class="fa fa-lg fa-info"></i> Artwork Information</div>
+                        <table width="100%" class="table table-condensed table-striped table-bordered no-bottom-margin no-top-border asset-info asset-info-hide">
+                        <thead>
+                        <tr>
+                            <th> Title</th>
+                            <td id="artwork-title">&nbsp;</td>
+                        <tr>
+                        <tr>
+                            <th> Project</th>
+                            <td id="artwork-project">&nbsp;</td>
+                        <tr>
+                        </thead>
+                        </table>
+                        <div class="panel-heading panel-heading-lg primary-middle" id="artwork-header" style="display: none;"><i class="fa fa-lg fa-paint-brush"></i> Digital Image</div>
+                        <img src="/icon/XCP.png" class="img-responsive" id="artwork-image" style="display: none;">
+                        <img src="/icon/XCP.png" class="bitcoin-stamp-pixelated"   id="artwork-bitcoin-stamp" style="display: none;">
+                        <div id="assViewer" style="display: none;"></div>
+                        <div class="panel-heading panel-heading-lg primary-middle" id="video-header" style="display: none;"><i class="fa fa-lg fa-play"></i> Digital Video</div>
+                        <div class="video-wrapper" id="video-wrapper" style="display: none;"></div>
+                        <div class="video-wrapper-youtube" id="video-wrapper-youtube" style="display: none;"></div>
+                        <div class="panel-heading panel-heading-lg primary-middle" id="audio-header" style="display: none;"><i class="fa fa-lg fa-music"></i> Digital Audio</div>
+                        <div class="audio-wrapper" id="audio-wrapper" style="display: none;"></div>
+                        <div class="audio-wrapper-soundcloud" id="audio-wrapper-soundcloud" style="display: none;"></div>
+                    </div>
+
+                    <!-- Custom styles for enhanced asset info display -->
+                    <style>
+                        table.asset-info {
+                            table-layout:fixed;                            
+                        }
+
+                        table.asset-info tr th {
+                            width: 120px !important;
+                            background-color: #d9edf7 !important;
+                            text-transform: capitalize;
+                        }
+
+                        table.asset-info tr td {
+                            white-space: nowrap;  
+                            overflow: hidden;  
+                            text-overflow: ellipsis;             
+                        }
+
+                        table.asset-info-hide tr {
+                            display: none;
+                        }
+                        #assetExtendedDescription {
+                            white-space: normal;  
+                            overflow:  visible !important;
+                        }
+                        #customContentWarning {
+                            height: 200px;
+                            background-color: #D0D0D0; 
+                            padding-top: 20px;
+                        }
+                        #loadCustomContentButton {
+                            margin:  0px;
+                        }
+                        #customContentWarningDanger {
+                            margin-top:  0px;
+                            margin-bottom:  20px;
+                            margin-left:  20px;
+                            margin-right:  20px;
+                        }
+                        #customContentViewer {
+                            width:  100%;
+                        }
+                    </style>
+                    <script type="08fe1970a548ea4f4a2f05eb-text/javascript">
+
+                    </script>
+
+                    <!-- Extended Information from JSON -->
+                    <div id="additionalAssetInfo" style="display:none;">
+                        <a name="extended"></a>
+                        <div class="panel-heading panel-heading-lg primary-middle"><i class="fa fa-lg fa-id-card"></i> Enhanced Asset Information</div>
+                        <table width="100%" class="table table-condensed table-striped table-bordered no-bottom-margin no-top-border asset-info asset-info-hide">
+                        <tbody>
+                        <tr>
+                            <th>Name</th>
+                            <td id="assetName">&nbsp;</td>
+                        </tr>
+                        <tr>
+                            <th>Website</th>
+                            <td id="assetWebsite">&nbsp;</td>
+                        </tr>
+                        <tr>
+                            <th>PGP Signature</th>
+                            <td id="pgpSignature">&nbsp;</td>
+                        </tr>
+                        <tr>
+                            <th>Category</th>
+                            <td id="assetCategory">&nbsp;</td>
+                        </tr>
+                        <tr>
+                            <th>Subcategory</th>
+                            <td id="assetSubCategory">&nbsp;</td>
+                        </tr>
+                        <tr>
+                            <th>Other Category</th>
+                            <td id="assetCategoryOther">&nbsp;</td>
+                        </tr>
+                        <tr>
+                            <th>Description</th>
+                            <td id="assetExtendedDescription">&nbsp;</td>
+                        </tr>
+                        </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Owner Information -->
+                    <div id="ownerInfo" style="display:none;">                        
+                        <div class="panel-heading panel-heading-lg primary-middle centered-icons"><i class="fa fa-user fa-lg"></i> Owner Information</div>
+                        <table width="100%" class="table table-condensed table-striped table-bordered no-bottom-margin no-top-border asset-info asset-info-hide">
+                        <tbody>
+                        <tr>
+                            <th>Name</th>
+                            <td id="ownerName">&nbsp;</td>
+                        </tr>
+                        <tr>
+                            <th>Title</th>
+                            <td id="ownerTitle">&nbsp;</td>
+                        </tr>
+                        <tr>
+                            <th>Organization</th>
+                            <td id="ownerOrganization">&nbsp;</td>
+                        </tr>
+                        </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Contact Information -->
+                    <div id="contactInfo" style="display:none;">
+                        <div class="panel-heading panel-heading-lg primary-middle centered-icons"><i class="fa fa-envelope fa-lg"></i> Contact Information</div>
+                        <table width="100%" class="table table-condensed table-striped table-bordered no-bottom-margin no-top-border asset-info">
+                        <tbody>
+                        </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Social Media Information -->
+                    <div id="socialInfo" style="display:none;">
+                        <div class="panel-heading panel-heading-lg primary-middle centered-icons"><i class="fa fa-bullhorn fa-lg"></i> Social Media</div>
+                        <table width="100%" class="table table-condensed table-striped table-bordered no-bottom-margin no-top-border asset-info">
+                        <tbody>
+                        </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Images Information -->
+                    <div id="imagesInfo" style="display:none;">
+                        <div class="panel-heading panel-heading-lg primary-middle centered-icons"><i class="fa fa-image fa-lg"></i> Images</div>
+                        <table width="100%" class="table table-condensed table-striped table-bordered no-bottom-margin no-top-border asset-info">
+                        <tbody>
+                        </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Audio Information -->
+                    <div id="audioInfo" style="display:none;">
+                        <div class="panel-heading panel-heading-lg primary-middle centered-icons"><i class="fa fa-music fa-lg"></i> Audio</div>
+                        <table width="100%" class="table table-condensed table-striped table-bordered no-bottom-margin no-top-border asset-info">
+                        <tbody>
+                        </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Video Information -->
+                    <div id="videoInfo" style="display:none;">
+                        <div class="panel-heading panel-heading-lg primary-middle centered-icons"><i class="fa fa-play fa-lg"></i> Video</div>
+                        <table width="100%" class="table table-condensed table-striped table-bordered no-bottom-margin no-top-border asset-info">
+                        <tbody>
+                        </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Files Information -->
+                    <div id="fileInfo" style="display:none;">
+                        <div class="panel-heading panel-heading-lg primary-middle centered-icons"><i class="fa fa-file fa-lg"></i> Files</div>
+                        <table width="100%" class="table table-condensed table-striped table-bordered no-bottom-margin no-top-border asset-info">
+                        <tbody>
+                        </tbody>
+                        </table>
+                    </div>
+
+                    <!-- DNS Information -->
+                    <div id="dnsInfo" style="display:none;">
+                        <div class="panel-heading panel-heading-lg primary-middle centered-icons"><i class="fa fa-server fa-lg"></i> DNS</div>
+                        <table width="100%" class="table table-condensed table-striped table-bordered no-bottom-margin no-top-border asset-info">
+                        <tbody>
+                        </tbody>
+                        </table>
+                    </div>
+
+                </div>
+            </div>
+
+
+            <!-- Destructions -->
+            <div class="tab-pane" id="destructions">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                        <tr class="info">
+                            <th class="record">#</th>
+                            <th class="block">Block</th>
+                            <th class="time">Time</th>
+                            <th class="address">Source</th>
+                            <th class="">Quantity</th>
+                            <th class="view"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Dispenses -->
+            <div class="tab-pane" id="dispenses">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                        <tr class="info">
+                            <th class="record">#</th>
+                            <th class="block">Block</th>
+                            <th class="time">Time</th>
+                            <th class="address">Destination</th>
+                            <th class="">Dispensed</th>
+                            <th class="">BTC Paid</th>
+                            <th class="view"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div>
+            </div>
+
+
+            <!-- Dispensers -->
+            <div class="tab-pane" id="dispensers">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                        <tr class="info">
+                            <th class="record">#</th>
+                            <th class="block">Block</th>
+                            <th class="time">Time</th>
+                            <th class="address">Source</th>
+                            <th class="">Dispensing</th>
+                            <th class="">Cost</th>
+                            <th class="view"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div>
+            </div>
+
+
+            <!-- Dividends -->
+            <div class="tab-pane" id="dividends">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                        <tr class="info">
+                            <th class="record">#</th>
+                            <th class="block">Block</th>
+                            <th class="time">Time</th>
+                            <th class="address">Source</th>
+                            <th class="">Asset</th>
+                            <th class="">Dividend Asset</th>
+                            <th class="">Quantity Per Unit</th>
+                            <th class="view"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Latest Fairmints -->
+            <div class="tab-pane" id="fairmints">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                        <tr class="info">
+                            <th class="record">#</th>
+                            <th class="block">Block</th>
+                            <th class="time">Time</th>
+                            <th class="asset-name">Asset</th>
+                            <th class="earned-quantity">Earned</th>
+                            <th class="paid-quantity">Paid</th>
+                            <th class="commission">Commission</th>
+                            <th class="view"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div> 
+            </div>
+
+
+            <!-- Latest Fairminters -->
+            <div class="tab-pane" id="fairminters">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                        <tr class="info">
+                            <th class="record">#</th>
+                            <th class="block">Block</th>
+                            <th class="time">Time</th>
+                            <th class="asset-name">Asset</th>
+                            <th class="max-supply">Max Supply</th>
+                            <th class="max-mint">Max Mint</th>
+                            <th class="supply">Supply</th>
+                            <th class="view"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div> 
+            </div>
+
+
+            <!-- Holders -->
+            <div class="tab-pane" id="holders">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                        <tr class="info">
+                            <th class="record">#</th>
+                            <th>Percentage</th>
+                            <th class="quantity">Quantity</th>
+                            <th>Estimated Value</th>
+                            <th>Address</th>
+                            <th class="view">&nbsp;</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div>
+            </div>
+
+
+            <!-- Issuances -->
+            <div class="tab-pane" id="issuances">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                        <tr class="info">
+                            <th class="record">#</th>
+                            <th class="block">Block</th>
+                            <th class="time">Time</th>
+                            <th class="asset-name">Asset</th>
+                            <th class="quantity">Quantity</th>
+                            <th class="locked">Lock</th>
+                            <th class="reset">Reset</th>
+                            <th class="transfer">Transfer</th>
+                            <th>Fee</th>
+                            <th class="view"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div> 
+            </div>
+
+            <!-- Markets -->
+            <div class="tab-pane" id="markets">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                        <tr class="info">
+                            <th class="record">#</th>
+                            <th>Market</th>
+                            <th class="text-right">Last Price</th>
+                            <th class="text-right">Ask</th>
+                            <th class="text-right">Bid</th>
+                            <th class="text-right">24h Volume</th>
+                            <th class="text-right">24h Change</th>
+                            <th class="view"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div> 
+            </div>
+
+            <!-- Orders -->
+            <div class="tab-pane" id="orders">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                        <tr class="info">
+                            <th class="record">#</th>
+                            <th class="block">Block</th>
+                            <th class="time">Time</th>
+                            <th>Market</th>
+                            <th>Buying</th>
+                            <th>Selling</th>
+                            <th class="view"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div>
+            </div>
+
+
+            <!-- Sends -->
+            <div class="tab-pane" id="sends">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                    <tr class="info">
+                        <th class="record">#</th>
+                        <th class="block">Block</th>
+                        <th class="time">Time</th>
+                        <th class="asset-name">Asset</th>
+                        <th class="quantity">Quantity</th>
+                        <th class="address">Destination</th>
+                        <th class="view"></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Subassets -->
+            <div class="tab-pane" id="subassets">
+                <div class="panel panel-primary table-responsive">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                    <tr class="info">
+                        <th class="record">#</th>
+                        <th>Asset</th>
+                        <th>Asset Description</th>
+                        <th>Total Supply</th>
+                        <th class="divisible">Divisible</th>
+                        <th class="locked">Locked</th>
+                        <th class="view">&nbsp;</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Latest Unconfirmed -->
+            <div class="tab-pane" id="mempool">
+                <div class="panel panel-primary table-responsive centered-icons">
+                    <table class="table table-striped cell-border table-hover table-condensed" width="100%">
+                    <thead>
+                    <tr class="info">
+                        <th class="record">#</th>
+                        <th class="time">Time</th>
+                        <th class="record-type">Type</th>
+                        <th class="address">Source</th>
+                        <th class="">Details</th>
+                        <th class="view"></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                    </table>
+                </div>
+            </div>
+
+
+        </div>
+    </div>
+</div>
+
+</div>
+
+<!-- Load up support for the A.S.S Viewer (LOL) -->
+<script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/asses.js"></script>
+<script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/assViewer.js"></script>
+
+<!-- Load up list of all known NFTs --> 
+<!-- <script type="text/javascript" src="/js/nfts.js"></script> -->
+
+<script type="08fe1970a548ea4f4a2f05eb-text/javascript">
+    var asset      = 'RAREPEPE';
+    var badAssets  = ['BONUSBTC','COUNTEREVENT'];
+    var safeAssets = ['TIMELINEXCP'];
+    var cachedJson = {};
+    var nftData    = false; // Placeholder for NFT image/data
+
+    // Parse in querystring params to detect active tab
+    var params  = new URLSearchParams(window.location.search),
+        active  = params.get('tab') || params.get('active');
+
+    // Keep track of records per page
+    var sm   = localStorage,
+        rec  = sm.getItem('records_per_page_asset');
+        page = (rec) ? parseInt(rec) : 10;
+
+    // Parse in last known XCP & BTC price
+    var xcp_usd = sm.getItem('xcpPrice') || 0.00,
+        btc_usd = sm.getItem('btcPrice') || 0.00;
+
+    // Array to some misc values used for tracking offset and direction
+    var misc = [];
+
+    // Setup url for relaying .json and .png files
+    var relay = '/relay?url=';
+
+    // Handle requesting transaction data and populating tables
+    function load_transactions(type, rowFn){
+        // Initialize last_start value
+        misc[ type + '_last_start'] = 0;
+        var table = '#' + type + ' table';
+        $(table).dataTable({
+            ajax: {
+                url: "/explorer/" + type + '/' + asset,
+                data: function(data){
+                    // Pass action and offset with request
+                    var action = null,
+                        offset = null;
+                    if(data.start==0){
+                        action = 'first';
+                    } else if(data.start > (misc[type + '_last_start'] + data.length)){
+                        action = 'last';
+                    } else if(data.start >= misc[type + '_last_start']){
+                        action = 'next';
+                        offset = misc[type + '_offset_last'];
+                    } else {
+                        action = 'prev';
+                        offset = misc[type + '_offset_first'];
+                    }
+                    // Set action and offset except in special cases
+                    var arr = ['feeds'];
+                    if(arr.indexOf(type)==-1){
+                        data.action = action;
+                        data.offset = offset;
+                    }
+                    // pass total back to server (used to quickly calculate how many records to display on 'last' page)
+                    data.total =  misc[type + '_total'];
+                    // Cleanup the request so we only send what we need
+                    delete data.columns;
+                    delete data.order;
+                    delete data.search;
+                    delete data.draw;
+                }
+            },
+            pageLength: page,
+            dom: '<"search-options center"<"pull-left hidden-xs"l>p<"pull-right hidden-xs"i>><"search-results"t>',
+            pagingType: "full",
+            serverSide: true,
+            searching: false,
+            ordering: false,
+            processing: true,
+            autoWidth: false,
+            language: {
+                lengthMenu: "_MENU_ per page",
+                zeroRecords: "No records found",
+                info: "_TOTAL_ results",
+                processing: "Loading Data...",
+                loadingRecords: "Loading Data...",
+                // info: "Displaying _START_ - _END_ of _TOTAL_",
+                infoEmpty: "No records available",
+                paginate: {
+                    first: "<i class='fa fa-chevron-left'></i><i class='fa fa-chevron-left'></i>",
+                    previous: "<i class='fa fa-chevron-left'></i>",
+                    next: "<i class='fa fa-chevron-right'></i>",
+                    last: "<i class='fa fa-chevron-right'></i><i class='fa fa-chevron-right'></i>"
+                }
+            },
+            fnDrawCallback: function( o ){
+                var total  = o._iRecordsTotal,
+                    length = o._iDisplayLength,
+                    stop   = o._iDisplayStart + length,
+                    page   = stop / length,
+                    pages  = total / length;
+                if(pages > parseInt(pages))
+                    pages = parseInt(pages) + 1;
+                if(total==0)
+                    page = 0;
+                // Update total count element
+                $('#total' + type.substring(0,1).toUpperCase() + type.substring(1)).text(numeral(o._iRecordsTotal).format('0,0'));
+                // Add 'Page X of Y' in between previous/next buttons
+                $('#' + type + ' .paginate_button.previous').after('&nbsp;&nbsp;Page ' + numeral(page).format('0,0') + ' of ' + numeral(pages).format('0,0') + '&nbsp;&nbsp;')
+                // Track first and last shown tx_index (used for offset tracking)
+                if(o.json.data && o.json.data.length){
+                    var first = o.json.data[0],
+                        last  = o.json.data[o.json.data.length-1];
+                    misc[type + '_offset_first'] = first[first.length-1];
+                    misc[type + '_offset_last']  = last[last.length-1];
+                } else {
+                    misc[type + '_offset_first'] = 0;
+                    misc[type + '_offset_last']  = 0;
+                }
+                // Save the start so we can determine direction when user clicks (prev/next)
+                misc[type + '_last_start'] = o._iDisplayStart;
+                // Save total, so we can pass back in API requests (used to calculate how many records to display on 'last' page)
+                misc[type + '_total'] = o.json.recordsTotal;
+            },
+            // Function once for each row in the table
+            createdRow: rowFn
+        });
+    }
+
+    // Handle loading remote image icon
+    function setAssetIcon(image){
+        // var url = image;
+        var url = relay + image;
+        $.get( url, function(data){
+            if(String(data).trim().length)
+                $('#assetIcon').attr('src', 'data:image/png;base64,' + data);
+        });
+    }
+
+    // Function to remove html from string
+    function stripHtml(html){
+        var tmp = document.createElement("DIV");
+        tmp.innerHTML = html;
+        return tmp.textContent || tmp.innerText || "";
+    }
+
+    // Function to handle converting any JSON to use the CIP25 standard
+    // https://github.com/CounterpartyXCP/cips/blob/master/cip-0025.md
+    function legacyJsonToCip25(o){
+        var json = {},
+            ipfs = /^ipfs:\/\//i;
+            o    = (o) ? o : {};
+        // Replace any ipfs:// urls with the URL provided by Shaban of Spells of Genesis (Thanks Bro)
+        if(ipfs.test(o.image))
+            o.image = 'https://ipfsc.crystalsuite.com/' + String(o.image).replace(ipfs,'');
+        // Pass basic asset info fields forward
+        ['asset','description','image','website','pgpsig','name'].forEach(function(name){ if(o[name]) json[name]=o[name]; });
+        // Owner fields
+        json.owner = {};
+        if(o.owner)
+            ['name','title','organization'].forEach(function(name){ if(o.owner[name]) json.owner[name]=o.owner[name]; });
+        // Contacts Data
+        json.contacts = (typeof o.contacts === 'object') ? o.contacts : [];
+        if(o.contact_address_line_1)
+            json.contacts.push({ type: 'address', data: o.contact_address_line_1 + ' ' + o.contact_address_line_2 + ', ' +  o.contact_city + ', ' +  o.contact_state_province + ' ' +  o.contact_postal_code + ' ' + o.contact_country });
+        if(o.contact_email1)
+            json.contacts.push({ type: 'email', data: o.contact_email1 });
+        if(o.contact_email2)
+            json.contacts.push({ type: 'email', data: o.contact_email2 });
+        if(o.contact_phone)
+            json.contacts.push({ type: 'phone', data: o.contact_phone });
+        if(o.contact_fax)
+            json.contacts.push({ type: 'fax', data: o.contact_fax });
+        if(o.website_alternate1)
+            json.contacts.push({ type: 'url', data: o.website_alternate1 });
+        if(o.website_alternate2)
+            json.contacts.push({ type: 'url', data: o.website_alternate2 });
+        // Category Data
+        json.categories = (typeof o.categories === 'object') ? o.categories : [];
+        if(o.category)
+            json.categories.push({ type: 'main', data: o.category });
+        if(o.subcategory)
+            json.categories.push({ type: 'sub', data: o.subcategory });
+        if(o.category_custom)
+            json.categories.push({ type: 'other', data: o.category_custom });
+        // Social Media
+        json.social = (typeof o.social === 'object') ? o.social : [];
+        if(o.website_social_facebook)
+            json.social.push({ type: 'facebook', data: o.website_social_facebook });
+        if(o.website_social_github)
+            json.social.push({ type: 'github', data: o.website_social_github });
+        if(o.website_social_twitter)
+            json.social.push({ type: 'twitter', data: o.website_social_twitter });
+        if(o.website_social_reddit)
+            json.social.push({ type: 'reddit', data: o.website_social_reddit });
+        if(o.website_social_linkedin)
+            json.social.push({ type: 'linkedin', data: o.website_social_linkedin });
+        // Images
+        json.images = (typeof o.images === 'object') ? o.images : [];
+        // Add 'image' to images array if it does not already exist
+        if(o.image){
+            var found = false;
+            // Extract image URL (prevent html stuffing in image tag)
+            var image = o.image.match(/^(http|https|ipfs)s?:\/\/[^\s]+/)[0].replace('"','');
+            json.images.forEach(function(item){
+                if(item.data==o.image)
+                    found = true;
+            });
+            if(!found)
+                json.images.push({ type: 'icon', data: image });
+            // Unset the image if it is invalid
+            if(image != o.image)
+                delete json.image;
+        }
+        if(o.image_large)
+            json.images.push({ type: 'large', name: o.image_title, data: o.image_large });
+        if(o.image_large_hd)
+            json.images.push({ type: 'hires', name: o.image_title, data: o.image_large_hd });
+        // Loop through images and replace any IPFS urls with the URL provided by Shaban of Spells of Genesis (Thanks Bro)
+        json.images.forEach(function(item){
+            if(ipfs.test(item.data)){
+                item.data = 'https://ipfsc.crystalsuite.com/' + String(item.data).replace(ipfs,'');
+            }
+        });
+        // Audio
+        json.audio = (typeof o.audio === 'object') ? o.audio : [];
+        if(o.audio!='' && typeof o.audio === 'string')
+            json.audio.push({ type: o.audio.slice(-3), data: o.audio });
+        // Video
+        json.video = (typeof o.video === 'object') ? o.video : [];
+        if(o.video!='' && typeof o.video === 'string')
+            json.video.push({ type: o.video.slice(-3), data: o.video });
+        // Files
+        json.files = (typeof o.files === 'object') ? o.files : [];
+        // DNS
+        json.dns = (typeof o.dns === 'object') ? o.dns : [];
+        // Handle trying to extact image/video/audio data from the html description
+        var urls   = String(o.description).match(/(((https?:\/\/)|(www\.))[^\s]+)/g),
+            images = ['gif','jpg','jpeg','gif','png'],
+            audios = ['m4a','mp3','wav'],
+            videos = ['mp4','mov','wmv'];
+        // Loop through any extracted urls and try to detect the content type and add to the appropriate array
+        if(urls){
+            urls.forEach(function(str){
+                var [url, qs] = String(str).split('?'),
+                    url   = url.replace('"',''),
+                    arr   = url.split('.'),
+                    ext   = arr[arr.length-1].toLowerCase(),
+                    found = false;
+                // Extract any images
+                if(images.indexOf(ext)!=-1 && json.images){
+                    json.images.forEach(function(item){
+                        if(item.data==url)
+                            found = true;
+                    });
+                    if(!found){
+                        var type = (/hires/.test(url)!=-1) ? 'hires' : 'standard';
+                        json.images.push({ type: type, data: url });
+                    }
+                }
+                // Extract any video
+                if(videos.indexOf(ext)!=-1 && json.videos){
+                    json.videos.forEach(function(item){
+                        if(item.data==url)
+                            found = true;
+                    });
+                    if(!found)
+                        json.videos.push({ type: ext, data: url });
+                }
+                // Extract any video
+                if(audios.indexOf(ext)!=-1 && json.audio){
+                    json.audio.forEach(function(item){
+                        if(item.data==url)
+                            found = true;
+                    });
+                    if(!found)
+                        json.audio.push({ type: ext, data: url });
+                }
+            });
+        }
+        if(o.html)
+            json.html = o.html;
+        if(json.description){
+            // Loop through description and detect attempts to inject HTML and javascript into description
+            var filters = ['<script', '<iframe', 'onload'],
+                desc    = String(json.description).replace('&lt;','<').replace('&gt;','>'),
+                html    = false;
+            filters.forEach(function(filter){
+                var re = new RegExp(filter, 'ig');
+                if(re.test(desc)){
+                    console.log('matched on filter =',filter);
+                    html = true;
+                }
+            });
+            if(html)
+                json.html = json.description;
+            // Remove any attempts to inject HTML or javascript via description field
+            var desc = String(json.description).replace('&lt;','<').replace('&gt;','>').replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,'').trim();
+            if(json.asset=='UNITYXCP'){
+                json.description = desc;
+            } else {
+                json.description = stripHtml(desc);
+            }
+        }
+        console.log('--- Begin CIP25 JSON ---');
+        console.log(JSON.stringify(json));
+        console.log('--- End CIP25 JSON ---');
+        return json;
+    }
+
+    // Function to handle returning specific record type from array
+    function getArrayItemByType(arr, type){
+        rec = false;
+        arr.forEach(function(item){
+            if(item.type==type)
+                rec = item
+        });
+        return rec;
+    }
+
+    // Function to normalize JSON and display enhanced asset info
+    function showExtendedAssetInfo(json){
+        json = legacyJsonToCip25(json);
+        cachedJson = json;          // Cache JSON so we can easily reference it again when needed
+        showExtendedInfo(json);
+        showAssetArtwork(json);
+    }
+
+
+     // Function to handle displaying any enhanced asset information (CIP25)
+    function showExtendedInfo(o){
+        // Basic Asset Information
+        if(o.name)          $('#assetName').text(o.name).parent().show();
+        if(o.website)       $('#assetWebsite').html('<a href="' + getValidUrl(o.website) + '" target="_blank">' + o.website + '</a>').parent().show();
+        if(o.pgpsig){
+            var html = o.pgpsig;
+            if(o.pgpsig.substr(0,4)=='http')
+                html = '<a href="' + getValidUrl(o.pgpsig) + '" target="_blank">' + o.pgpsig + '</a>'
+            $('#pgpSignature').html(html).parent().show();            
+        }   
+        // Extract Categories info from categories array
+        if(o.categories.length){
+            var main  = getArrayItemByType(o.categories, 'main'),
+                sub   = getArrayItemByType(o.categories, 'sub'),
+                other = getArrayItemByType(o.categories, 'other');
+            if(main)  $('#assetCategory').text(main.data).parent().show();
+            if(sub)   $('#assetSubCategory').text(sub.data).parent().show();
+            if(other) $('#assetCategoryOther').text(other.data).parent().show();
+        }
+        if(o.description){
+            if(o.asset=='UNITYXCP'){
+               $('#assetExtendedDescription').html(o.description).parent().show();
+            } else {
+               $('#assetExtendedDescription').text(o.description).parent().show();
+            }
+        }
+        if(o.name||o.website||o.pgpsig||o.description||main||sub||other)
+            $('#additionalAssetInfo').show();
+        // Owner Information
+        if(o.owner.name)         $('#ownerName').text(o.owner.name).parent().show();
+        if(o.owner.title)        $('#ownerTitle').text(o.owner.title).parent().show();
+        if(o.owner.organization) $('#ownerOrganization').text(o.owner.organization).parent().show();
+        if(o.owner.name||o.owner.title||o.owner.organization)
+            $('#ownerInfo').show();
+        // Contacts
+        if(o.contacts.length){
+            var table = $('#contactInfo table tbody');
+            table.empty();
+            o.contacts.slice(0,10).forEach(function(item){
+                var type = item.type.toLowerCase(),
+                    html = '<tr><th>' + item.type + '</th><td>' + item.data + '</td></tr>';
+                if(type=='email')
+                    html = '<tr><th>' + item.type + '</th><td><a href="mailto:'+ item.data + '">' + item.data + '</a></td></tr>'
+                if(type=='phone'||type=='fax')
+                    html = '<tr><th>' + item.type + '</th><td><a href="tel:'+ item.data + '">' + item.data + '</a></td></tr>'
+                if(type=='url')
+                    html = '<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>'
+                table.append(html);
+            });
+            $('#contactInfo').show();
+        }
+        // Social Media
+        if(o.social.length){
+            var table = $('#socialInfo table tbody');
+            table.empty();
+            o.social.slice(0,10).forEach(function(item){
+                table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            });
+            $('#socialInfo').show();
+        }
+        // Images
+        if(o.images.length){
+            var table = $('#imagesInfo table tbody'),
+                html  = false;
+            table.empty();
+            o.images.slice(0,10).forEach(function(item){
+                if(item.data.substring(0,4)=='data')
+                    return;
+                html = '<tr><th>' + item.type;
+                if(item.size)
+                    html += ' (' + item.size + ')';
+                html += '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>';
+                table.append(html);
+            });
+            if(html)
+                $('#imagesInfo').show();
+        }
+        // Audio
+        if(o.audio.length){
+            var table = $('#audioInfo table tbody');
+            table.empty();
+            o.audio.slice(0,10).forEach(function(item){
+                table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            });
+            $('#audioInfo').show();
+        }
+        // Video
+        if(o.video.length){
+            var table = $('#videoInfo table tbody');
+            table.empty();
+            o.video.slice(0,10).forEach(function(item){
+                table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            });
+            $('#videoInfo').show();
+        }
+        // Files
+        if(o.files.length){
+            var table = $('#fileInfo table tbody');
+            table.empty();
+            o.files.slice(0,10).forEach(function(item){
+                table.append('<tr><th>' + item.type + '</th><td><a href="'+ getValidUrl(item.data) + '" target="_blank">' + item.data + '</a></td></tr>');
+            });
+            $('#fileInfo').show();
+        }
+        // DNS
+        if(o.dns.length){
+            var table = $('#dnsInfo table tbody');
+            table.empty();
+            table.append('<tr><th>Type</th><th>Host</th><th>Value</th></tr>')
+            o.dns.slice(0,10).forEach(function(item){
+                var html = '<tr><td>' + item.type + '</td><td>' + item.host + '</td><td>' + item.value + '</td></tr>';
+                if(item.type.toLowerCase()=='btcdns')
+                    html = '<tr><td>' + item.type + '</td><td colspan="2"><a href="'+ getValidUrl(item.value) + '" target="_blank">' + item.value + '</a></td></tr>';
+                table.append(html);
+            });
+            $('#dnsInfo').show();
+        }
+        if(o.description)
+            $('#additionalInfoNotAvailable').hide();
+        // Handle 
+        var icon = false;
+        if(o.images.length){
+            // First try to find 48x48 icon
+            o.images.forEach(function(item){
+                if(!icon && item.type=='icon' && item.size=='48x48')
+                    icon = item.data;
+            });
+            // If we couldn't find 48x48 icon, use the first icon in the list
+            o.images.forEach(function(item){
+                if(!icon && item.type=='icon')
+                    icon = item.data;
+            });
+        }
+        // Use older "image" param if we couldn't find icon in the CIP25 images array
+        if(!icon && o.image)
+            icon = i.image;
+        // Handle displaying asset icon image
+        if(icon)
+            setAssetIcon(icon);
+    }
+
+    // Hande displaying green banner for any projects associated with this asset
+    function showProjectInfo(info){
+        var html = '';
+        info.projects.forEach(function(project){
+            html += '<div class="alert alert-success bold text-center" style="margin: 15px 15px 15px 15px;">';
+            if(project.name=='Assetic'){
+                html += 'This is officially an <a href="' + project.site + '" target="_blank">ASS</a>'
+            } else {
+                html += '    This is an official card in the ';
+                if(project.site){
+                    html += '<a href="' + project.site + '" target="_blank">' + project.name + '</a> project';
+                } else {
+                    html += project.name + ' project';
+                }
+            }
+            html += '</div>';
+            // Store the NFT data for use 
+            if(!nftData && project.image)
+                nftData = project.image;
+        });
+        $('#additionalInfoNotAvailable').hide();
+        $('#officialCard').html(html).show();
+    }
+
+    // Hande displaying any artwork associated with the asset
+    function showAssetArtwork(o){
+        var audio = false,
+            video = false,
+            image = false,
+            title = false;
+        if(o){
+            // Extract image from images array
+            if(o.images.length){
+                var large    = getArrayItemByType(o.images, 'large'),
+                    standard = getArrayItemByType(o.images, 'standard'),
+                    first    = o.images[0].data;
+                image = (large) ? large.data : (standard) ? standard.data : first.data;
+                title = (large) ? large.name : (standard) ? standard.name : first.name;
+            }
+            // Force usage of project NFT image if we have one
+            if(nftData)
+                image = '/img/cards/' + nftData;
+            // Extract audio from audio array
+            if(o.audio.length){
+                var m4a   = getArrayItemByType(o.audio, 'm4a'),
+                    mp3   = getArrayItemByType(o.audio, 'mp3'),
+                    wav   = getArrayItemByType(o.audio, 'wav'),
+                    first = o.audio[0].data;
+                audio = (m4a) ? m4a.data : (mp3) ? mp3.data : (wav) ? wav.data : first.data;
+                if(!title)
+                    title = (m4a) ? m4a.name : (mp3) ? mp3.name : (wav) ? wav.name : first.name;
+            }
+            // Extract video from videos array
+            if(o.video.length){
+                var mp4   = getArrayItemByType(o.video, 'mp4'),
+                    mov   = getArrayItemByType(o.video, 'mov'),
+                    wmv   = getArrayItemByType(o.video, 'wmv'),
+                    first = o.video[0].data;
+                video = (mp4) ? mp4.data : (mov) ? mov.data : (wmv) ? wmv.data : first.data;
+                if(!title)
+                    title = (mp4) ? mp4.name : (mov) ? mov.name : (wmv) ? wmv.name : first.name;
+            }
+        }
+        // Try to decode asset description using one of the CIP25 defined formats
+        if(!audio && !video && !image){
+            var desc = $('#asset-description').text();
+            // Cleanup description a bit to remove leading/trailing spaces and some funky characters
+            desc = desc.trim().replace('\u001e','');
+            if(/^(imgur|youtube|soundcloud|stamp)/i.test(desc)){
+                // service/info;title format parsing
+                var [url, title, xtra] = desc.split(';'),
+                    [service, code]    = url.split('/'),
+                    title              = (xtra) ? title + ';' + xtra: title,
+                    service            = service.toLowerCase();
+                // stamp:base64_data format parsing (assume it is an image)
+                if(/^stamp:/i.test(desc)){
+                    service = 'stamp';
+                    code    = desc.replace(/^stamp:/i,'');
+                }
+                // Cleanup some bad formats
+                if(service=='imgur.com')
+                    service = 'imgur';
+                // Handle decoding some common characters
+                if(title)
+                    title = title.replace('&#39;',"'");
+                if(service=='imgur')
+                    image = 'https://i.imgur.com/' + code;
+                if(service=='youtube')
+                    video = 'https://www.youtube.com/embed/' + code;
+                if(service=='soundcloud')
+                    audio = 'https://api.soundcloud.com/tracks/' + code;
+                if(service=='stamp')
+                    image = 'data:image/png;base64,' + code;
+                console.log('service, code, title', service, code, title);
+            }
+        }
+        // Handle processing descriptions that include urls
+        if(!audio && !video && !image){
+            if(/http/.test(desc) || /i\.imgur\.com/.test(desc)){
+                var [url, qs] = desc.split('?'), // Ignore any querystring data
+                    arr = url.split('.'),
+                    url = desc,
+                    ext = arr[arr.length-1].toLowerCase();
+                if(url.indexOf('http')==-1)
+                    url = 'http://' + url;
+                // Handle images
+                var images = ['gif','jpg','jpeg','gif','png'],
+                    audios = ['m4a','mp3','wav'],
+                    videos = ['mp4','mov','wmv'];
+                if(images.indexOf(ext)!=-1)
+                    image = url;
+                if(audios.indexOf(ext)!=-1)
+                    audio = url;
+                if(videos.indexOf(ext)!=-1)
+                    video = url;
+            }
+        }
+        // desc = 'ASS:6Rm0vT6yonSPHlzzWfBx2lVqothZHLHlH5ZkBdf_q4M|Counterparty Twerk';
+        // desc = 'ASS:sfpLKYwdMRUYcyQt7gm5YehvKoEsrcDkrnoBa05-wlU'
+        if(/^ass:/i.test(desc) || isASS(asset))
+            service = 'ass';
+        // Handle supporting NFTs (Non-Fungible Tokens) from various projects
+        // console.log('asset=',asset);
+        // console.log('NFT_CARDS=',NFT_CARDS);
+        // If we have a title, display it
+        if(title){
+            var title = title.replace('&#39;',"'");
+            $('#artwork-information').show();
+            $('#artwork-title').text(title).parent().show();
+        }
+        // Load the ASS Viewer (lol)
+        if(service=='ass'){
+            var el   = $('#assViewer'),
+                info = getASSInfo(asset),
+                ass  = (info) ? info : desc,
+                html = '<ass-viewer ass="' + ass + '"></ass-viewer>';
+            el.html(html).show();
+            $('#additionalInfoNotAvailable').hide();
+            $('#digitalArtInfo').show();
+        }
+        if(image||audio||video){
+            $('#additionalInfoNotAvailable').hide();
+            $('#digitalArtInfo').show();
+            if(image){
+                $('#artwork-header').show();
+                if(service=='stamp'){
+                    var el  = $('#artwork-bitcoin-stamp'),
+                        cnt = 0;
+                    el.error(function(){
+                        console.log('got load failure');
+                        cnt++;
+                        // Try to failover to SVG
+                        if(cnt==1){
+                            image = 'data:image/svg+xml;base64,' + code;
+                            el.attr('src',image);
+                        }  else {
+                            $('#additionalInfoNotAvailable').show();
+                            $('#digitalArtInfo').hide();
+                            el.hide();
+                        }
+                    });
+                    el.attr('src',image);
+                    el.show();
+                } else if(service!='ass') {
+                    var el = $('#artwork-image');
+                    el.attr('src',image);
+                    el.show();
+                }
+            }
+            if(video){
+                $('#video-header').show();
+                var el  = $('#video-wrapper'),
+                    arr = video.split('.'),
+                    ext = arr[arr.length-1].toLowerCase();
+                if(/youtube/.test(video)){
+                    el   = $('#video-wrapper-youtube'),
+                    html = '<iframe src="' + video + '" frameborder="0" allowfullscreen class="embedded-video"></iframe>';
+                } else {
+                    var type = '';
+                    if(ext=='mp4') type = 'video/mp4';
+                    if(ext=='wmv') type = 'video/x-ms-asf';
+                    if(ext=='mov') type = 'video/quicktime'
+                    html = '<video draggable="false" controls playsinline="" autoplay="" loop="" class="img-fluid img-responsive" width="100%" style="max-width:400px"><source type="' + type+ '" src="' + video + '"></video>';
+                }
+                el.html(html).show()
+            }
+            if(audio){
+                $('#audio-header').show();
+                var el = $('#audio-wrapper');
+                if(/soundcloud/.test(audio)){
+                    el = $('#audio-wrapper-soundcloud');
+                    html = '<iframe src="https://w.soundcloud.com/player/?url=' + audio + '" frameborder="0" allowfullscreen class="soundcloud-audio"></iframe>';
+                } else {
+                    html = '<audio src="' + audio + '" autoplay="true" controls loop preload></audio>';
+                }
+                el.html(html).show();
+            }
+
+        }
+        if(o.html){
+            $('#custom-content-header').show();
+            $('#custom-content-wrapper').show();
+        }
+        // console.log('audio=',audio);
+        // console.log('video=',video);
+        // console.log('image=',image);
+        // console.log('title=',title);
+    }
+
+
+    $(document).ready(function(){
+
+
+        // Detect any 'per page' changes and update all tables on page to use new 'per page' setting
+        var ignore = false;
+        $('.table').on( 'length.dt', function ( e, settings, length ){
+            sm.setItem('records_per_page_asset',length);
+            if(ignore==false){
+                ignore = true;
+                $('.dataTable').each(function(){
+                    $(this).DataTable().page.len( length ).draw();
+                });
+                ignore = false;
+            }
+        });      
+
+        // Get current USD price of XCP
+        $.getJSON( '/api/network', function( o ){ 
+            if(o){
+                var btc = false,
+                    xcp = false;
+                o.currency_info.forEach(function(obj){
+                    if(obj.id=='bitcoin')
+                        btc = obj;
+                    if(obj.id=='counterparty')
+                        xcp = obj;                   
+                });
+                // Save current price to localStorage (so we can use on other pages)
+                sm.setItem('xcpPrice',xcp.price_usd);
+                sm.setItem('btcPrice',btc.price_usd);
+                xcp_usd = xcp.price_usd;
+                btc_usd = btc.price_usd;
+            }
+        });
+
+
+        // Handle requesting asset information
+        $.getJSON('/api/asset/' + asset, function( o ){
+            if(o.error){
+                $('#page-wrapper').hide();
+            } else {
+                var divisible = (o.divisible) ? 'True' : 'False',
+                    locked    = (o.locked) ? 'True' : 'False',
+                    format    = (o.divisible) ? '0,0.00000000': '0,0',
+                    name      = o.asset,
+                    json      = /^(.*).json/i,
+                    http      = /^http:\/\//,
+                    https     = /^https:\/\//,
+                    ord       = /^ord:/i,
+                    ipfs      = /^ipfs:/i;
+                // Remove the description for some assets which are trying to scam people
+                if(badAssets.indexOf(asset)!=-1)
+                    o.description = 'Scammer Asset';
+                var desc = o.description,
+                    arr  = false;
+                // If the file starts with http and end with JSON, then assume it is valid url and link it
+                if(json.test(desc)||http.test(desc)||https.test(desc)){
+                    var arr  = desc.split(';'),
+                        html = '<a href="' + getValidUrl(arr[0]) + '" target="_blank">' + arr[0] + '</a>';
+                    if(arr[1])
+                        html += ';' + arr[1];
+                    $('#asset-description').html(html);
+                } else {
+                    $('#asset-description').text(desc);
+                }
+                // Make parent asset clickable
+                if(o.type=='subasset'){
+                    var parts  = o.asset_longname.split('.'),
+                        parent = parts[0]
+                        name = '<a href="/asset/' + parent + '">' + parent + '</a>' + o.asset_longname.substring(parent.length) ;
+                } else if(o.type=='named'){
+                    $('#tab-subassets').show();
+                }
+                $('#asset').text(o.asset);
+                $('#asset-name').html(name);
+                $('.display-asset-name').text(o.asset);
+                // Set asset to the actual asset name (named or numeric)
+                asset = o.asset;
+                $('#asset-divisible').text(divisible);
+                $('#asset-locked').text(locked);
+                var fmtA = '0,0.00000000',
+                    fmtB = '0,0.00';
+                var supply = numeral(o.supply).format(format);
+                // If this is a fairmint token, display the minted percentage
+                if(o.hard_cap){
+                    var pct = numeral((o.supply / o.hard_cap) * 100).format('0.00');
+                    if(pct <= 100)
+                        supply += ' (' + pct + '% Minted)';
+                }
+                $('#asset-supply').text(supply);
+                $('#market-xcp-price-xcp').text(numeral(o.market_info.xcp.price).format(fmtA));
+                $('#market-xcp-price-usd').text(numeral(o.market_info.xcp.price * xcp_usd).format(fmtA));
+                $('#market-xcp-floor-xcp').text(numeral(o.market_info.xcp.floor).format(fmtA));
+                $('#market-xcp-floor-usd').text(numeral(o.market_info.xcp.floor * xcp_usd).format(fmtA));
+                $('#market-btc-price-btc').text(numeral(o.market_info.btc.price).format(fmtA));
+                $('#market-btc-price-usd').text(numeral(o.market_info.btc.price * btc_usd).format(fmtA));
+                $('#market-btc-floor-btc').text(numeral(o.market_info.btc.floor).format(fmtA));
+                $('#market-btc-floor-usd').text(numeral(o.market_info.btc.floor * btc_usd).format(fmtA));
+                var mcap = o.estimated_value.btc * o.supply;
+                $('#market-marketcap-btc').text(numeral(mcap).format(fmtA));
+                $('#market-marketcap-usd').text(numeral(mcap * btc_usd).format(fmtB));
+                $('#asset-issuer').html('<a href="/address/' + o.issuer + '">' + o.issuer + '</a>');
+                $('#asset-owner').html('<a href="/address/' + o.owner + '">' + o.owner + '</a>');
+                // Handle displaying green banner for any projects
+                if(o.projects && o.projects.length)
+                    showProjectInfo(o);
+                // Use cached JSON if we have it
+                if(o.json)
+                    showExtendedAssetInfo(o.json);
+                if(json.test(desc) || ipfs.test(desc) || ord.test(desc)){
+                    // If this is an ipfs:// URL, replace the prefix with the crystalsuite.com URL provided by Shaban and EverDreamSoft (Thanks bro)
+                    if(ipfs.test(desc)){
+                        url = 'https://ipfsc.crystalsuite.com/' + String(desc).replace(ipfs,'');
+                    } else if(ord.test(desc)){
+                        var hash = String(desc).replace(ord,'');
+                        if(hash.length!=64)
+                            hash = base64ToHex(hash);
+                        url = 'https://inscription-decoder.vercel.app/api/image?type=json&tx=' + hash;
+                    } else {
+                        url = 'https://' + arr[0].replace('https://','').replace('http://','');
+                    }
+                    // If we have an NFT image, display it immediately
+                    if(nftData!=false)
+                        showExtendedAssetInfo();
+                    // Try to make a request for the JSON directly (might fail due to missing headers, etc)
+                    $.getJSON( url, function( o ){ 
+                        showExtendedAssetInfo(o);
+                    }).fail(function(){
+                        // Try to request the JSON through the tokenscan relay
+                        var url = relay + desc;
+                        $.getJSON( url, function( o ){ 
+                            showExtendedAssetInfo(o);
+                        });
+                    }); 
+                } else {
+                    showExtendedAssetInfo();
+                }
+            }
+        });        
+
+        // Handle requesting reputation info from coindaddy.io
+        $.getJSON('https://reputation.coindaddy.io/api/asset/xcp/' + asset, function( o ){ 
+            if(!o.error){
+                var arr = ['current','30day','6month','1year'];
+                arr.forEach(function(name){
+                    var rating = o['rating_' + name],
+                        text   = (rating>0) ? rating : 'NA';
+                    $('#rating_' + name).html('<a href="https://reputation.coindaddy.io/xcp/asset/' + asset + '"><div class="rateit" data-rateit-readonly="true" data-rateit-value="' + rating + '" data-rateit-ispreset="true"></div></a> <span class="rateit-score">' + text + '</span>')
+                });
+                $('#reputationInfo').show();
+                $('.rateit').rateit();
+            }
+        });
+
+        // Setup a listener for iframe resizes so we can recalculate the dimensions
+        var iframeWin = document.getElementById('customContentViewer').contentWindow;
+        $(iframeWin).on('resize', function(){ resizeIframe(); });
+
+        // Simple function to resize iframe height to fit content
+        function resizeIframe(){
+            var el   = $('#customContentViewer'),
+                body = el.contents().find('body');
+            el.height(body.height() + 16);
+        }
+
+        // Handle loading custom content when the use clicks the "Load Content" button
+        $('#loadCustomContentButton').click(function(){
+            $('#customContentWarning').hide();
+            var el   = $('#customContentViewer');
+                body = el.contents().find('body');
+            body.html(cachedJson.html);
+            el.show();
+            // Cheezy hack to resize the content as it loads
+            setTimeout(function(){ resizeIframe(); }, 100);
+            setTimeout(function(){ resizeIframe(); }, 250);
+            setTimeout(function(){ resizeIframe(); }, 500);
+            setTimeout(function(){ resizeIframe(); }, 1000);
+            setTimeout(function(){ resizeIframe(); }, 2000);
+        });
+
+        // Loop through transaction types and setup listeners to load content on tab click
+        var tabs      = ['destructions','dispensers','dispenses','dividends','holders', 'issuances','fairmints','fairminters','markets','orders','sends','subassets','mempool'];
+            tabStatus = [];
+        tabs.forEach(function(type){
+            tabStatus[type] = false;
+
+            // Setup listeners on tabs to load content when clicked
+            $('#tab-' + type).click(function(){
+                if(!tabStatus[type]){
+                    // Set flag to indicate the tab has been loaded already
+                    tabStatus[type] = true;
+
+
+                    // Destructions
+                    if(type=='destructions'){
+                        load_transactions('destructions',function(row, data, idx){
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            $('td', row).eq(1).html('<a href="/block/' + data[1] + '">' + numeral(data[1]).format('0,0') + '</a>');
+                            $('td', row).eq(2).html('<span data-livestamp='  + data[2] + ' class="nowrap"></span>');
+                            $('td', row).eq(3).html('<a href="/address/' + data[3] + '">' + data[3] + '</a>');
+                            var fmt = (String(data[5]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            $('td', row).eq(4).html(numeral(data[5]).format(fmt));
+                            $('td', row).eq(5).html('<a href="/tx/' + data[6] + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }
+
+                    // Dispensers
+                    if(type=='dispensers'){
+                        load_transactions('dispensers',function(row, data, idx){
+                            var fmt = (String(data[5]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            var info  = data[4].split('|'),
+                                icon  = info[0],
+                                asset = (info[1]!='') ? info[1] : info[0];
+                                warn  = '';
+                            // Tweak the row color to indicate if dispenser is open or closed
+                            var cls = (data[7]==0) ? 'bg-green' : 'bg-red';
+                            // Display dispensers selling less than one token in yellow
+                            if(data[7]==0 && asset == 'XCP' && data[5] < 1){
+                                cls = 'bg-yellow';
+                                warn = ' <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>';
+                            }
+                            $(row).addClass(cls);
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            $('td', row).eq(1).html('<a href="/block/' + data[1] + '">' + numeral(data[1]).format('0,0') + '</a>');
+                            $('td', row).eq(2).html('<span data-livestamp='  + data[2] + ' class="nowrap"></span>');
+                            $('td', row).eq(3).html('<a href="/address/' + data[3] + '">' + data[3] + '</a>');
+                            $('td', row).eq(4).html(numeral(data[5]).format(fmt) + ' <a href="/asset/' + asset + '"><img src="/icon/' + icon + '.png" class="asset-icon-sm pull-left">' + asset + '</a>' + warn);
+                            $('td', row).eq(5).html(numeral(data[6]).format('0,0.00000000') + ' <img src="/icon/BTC.png" class="asset-icon-sm pull-left"> BTC');
+                            $('td', row).eq(6).html('<a href="/tx/' + data[8] + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }
+
+                    // Dispenses
+                    if(type=='dispenses'){
+                        load_transactions('dispenses',function(row, data, idx){
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            $('td', row).eq(1).html('<a href="/block/' + data[1] + '">' + numeral(data[1]).format('0,0') + '</a>');
+                            $('td', row).eq(2).html('<span data-livestamp='  + data[2] + ' class="nowrap"></span>');
+                            $('td', row).eq(3).html('<a href="/address/' + data[3] + '">' + data[3] + '</a>');
+                            var fmt = (String(data[5]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            var info  = data[4].split('|'),
+                                icon  = info[0],
+                                asset = (info[1]!='') ? info[1] : info[0];
+                            $('td', row).eq(4).html(numeral(data[5]).format(fmt) + ' <a href="/asset/' + asset + '"><img src="/icon/' + icon + '.png" class="asset-icon-sm pull-left">' + asset + '</a>');
+                            $('td', row).eq(5).html(numeral(data[6]).format('0,0.00000000') + ' BTC');
+                            $('td', row).eq(6).html('<a href="/tx/' + data[7] + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }
+
+                    // Dividends
+                    if(type=='dividends'){
+                        load_transactions('dividends',function(row, data, idx){
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            $('td', row).eq(1).html('<a href="/block/' + data[1] + '">' + numeral(data[1]).format('0,0') + '</a>');
+                            $('td', row).eq(2).html('<span data-livestamp='  + data[2] + ' class="nowrap"></span>');
+                            $('td', row).eq(3).html('<a href="/address/' + data[3] + '">' + data[3] + '</a>');
+                            var info  = data[4].split('|'),
+                                icon  = info[0],
+                                asset = (info[1]!='') ? info[1] : info[0];
+                            $('td', row).eq(4).html('<a href="/asset/' + asset + '"><img src="/icon/' + icon + '.png" class="asset-icon-sm pull-left">' + asset + '</a>');
+                            var info  = data[5].split('|'),
+                                icon  = info[0],
+                                asset = (info[1]!='') ? info[1] : info[0];
+                            $('td', row).eq(5).html('<a href="/asset/' + asset + '"><img src="/icon/' + icon + '.png" class="asset-icon-sm pull-left">' + asset + '</a>');
+                            var fmt = (String(data[6]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            $('td', row).eq(6).html(numeral(data[6]).format(fmt));
+                            $('td', row).eq(7).html('<a href="/tx/' + data[7] + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }
+
+                    // Fairmints
+                    if(type=='fairmints'){
+                        load_transactions('fairmints',function(row, data, idx){
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            $('td', row).eq(1).html('<a href="/block/' + data[1] + '">' + numeral(data[1]).format('0,0') + '</a>');
+                            $('td', row).eq(2).html('<span data-livestamp='  + data[2] + ' class="nowrap"></span>');
+                            var info  = data[3].split('|'),
+                                icon  = info[0],
+                                asset = (info[1]!='') ? info[1] : info[0];
+                            $('td', row).eq(3).html('<a href="/asset/' + asset + '"><img src="/icon/' + icon + '.png" class="asset-icon-sm pull-left">' + asset + '</a>');
+                            var fmt = (String(data[4]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            $('td', row).eq(4).html(numeral(data[4]).format(fmt));
+                            $('td', row).eq(5).html(numeral(data[5]).format(fmt));
+                            $('td', row).eq(6).html(numeral(data[6]).format(fmt));
+                            $('td', row).eq(7).html('<a href="/tx/' + data[7] + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }
+
+                    // Fairminters
+                    if(type=='fairminters'){
+                        load_transactions('fairminters',function(row, data, idx){
+                            // Tweak the row color to indicate if fairmint is open, close to being minted out, or minted out
+                            var max_supply = data[4],
+                                supply     = data[6],
+                                pct        = (max_supply>0 && supply>0) ? ((supply / max_supply) * 100) : 0,
+                                cls        = (pct>=100) ? 'bg-red' : ( (pct>=75) ? 'bg-yellow' : 'bg-green');
+                            // Max percent out at 100%
+                            if(pct>100)                                
+                                pct = 100;
+                            $(row).addClass(cls);
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            $('td', row).eq(1).html('<a href="/block/' + data[1] + '">' + numeral(data[1]).format('0,0') + '</a>');
+                            $('td', row).eq(2).html('<span data-livestamp='  + data[2] + ' class="nowrap"></span>');
+                            var info  = data[3].split('|'),
+                                icon  = info[0],
+                                asset = (info[1]!='') ? info[1] : info[0];
+                            $('td', row).eq(3).html('<a href="/asset/' + asset + '"><img src="/icon/' + icon + '.png" class="asset-icon-sm pull-left">' + asset + '</a>');
+                            var fmt = (String(data[4]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            $('td', row).eq(4).html(numeral(data[4]).format(fmt));
+                            $('td', row).eq(5).html(numeral(data[5]).format(fmt));
+                            var percent = numeral(pct).format('0.00');
+                            $('td', row).eq(6).html(numeral(data[6]).format(fmt) + ' (' + percent + '%)');
+                            $('td', row).eq(7).html('<a href="/tx/' + data[7] + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }
+
+                    // Holders
+                    if(type=='holders'){
+                        load_transactions('holders',function(row, data, idx){
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            var fmt = (String(data[2]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            $('td', row).eq(2).html(numeral(data[2]).format(fmt));
+                            var value = numeral(data[3]).format('0,0.00000000');
+                                value += '&nbsp;BTC';
+                                value += '&nbsp;<span class="label label-info label-100">$' + numeral(data[3] * btc_usd).format('0,0.00') + '</span>';
+                            $('td', row).eq(3).html(value);
+                            $('td', row).eq(4).html('<a href="/address/' + data[4] + '">' + data[4] + '</a>');
+                            $('td', row).eq(5).html('<a href="/address/' + data[4] + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });                        
+                    }
+
+                    // Issuances
+                    if(type=='issuances'){
+                        load_transactions('issuances',function(row, data, idx){
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            $('td', row).eq(1).html('<a href="/block/' + data[1] + '">' + numeral(data[1]).format('0,0') + '</a>');
+                            $('td', row).eq(2).html('<span data-livestamp='  + data[2] + ' class="nowrap"></span>');
+                            var info  = data[3].split('|'),
+                                icon  = info[0],
+                                asset = (info[1]!='') ? info[1] : info[0];
+                            $('td', row).eq(3).html('<a href="/asset/' + asset + '"><img src="/icon/' + icon + '.png" class="asset-icon-sm pull-left">' + asset + '</a>');
+                            var fmt = (String(data[4]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            $('td', row).eq(4).html(numeral(data[4]).format(fmt));
+                            $('td', row).eq(8).html(data[8] + ' XCP');
+                            $('td', row).eq(9).html('<a href="/tx/' + data[9] + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }
+
+                    // Markets
+                    if(type=='markets'){
+                        load_transactions('markets',function(row, data, idx){
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            var name   = (data[2]!='') ? data[2] : data[1];
+                            $('td', row).eq(1).html('<a href="/market/' + data[1] + '/' + asset + '"><img src="/icon/' + data[1] + '.png" class="asset-icon-sm pull-left">' + name + '</a>');
+                            var fmt = '0,0.00000000';
+                            $('td', row).eq(2).html('<div class="pull-right">' + numeral(data[3]).format(fmt) + '</div>');
+                            $('td', row).eq(3).html('<div class="pull-right">' + numeral(data[4]).format(fmt) + '</div>');
+                            $('td', row).eq(4).html('<div class="pull-right">' + numeral(data[5]).format(fmt) + '</div>');
+                            $('td', row).eq(5).html('<div class="pull-right">' + numeral(data[6]).format(fmt) + '</div>');
+                            var cls = (data[7].indexOf('-')==-1) ? 'green' : 'red';
+                            $('td', row).eq(6).width(80).html('<div class="pull-right"><span class="' + cls + '">' + numeral(data[7]).format('0,0.00') + '%</span></div>');
+                            $('td', row).eq(7).html('<a href="/market/' + data[1] + '/' + asset + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }
+
+                    // Orders
+                    if(type=='orders'){
+                        load_transactions('orders',function(row, data, idx){
+                            // Tweak the row color to indicate if orders is open or not
+                            var cls = (data[7]=='open') ? 'bg-green' : 'bg-red';
+                            $(row).addClass(cls);
+                            var assetA = data[4].split('|'),
+                                assetB = data[6].split('|'),
+                                asset1 = (assetA[1]!='') ? assetA[1] : assetA[0],
+                                asset2 = (assetB[1]!='') ? assetB[1] : assetB[0],
+                                html   =  '<a href="/market/' + asset1 + '/' + asset2 + '">' + 
+                                        '<img src="/icon/' + assetA[0] + '.png" class="asset-icon-sm pull-left"> ' + asset1 + ' / ' + 
+                                        '<img src="/icon/' + assetB[0] + '.png" class="asset-icon-sm pull-left">' + asset2  +
+                                        '</a>';
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            $('td', row).eq(1).html('<a href="/block/' + data[1] + '">' + numeral(data[1]).format('0,0') + '</a>');
+                            $('td', row).eq(2).html('<span data-livestamp='  + data[2] + ' class="nowrap"></span>');
+                            $('td', row).eq(3).html(html);
+                            var fmt = (String(data[3]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            $('td', row).eq(4).html(numeral(data[3]).format(fmt) + ' <a href="/asset/' + asset1 + '"><img src="/icon/' + assetA[0] + '.png" class="asset-icon-sm pull-left">' + asset1 + '</a>');
+                            var fmt = (String(data[5]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            $('td', row).eq(5).html(numeral(data[5]).format(fmt) + ' <a href="/asset/' + asset2 + '"><img src="/icon/' + assetB[0] + '.png" class="asset-icon-sm pull-left">' + asset2 + '</a>');
+                            $('td', row).eq(6).html('<a href="/tx/' + data[8] + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }
+
+                    // Sends
+                    if(type=='sends'){
+                        load_transactions('sends',function(row, data, idx){
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            $('td', row).eq(1).html('<a href="/block/' + data[1] + '">' + numeral(data[1]).format('0,0') + '</a>');
+                            $('td', row).eq(2).html('<span data-livestamp='  + data[2] + ' class="nowrap"></span>');
+                            var info  = data[3].split('|'),
+                                icon  = info[0],
+                                asset = (info[1]!='') ? info[1] : info[0];
+                            $('td', row).eq(3).html('<a href="/asset/' + asset + '"><img src="/icon/' + icon + '.png" class="asset-icon-sm pull-left">' + asset + '</a>');
+                            var fmt = (String(data[4]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            $('td', row).eq(4).html(numeral(data[4]).format(fmt));
+                            $('td', row).eq(5).html('<a href="/address/' + data[5] + '">' + data[5] + '</a>');
+                            $('td', row).eq(6).html('<a href="/tx/' + data[6] + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }
+
+                    // Subassets
+                    if(type=='subassets'){
+                        load_transactions('subassets',function(row, data, idx){
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            var info  = data[1].split('|'),
+                                icon  = info[0],
+                                asset = (info[1]!='') ? info[1] : info[0];
+                            $('td', row).eq(1).html('<a href="/asset/' + asset + '"><img src="/icon/' + icon + '.png" class="asset-icon-sm pull-left">' + asset + '</a>');
+                            var fmt = (String(data[3]).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                            $('td', row).eq(3).html(numeral(data[3]).format(fmt));
+                            $('td', row).eq(6).html('<a href="/asset/' + asset + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }           
+
+                    // Mempool / Unconfirmed Transactions
+                    if(type=='mempool'){
+                        load_transactions('mempool',function(row, data, idx){
+                            var type = data[2],
+                                json = JSON.parse(data[4]),
+                                icon = '';
+                            if(type=='Bet')         icon = 'fa-trophy';
+                            if(type=='Broadcast')   icon = 'fa-bullhorn';
+                            if(type=='Burn')        icon = 'fa-fire';
+                            if(type=='Destruction') icon = 'fa-trash';
+                            if(type=='Dispense')    icon = 'fa-btc';
+                            if(type=='Dispenser')   icon = 'fa-arrows-h';
+                            if(type=='Dividend')    icon = 'fa-sitemap';
+                            if(type=='Issuance')    icon = 'fa-bank';
+                            if(type=='Order')       icon = 'fa-book';
+                            if(type=='Send')        icon = 'fa-send';
+                            if(type=='Cancel')      icon = 'fa-ban';
+                            $('td', row).eq(0).html(numeral(data[0]).format('0,0'));
+                            $('td', row).eq(1).html('<span data-livestamp='  + data[1] + ' class="nowrap"></span>');
+                            $('td', row).eq(2).html('<i class="fa fa-lg '  + icon + '"></i>&nbsp;' + type + '</span>');
+                            $('td', row).eq(3).html('<a href="/address/' + data[3] + '">' + data[3] + '</a>');
+                            // Build out basic description of what is happening in transaction
+                            var txt = data[4];
+                            if(type=='Bet'){
+                                txt = '<img src="/icon/XCP.png" class="asset-icon-sm pull-left">' + numeral(json.wager_quantity).format('0,0.00000000') + ' <a href="/asset/XCP">XCP</a> at ' + numeral(json.fee).format('0,0.00') + '% on feed <a href="/address' +  json.feed_address + '">' + json.feed_address + '</a>';
+                            } else if(type=='Broadcast'){
+                                txt = json.text;
+                            } else if(type=='Burn'){
+                                txt = numeral(json.burned).format('0,0.00000000') + ' BTC burned for ' + numeral(json.earned).format('0,0.00000000') + ' <a href="/asset/XCP">XCP</a>';
+                            } else if(type=='Cancel'){
+                                txt = 'Cancel order <a href="/tx/' +  json.offer_hash + '">' + json.offer_hash + '</a>';
+                            } else if(type=='Destruction'){
+                                var fmt = (String(json.quantity).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                                txt = 'Destroy ' + numeral(json.quantity).format(fmt) + ' <img src="/icon/' + json.asset + '.png" class="asset-icon-sm pull-left"><a href="/asset/' +  asset + '">' + asset + '</a>';
+                            } else if(type=='Dispenser'){
+                                if(json.give_quantity){
+                                    var fmt = (String(json.give_quantity).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                                        btc = numeral((json.satoshirate||0) * 0.00000001).format('0,0.00000000'),
+                                        qty = numeral((json.give_quantity||0)).format(fmt),
+                                        txt = qty + ' <img src="/icon/' + json.asset + '.png" class="asset-icon-sm pull-left"><a href="/asset/' +  json.asset + '">' + json.asset + '</a> for  <img src="/icon/BTC.png" class="asset-icon-sm">' + btc + ' BTC';
+                                } else {
+                                    var txt = 'Close <img src="/icon/' + json.asset + '.png" class="asset-icon-sm pull-left"><a href="/asset/' +  json.asset + '">' + json.asset + '</a> Dispenser';
+                                }
+                            } else if(type=='Dispense'){
+                                var fmt = (json.divisible==true) ? '0,0.00000000': '0,0',
+                                    qty = (json.divisible==true) ? (json.dispense_quantity * 0.00000001) : json.dispense_quantity,
+                                    qty = numeral((qty||0)).format(fmt),
+                                    txt = 'Buying ' + qty + ' <img src="/icon/' + json.asset + '.png" class="asset-icon-sm pull-left"><a href="/asset/' +  json.asset + '">' + json.asset + '</a> from <a href="/tx/' + json.dispenser_tx_hash + '">' + data[3] + '</a>';
+                                $('td', row).eq(3).html('<a href="/address/' + json.destination + '">' + json.destination + '</a>');
+                            } else if(type=='Dividend'){
+                                var fmt = (String(json.quantity_per_unit).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                                txt = numeral(json.quantity_per_unit).format(fmt) + ' <img src="/icon/' + json.dividend_asset + '.png" class="asset-icon-sm pull-left"><a href="/asset/' +  json.dividend_asset + '">' + json.dividend_asset + '</a> to holders of <img src="/icon/' + json.asset + '.png" class="asset-icon-sm"><a href="/asset/' +  json.asset + '">' + json.asset + '</a>';
+                            } else if(type=='Issuance'){
+                                if(json.transfer){
+                                    txt = 'Transfer ownership of <img src="/icon/' + json.asset + '.png" class="asset-icon-sm"> <a href="/asset/' +  json.asset + '">' + json.asset + '</a> to <a href="/address/' + json.issuer + '">' + json.issuer + '</a>';
+                                } else if(json.locked){
+                                    txt = 'Lock supply of <img src="/icon/' + json.asset + '.png" class="asset-icon-sm pull-left"><a href="/asset/' +  json.asset + '">' + json.asset + '</a>';
+                                } else if(json.quantity){
+                                    var fmt = (String(json.quantity).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                                    txt = 'Issue ' + numeral(json.quantity).format(fmt) + ' <img src="/icon/' + json.asset + '.png" class="asset-icon-sm pull-left"><a href="/asset/' +  json.asset + '">' + json.asset + '</a> tokens';
+                                } else {
+                                    txt = 'Register / Update <img src="/icon/' + json.asset + '.png" class="asset-icon-sm pull-left"> <a href="/asset/' +  json.asset + '">' + json.asset + '</a>';
+                                }
+                            } else if(type=='Order'){
+                                var fmtA = (String(json.get_quantity).indexOf('.')==-1) ? '0,0' : '0,0.00000000',
+                                    fmtB = (String(json.give_quantity).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                                txt = numeral(json.get_quantity).format(fmtA)  + ' <img src="/icon/' + json.get_asset  + '.png" class="asset-icon-sm pull-left"><a href="/asset/' +  json.get_asset + '">' + json.get_asset + '</a> for ' +
+                                      ' <img src="/icon/' + json.give_asset + '.png" class="asset-icon-sm">' + numeral(json.give_quantity).format(fmtB) + ' <a href="/asset/' +  json.give_asset + '">' + json.give_asset + '</a>';
+                            } else if(type=='Send'){
+                                var fmt = (String(json.quantity).indexOf('.')==-1) ? '0,0' : '0,0.00000000';
+                                txt = numeral(json.quantity).format(fmt) + ' <img src="/icon/' + json.asset + '.png" class="asset-icon-sm pull-left"><a href="/asset/' +  json.asset + '">' + json.asset + '</a> to <a href="/address/' + json.destination + '">' + json.destination + '</a>';
+                            }
+                            $('td', row).eq(4).html(txt);
+                            $('td', row).eq(5).html('<a href="/tx/' + data[5] + '" class="btn btn-xs btn-success pull-right">view</a>');
+                        });
+                    }
+
+                }
+            });
+        });
+
+        // Detect any icon loading failures and load the default icon
+        $('#assetIcon').on('error', function(){
+            $(this).attr('src', '/icon/' + asset + '.png' );
+        })
+
+        // Automatically load "safe" asset content
+        safeAssets.forEach(function(item){
+            if(item==asset){
+                console.log('click to load');
+                setTimeout(function(){ $('#loadCustomContentButton').click(); }, 1000);
+
+                
+
+            }
+        });
+
+        // Automatically collapse any tabs to only display what we can fit on screen nicely
+        autoCollapseTabs();
+
+        setTimeout(function(){ autoCollapseTabs() }, 250);
+        setTimeout(function(){ autoCollapseTabs() }, 1000);
+
+        // Make sure only one tab is active at a time (fixes issue where multiple items in the 'More' menu can appear as active)
+        $('#data-tabs').on('click', 'li.tab', $.debounce(100,function(e){ 
+            $('#data-tabs li.tab').removeClass('active');
+            $(e.target).closest('li.tab').addClass('active');
+        }));
+
+        // Define placeholders
+        var lastWidth  = 0,
+            lastHeight = 0;
+
+        // Unbind the event to prevent duplicate listeners
+        $(window).unbind('resize');
+
+        // Detect any window resizes and resize datatables to fit 
+        $(window).resize($.debounce(10,function(e){
+            var win    = $(window),
+                height = win.height(),
+                width  = win.width();
+
+            // Fit max amount of tabs on screen (horizontally)
+            if(width!=lastWidth)
+                autoCollapseTabs();            
+            // Try to fit max amount of rows on screen (vertically)
+            // if(height!=lastHeight){
+            //     var rows = getMarketsRowCount();
+            //     if(rows!=lastRows){
+            //         lastRows = rows;
+            //         $('.datatable').each(function(idx, el){
+            //             $(this).DataTable().page.len(rows).draw();
+            //         });
+            //     }
+            // }
+            lastWidth  = width;
+            lastHeight = height;
+        }));
+
+        // If the user specified an active tab on the querystring, then make that tab active
+        if(active && tabs.includes(active)){
+            $('#tab-' + active).click();
+        }
+
+
+    });
+</script>
+        </div>
+    </div>
+
+
+    <!-- Footer -->
+    <div class="footer">
+        <div class="container">
+            <div class="row" style="margin-top:5px">
+                 <div class="col-xs-2 pull-left">
+                        <a href="http://www.counterparty.io" title="Platform powered by Counterparty" target="_blank"><img src="/content/images/footer-counterparty-logo.png" title="Platform powered by Counterparty"></a>
+                </div>
+                <div class="col-sm-8 text-center hidden-xs">
+                    &copy; 
+                    <script type="08fe1970a548ea4f4a2f05eb-text/javascript">
+                        document.write(new Date().getFullYear()); 
+                    </script>
+                    All Rights Reserved<br/>
+                    <a href="/terms">Terms of Use</a> |
+                    <a href="/privacy">Privacy Policy</a> |
+                    <a href="/advertise">Advertise</a>
+                </div>
+                <div class="col-xs-2 pull-right">
+                    <a href="https://www.coindaddy.io" title="Site powered by CoinDaddy" target="_blank"><img src="/content/images/footer-coindaddy-logo.png" class="pull-right" title="Site powered by CoinDaddy"></a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load additional javascript assets -->
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/bootstrap.min.js"></script>
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/moment.min.js"></script>
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/jquery.dataTables.min.js"></script>
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/livestamp.min.js"></script>
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/numeral.js"></script>
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/jquery.rateit.min.js"></script>
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/prism.js"></script>
+    <!-- <script type="text/javascript" src="/js/highcharts.js"></script> -->
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/throttle-debounce-fn.min.js"></script>
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/highstock.js"></script>
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/highcharts_exporting.js"></script>
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/tokenscan_ads.js"></script>
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript" src="/js/tokenscan.js"></script>
+
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-Y457CPMQ9Z" type="08fe1970a548ea4f4a2f05eb-text/javascript"></script>
+    <script type="08fe1970a548ea4f4a2f05eb-text/javascript">
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-Y457CPMQ9Z');
+    </script>    
+
+<script src="/cdn-cgi/scripts/7d0fa10a/cloudflare-static/rocket-loader.min.js" data-cf-settings="08fe1970a548ea4f4a2f05eb-|49" defer></script></body>
+</html>

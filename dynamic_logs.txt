@@ -1,0 +1,9 @@
+Fetching balances...
+
+Phase 1: Generating ASKS for 140 issued assets...
+[DEX MATCH] DANKROSECASH/XCP last traded at 0.0001. Using this price.
+[DEX MATCH] CROCHETPEPE/PEPECASH last traded at 4200.0000. Using this price.
+
+Phase 2: Generating BIDS for 58 FAUXBITCORN assets...
+
+Generated 'fauxbitcorn_dynamic_orders.csv' with 534 SAFE dynamic orders!
