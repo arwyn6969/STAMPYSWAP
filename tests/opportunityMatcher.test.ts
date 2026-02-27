@@ -47,6 +47,7 @@ test('findMatches creates partial-fill opportunities based on wallet balance', a
 
   const matches = await OpportunityMatcher.findMatches(balances, {
     getOrdersForAsset: async (asset) => ordersByAsset[asset] ?? [],
+    getAllOpenOrders: async () => Object.values(ordersByAsset).flat(),
     getAssetDivisibility: async (asset) => divisibility[asset] ?? true,
   });
 
@@ -76,6 +77,7 @@ test('findMatches filters closed or incompatible orders', async () => {
 
   const matches = await OpportunityMatcher.findMatches(balances, {
     getOrdersForAsset: async (asset) => ordersByAsset[asset] ?? [],
+    getAllOpenOrders: async () => Object.values(ordersByAsset).flat(),
     getAssetDivisibility: async () => true,
   });
 

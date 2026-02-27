@@ -19,6 +19,8 @@ import {
   type ComposeResult,
   type Order,
   type TransactionStatus,
+  getIsTestnet,
+  setTestnet,
 } from './lib/counterparty';
 import './App.css';
 
@@ -306,6 +308,23 @@ function App() {
               </span>
             )}
           </button>
+          
+          {/* Testnet Toggle */}
+          <div className="flex items-center gap-2 px-3 py-1 bg-base-100 border border-[var(--border-color)] rounded">
+            <label className="text-xs font-bold uppercase tracking-wider text-muted cursor-pointer" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              Testnet
+              <input 
+                type="checkbox" 
+                checked={getIsTestnet()} 
+                onChange={(e) => {
+                  setTestnet(e.target.checked);
+                  window.location.reload();
+                }}
+                style={{ cursor: 'pointer' }}
+              />
+            </label>
+          </div>
+
           <WalletConnect
             connectedAddress={userAddress}
             onConnect={handleWalletConnect}

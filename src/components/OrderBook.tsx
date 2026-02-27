@@ -171,7 +171,7 @@ export function OrderBook({ orders, asset1, asset2, loading, error, onOrderClick
         onClick={() => onOrderClick?.(order, sweepSet)}
       >
         <td className={isSell ? 'text-error' : 'text-success'}>
-          {isSell ? 'SELL' : 'BUY'}
+          {isSell ? (order.is_dispenser ? 'DISPENSE' : 'SELL') : 'BUY'}
         </td>
         <td>
           <span className="order-asset">

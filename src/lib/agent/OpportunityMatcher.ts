@@ -3,6 +3,7 @@ import {
   type Balance,
   getAssetDivisibility,
   getOrdersForAsset,
+  getAllOpenOrders,
 } from '../counterparty.js';
 import {
   baseUnitsToNumber,
@@ -26,6 +27,7 @@ export interface TradeOpportunity {
 
 interface OpportunityDataProvider {
   getOrdersForAsset: (asset: string) => Promise<Order[]>;
+  getAllOpenOrders: () => Promise<Order[]>;
   getAssetDivisibility: (asset: string) => Promise<boolean>;
 }
 
@@ -39,6 +41,7 @@ export class OpportunityMatcher {
     balances: Balance[],
     provider: OpportunityDataProvider = {
       getOrdersForAsset,
+      getAllOpenOrders,
       getAssetDivisibility,
     },
     assetFilter?: string,
@@ -62,9 +65,15 @@ export class OpportunityMatcher {
     );
     const assetDivisibility = new Map(assetDivEntries);
 
-    const ordersByAsset = await Promise.all(
-      assets.map(async (asset) => [asset, await provider.getOrdersForAsset(asset)] as const),
-    );
+    // Fetch all open orders on the DEX in one go (optimizes away hundreds of per-asset API calls)
+    const allOpenOrders = await provider.getAllOpenOrders();
+
+    // Group the all open orders into the asset buckets the user actually holds
+    const ordersByAsset: Array<[string, Order[]]> = [];
+    for (const asset of assets) {
+      const matches = allOpenOrders.filter(o => o.get_asset.toUpperCase() === asset);
+      ordersByAsset.push([asset, matches]);
+    }
 
     for (const [asset, orders] of ordersByAsset) {
       const balanceQuantity = balanceByAsset.get(asset) ?? 0n;

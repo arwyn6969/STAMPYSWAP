@@ -3,7 +3,36 @@
  * Production: https://api.counterparty.io:4000
  */
 
-const API_BASE = 'https://api.counterparty.io:4000/v2';
+let API_BASE = 'https://api.counterparty.io:4000/v2';
+
+export function getIsTestnet(): boolean {
+  return API_BASE.includes('testnet');
+}
+
+export function setTestnet(isTestnet: boolean) {
+  API_BASE = isTestnet 
+    ? 'https://testnet.counterparty.io:4000/v2' 
+    : 'https://api.counterparty.io:4000/v2';
+    
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem('STAMPYSWAP_TESTNET', isTestnet ? 'true' : 'false');
+    } catch {
+      // Ignored
+    }
+  }
+}
+
+// Initialize from local storage
+if (typeof window !== 'undefined') {
+  try {
+    if (window.localStorage.getItem('STAMPYSWAP_TESTNET') === 'true') {
+      setTestnet(true);
+    }
+  } catch {
+    // Ignored
+  }
+}
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_RETRIES = 2;
 const RETRY_BACKOFF_MS = 500;
@@ -31,6 +60,7 @@ export interface Order {
   get_quantity_normalized?: string;
   give_remaining_normalized?: string;
   get_remaining_normalized?: string;
+  is_dispenser?: boolean;
 }
 
 export interface Balance {
@@ -82,10 +112,26 @@ export async function getOrders(
   asset2: string,
   status: 'open' | 'all' = 'open'
 ): Promise<Order[]> {
-  return requestCounterparty(
+  const norm1 = asset1.trim().toUpperCase();
+  const norm2 = asset2.trim().toUpperCase();
+
+  const orders = await requestCounterparty(
     `/orders/${encodeURIComponent(asset1)}/${encodeURIComponent(asset2)}?status=${status}&verbose=true`,
     parseOrders,
   );
+  
+  // Mix in dispensers!
+  let dispensers: Order[] = [];
+  if (norm1 === 'BTC' && norm2 !== 'BTC') {
+    dispensers = await getDispensersAsOrders(norm2, status);
+    // Dispenser is selling norm2 for BTC, meaning it "gives" norm2 and "gets" BTC
+    // But since the query was order(BTC, norm2), we only show open orders if they match the pair. Wait, getOrders fetches all orders for the PAIR, regardless of direction. 
+    // The query `/orders/BTC/PEPECASH` returns both BTC->PEPE and PEPE->BTC orders.
+  } else if (norm2 === 'BTC' && norm1 !== 'BTC') {
+    dispensers = await getDispensersAsOrders(norm1, status);
+  }
+
+  return [...orders, ...dispensers];
 }
 
 /**
@@ -206,6 +252,61 @@ export async function getOrdersForAsset(asset: string, status: 'open' | 'all' = 
     );
   } catch (e) {
     console.error(`Error fetching orders for ${asset}:`, e);
+    return [];
+  }
+}
+
+/**
+ * Get all open orders across the entire DEX
+ */
+export async function getAllOpenOrders(): Promise<Order[]> {
+  const allOrders: Order[] = [];
+  let cursor: string | undefined;
+  const limit = 1000;
+
+  while (true) {
+    let url = `${API_BASE}/orders?status=open&verbose=true&limit=${limit}`;
+    if (cursor) {
+      url += `&cursor=${cursor}`;
+    }
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.json();
+      
+      if (payload.result) {
+        allOrders.push(...parseOrders(payload.result));
+      }
+      
+      if (!payload.next_cursor || (payload.result && payload.result.length < limit)) {
+        break;
+      }
+      cursor = payload.next_cursor;
+      
+      // Delay to respect rate limits
+      await new Promise(r => setTimeout(r, 100));
+    } catch (err) {
+      console.error("Failed to fetch page of all open orders:", err);
+      break; 
+    }
+  }
+
+  return allOrders;
+}
+
+/**
+ * Fetch open dispensers for an asset and shape them as Orders
+ */
+export async function getDispensersAsOrders(asset: string, status: 'open' | 'all' = 'open'): Promise<Order[]> {
+  try {
+    const statusQuery = status === 'open' ? 'status=10|0' : 'status=all';
+    return await requestCounterparty(
+      `/assets/${encodeURIComponent(asset)}/dispensers?${statusQuery}&verbose=true`,
+      parseDispensers,
+    );
+  } catch (e) {
+    console.error(`Error fetching dispensers for ${asset}:`, e);
     return [];
   }
 }
@@ -415,6 +516,66 @@ function parseOrders(result: unknown): Order[] {
     .map((order) => {
       try {
         return parseOrder(order);
+      } catch {
+        return null;
+      }
+    })
+    .filter((order): order is Order => order !== null);
+}
+
+function parseDispenserAsOrder(value: unknown): Order {
+  if (!isJsonObject(value)) {
+    throw new Error('Malformed dispenser record');
+  }
+
+  const txHash = asString(value.tx_hash).trim();
+  const giveAsset = asString(value.asset).trim().toUpperCase();
+  if (!txHash || !giveAsset) {
+    throw new Error('Malformed dispenser record');
+  }
+
+  const giveQuantity = asBaseUnits(value.give_quantity, 'give_quantity');
+  const satoshirate = asBaseUnits(value.satoshirate, 'satoshirate');
+  const escrowQuantity = asBaseUnits(value.escrow_quantity, 'escrow_quantity');
+  const dispenseCount = asNumber(value.dispense_count);
+  
+  const totalGiven = BigInt(dispenseCount) * giveQuantity;
+  let remaining = escrowQuantity - totalGiven;
+  if (remaining < 0n) remaining = 0n;
+
+  // Dispenser gives Asset, Gets BTC
+  const getAsset = 'BTC';
+  const getRemaining = remaining === 0n ? 0n : (remaining / giveQuantity) * satoshirate;
+  
+  // Fallbacks for statuses: 0=open, 10=open
+  const rawStatus = asNumber(value.status);
+  const status = (rawStatus === 0 || rawStatus === 10) ? 'open' : 'filled';
+
+  return {
+    tx_hash: txHash,
+    source: asString(value.source),
+    give_asset: giveAsset,
+    give_quantity: giveQuantity,
+    give_remaining: remaining,
+    get_asset: getAsset,
+    get_quantity: satoshirate,
+    get_remaining: getRemaining,
+    expiration: 0,
+    expire_index: 0,
+    status: status,
+    give_price: asNumber(value.price),
+    get_price: asNumber(value.price),
+    block_time: asNumber(value.block_index), // Close enough if time isn't present
+    is_dispenser: true,
+  };
+}
+
+function parseDispensers(result: unknown): Order[] {
+  if (!Array.isArray(result)) return [];
+  return result
+    .map((disp) => {
+      try {
+        return parseDispenserAsOrder(disp);
       } catch {
         return null;
       }

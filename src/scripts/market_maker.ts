@@ -14,6 +14,7 @@ const ECPair = ECPairFactory(tinysecp);
 const API_BASE = 'https://api.counterparty.io:4000/v2';
 const DUST_LIMIT = 546;
 const DEFAULT_FEE = 3000;
+const MAX_MEMPOOL_TXS = 24; // Bitcoin Core default relay limit per address is 25
 
 interface UTXO {
   txid: string;
@@ -38,6 +39,8 @@ interface MempoolUtxo {
 interface CounterpartyComposeResult {
   rawtransaction: string;
 }
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 function getErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
@@ -83,16 +86,33 @@ function extractOpReturnData(rawTransaction: string): Buffer {
   throw new Error('Could not extract OP_RETURN payload from composed transaction');
 }
 
+async function getUTXOsWithBalances(address: string): Promise<Set<string>> {
+  const utxos = new Set<string>();
+  try {
+    const { data } = await axios.get(`${API_BASE}/addresses/${address}/balances?type=utxo&verbose=false`);
+    for (const b of (data.result || [])) {
+      if (b.utxo) utxos.add(b.utxo);
+    }
+  } catch {
+    console.warn("Failed to fetch UTXO balances for exclusion, proceeding cautiously...");
+  }
+  return utxos;
+}
+
 async function getUTXOs(address: string): Promise<UTXO[]> {
   try {
     const { data } = await axios.get<MempoolUtxo[]>(
       `https://mempool.space/api/address/${address}/utxo`,
     );
-    return data.map((u) => ({
-      txid: u.txid,
-      vout: u.vout,
-      value: u.value,
-    }));
+    const utxosWithBalances = await getUTXOsWithBalances(address);
+
+    return data
+      .filter(u => !utxosWithBalances.has(`${u.txid}:${u.vout}`))
+      .map((u) => ({
+        txid: u.txid,
+        vout: u.vout,
+        value: u.value,
+      }));
   } catch (error) {
     console.error('Failed to fetch UTXOs:', getErrorMessage(error));
     throw error;
@@ -116,6 +136,29 @@ async function broadcastTx(hex: string): Promise<string> {
   }
 }
 
+async function getExistingOpenOrders(address: string): Promise<Set<string>> {
+  const existing = new Set<string>();
+  try {
+    const { data } = await axios.get(`${API_BASE}/addresses/${address}/orders?status=open&show_unconfirmed=true`);
+    for (const order of (data.result || [])) {
+      existing.add(`${order.give_asset}:${order.get_asset}`);
+    }
+  } catch {
+    console.warn("Failed to fetch existing open orders, skipping idempotency check.");
+  }
+  return existing;
+}
+
+async function getUnconfirmedTxCount(address: string): Promise<number> {
+  try {
+    const { data } = await axios.get(`https://mempool.space/api/address/${address}/txs`);
+    return data.filter((tx: { status?: { confirmed?: boolean } }) => !tx.status?.confirmed).length;
+  } catch {
+    console.warn("Error getting unconfirmed tx count");
+    return 0;
+  }
+}
+
 async function composeOrder(params: {
   address: string;
   give_asset: string;
@@ -132,6 +175,8 @@ async function composeOrder(params: {
     get_quantity: params.get_quantity.toString(),
     expiration: params.expiration.toString(),
     fee_required: params.fee_required.toString(),
+    allow_unconfirmed_inputs: 'true',
+    exclude_utxos_with_balances: 'true'
   }).toString();
 
   const { data } = await axios.get<{ result?: CounterpartyComposeResult; error?: string }>(
@@ -189,7 +234,7 @@ async function main() {
 
   const csvPath = path.resolve(process.cwd(), sourceCsv);
 
-  console.log('\nMarket Maker Agent Active');
+  console.log('\nMarket Maker Agent Active [OPTIMIZED]');
   console.log(`Wallet: ${address}`);
   console.log(`Reading: ${csvPath}`);
 
@@ -199,24 +244,43 @@ async function main() {
     process.exit(0);
   }
 
-  console.log(`Found ${orders.length} orders to process.`);
+  console.log(`Found ${orders.length} target orders in CSV.`);
 
   const utxos = await getUTXOs(address);
   utxos.sort((a, b) => b.value - a.value);
 
   if (utxos.length === 0) {
-    throw new Error('No UTXOs found. Fund this address with BTC first.');
+    throw new Error('No safe UTXOs found. Fund this address with BTC first.');
   }
 
   let activeUtxo = utxos[0];
   console.log(
-    `Using Input UTXO: ${activeUtxo.txid}:${activeUtxo.vout} (${activeUtxo.value} sats)`,
+    `Seeding Chain using Base UTXO: ${activeUtxo.txid}:${activeUtxo.vout} (${activeUtxo.value} sats)`,
   );
 
+  console.log('Fetching existing active orders for idempotency logic...');
+  const existingOrders = await getExistingOpenOrders(address);
+  console.log(`Found ${existingOrders.size} open orders currently active.`);
+
+  let unconfirmedTxs = await getUnconfirmedTxCount(address);
+  
   for (let i = 0; i < orders.length; i += 1) {
     const order = orders[i];
-    console.log(`\n--- Processing Order ${i + 1}/${orders.length} ---`);
-    console.log(`${order.give_asset} -> ${order.get_asset}`);
+    const orderKey = `${order.give_asset}:${order.get_asset}`;
+    
+    console.log(`\n--- [${i + 1}/${orders.length}] ${order.give_asset} -> ${order.get_asset} ---`);
+    
+    if (existingOrders.has(orderKey)) {
+        console.log(`SKIP: Order pair already exists on DEX. Idempotency active.`);
+        continue;
+    }
+
+    // Mempool Check
+    while(unconfirmedTxs >= MAX_MEMPOOL_TXS) {
+        console.log(`[MEMPOOL LIMIT] Waiting for transactions to confirm (${unconfirmedTxs}/${MAX_MEMPOOL_TXS}). Sleeping 30s...`);
+        await sleep(30000);
+        unconfirmedTxs = await getUnconfirmedTxCount(address);
+    }
 
     try {
       const composition = await composeOrder({
@@ -247,7 +311,7 @@ async function main() {
       const changeValue = activeUtxo.value - DEFAULT_FEE;
       if (changeValue < DUST_LIMIT) {
         throw new Error(
-          `Insufficient funds for fee: ${activeUtxo.value} - ${DEFAULT_FEE} < ${DUST_LIMIT}`,
+          `Insufficient funds for fee chain: ${activeUtxo.value} - ${DEFAULT_FEE} < ${DUST_LIMIT}`,
         );
       }
 
@@ -263,17 +327,29 @@ async function main() {
       const hex = tx.toHex();
       const txid = tx.getId();
 
-      console.log(`Broadcasting chain tx ${i + 1}: ${txid}`);
+      console.log(`Broadcasting chained tx: ${txid}`);
       await broadcastTx(hex);
 
+      // Track the loop vars
+      existingOrders.add(orderKey);
+      unconfirmedTxs++;
+
+      // Chain the unconfirmed change output directly into the next transaction
       activeUtxo = {
         txid,
-        vout: 1,
+        vout: 1, // Change is predictably at index 1 because OP_RETURN is index 0
         value: changeValue,
       };
-      console.log(`Success. Next input: ${txid}:1`);
+      
+      console.log(`Success! Next chained input set to: ${txid}:1`);
+      
+      // Delay strictly to prevent rate limiting 429s from our nodes
+      await sleep(2000);
+      
     } catch (error) {
-      console.error(`Failed order ${i + 1}: ${getErrorMessage(error)}`);
+      console.error(`Failed order block: ${getErrorMessage(error)}`);
+      // If we fail mid-chain, it might be due to a stuck node. 
+      // We can exit 1 cleanly, and user can just re-run since it's idempotent.
       process.exit(1);
     }
   }

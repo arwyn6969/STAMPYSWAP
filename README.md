@@ -132,14 +132,13 @@ Base: `https://stampchain.io/api/v2`
 | v1.5 | Fixed Freewallet QR (Counterparty URI scheme), session persistence |
 
 ## Future Enhancements
-
-- [ ] Agentic Market Maker macros (Shopping Cart execution)
-- [ ] Token-specific Opportunity Scanner
-- [ ] Visual Portfolio Selector for Stamp Assets
-- [ ] UI end-to-end test coverage (wallet/sign/broadcast flow)
-- [ ] Favorite/recent pairs
-- [ ] Testnet toggle
-- [ ] Dispenser support
+- [x] Agentic Market Maker macros (Shopping Cart execution)
+- [x] Token-specific Opportunity Scanner
+- [x] Visual Portfolio Selector for Stamp Assets
+- [x] UI end-to-end test coverage (wallet/sign/broadcast flow)
+- [x] Favorite/recent pairs
+- [x] Testnet toggle
+- [x] Dispenser support
 
 ## License
 
