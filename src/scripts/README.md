@@ -33,6 +33,27 @@ npx tsx src/scripts/market_maker.ts src/scripts/orders.example.csv
    - **Chaining**: Immediately uses that new Change Output as the input for the *next* order, without waiting for a block confirmation.
    - Broadcasts to network.
 
+## ⚠️ Security Warnings
+
+> **Your private key is stored in plaintext in the `.env` file.**
+> This is inherently risky. Take the following precautions:
+
+- **Use a dedicated hot wallet** with only the BTC needed for fees. Do NOT use your main wallet.
+- **Never commit `.env` to git** — it is already in `.gitignore` but double-check before pushing.
+- **Delete or zero the `.env` file** when you're done running the script.
+- The script currently supports **P2PKH (legacy) addresses only** — SegWit and Taproot wallets are not supported.
+
+### `.env` Format
+
+```env
+# WIF-encoded private key (starts with 5, K, or L for mainnet)
+PRIVATE_KEY=5Jxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+The address derived from this key must hold BTC for transaction fees (~3000 sats per order).
+
 ## Risks
 - **Mempool Chaining Limit**: Bitcoin nodes typically accept chains up to ~25 transactions deep. If you process >25 orders, the later ones might get rejected until a block is mined.
 - **Fees**: Hardcoded to ~3000 sats/tx currently.
+- **No dry-run mode**: Once started, the script immediately broadcasts real transactions. A `--dry-run` flag is planned for a future release.
+- **No rollback**: Broadcast transactions cannot be cancelled.

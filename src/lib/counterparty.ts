@@ -145,6 +145,20 @@ export async function getBalances(address: string): Promise<Balance[]> {
 }
 
 /**
+ * Get all orders placed by a specific address (open, filled, cancelled, expired)
+ */
+export async function getUserOrders(
+  address: string,
+  status: 'open' | 'filled' | 'cancelled' | 'expired' | 'all' = 'all',
+): Promise<Order[]> {
+  const statusParam = status === 'all' ? 'all' : status;
+  return requestCounterparty(
+    `/addresses/${encodeURIComponent(address)}/orders?status=${statusParam}&verbose=true`,
+    parseOrders,
+  );
+}
+
+/**
  * Compose an order transaction (returns unsigned tx hex)
  */
 export async function composeOrder(params: {

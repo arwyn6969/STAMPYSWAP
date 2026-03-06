@@ -7,6 +7,8 @@
  * between different wallet types and signing methods.
  */
 
+import { getIsTestnet } from './counterparty.js';
+
 export interface BitcoinAddress {
   address: string;
   publicKey: string;
@@ -31,6 +33,7 @@ interface StoredWalletConnection {
 // Session storage keys
 const STORAGE_KEY = 'stampyswap_wallet';
 const MAINNET_ADDRESS_REGEX = /^(bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/;
+const TESTNET_ADDRESS_REGEX = /^(tb1[ac-hj-np-z02-9]{11,71}|[mn][a-km-zA-HJ-NP-Z1-9]{25,34})$/;
 
 // Current connection state (in-memory)
 let currentConnection: WalletConnection | null = null;
@@ -93,8 +96,8 @@ function isStoredWalletConnection(value: unknown): value is StoredWalletConnecti
 }
 
 function inferAddressType(address: string): BitcoinAddress['addressType'] {
-  if (address.startsWith('bc1p')) return 'p2tr';
-  if (address.startsWith('bc1')) return 'p2wpkh';
+  if (address.startsWith('bc1p') || address.startsWith('tb1p')) return 'p2tr';
+  if (address.startsWith('bc1') || address.startsWith('tb1')) return 'p2wpkh';
   if (address.startsWith('3')) return 'p2sh';
   return 'p2pkh';
 }
@@ -204,6 +207,9 @@ export function canSign(): boolean {
 
 export function isValidBitcoinAddress(address: string): boolean {
   const trimmed = address.trim();
+  if (getIsTestnet()) {
+    return TESTNET_ADDRESS_REGEX.test(trimmed);
+  }
   return MAINNET_ADDRESS_REGEX.test(trimmed);
 }
 
@@ -303,7 +309,7 @@ export async function connectWallet(preferredType?: WalletProvider): Promise<Wal
  */
 export function connectManual(address: string): WalletConnection {
   if (!isValidBitcoinAddress(address)) {
-    throw new Error('Invalid Bitcoin mainnet address');
+    throw new Error(getIsTestnet() ? 'Invalid Bitcoin testnet address' : 'Invalid Bitcoin mainnet address');
   }
 
   const connection = buildConnection(address, 'manual');

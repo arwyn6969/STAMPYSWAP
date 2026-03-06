@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import { OrderBook } from './components/OrderBook';
 import { TradeForm } from './components/TradeForm';
 import { QRSigner } from './components/QRSigner';
@@ -7,281 +7,58 @@ import { PortfolioGrid } from './components/PortfolioGrid';
 import { PairSelector } from './components/PairSelector';
 import { WatchlistToolbar } from './components/WatchlistToolbar';
 import { useWatchlist } from './hooks/useWatchlist';
+import { useWishlist } from './hooks/useWishlist';
 import { WalletConnect } from './components/WalletConnect';
 import { OpportunityScanner } from './components/OpportunityScanner';
-import { TransactionDrawer, type TrackedTransaction } from './components/TransactionDrawer';
-import { ShoppingCartMacro, type MacroOrderParams } from './components/ShoppingCartMacro';
-import { type TradeOpportunity } from './lib/agent/OpportunityMatcher';
+import { BuyOpportunityScanner } from './components/BuyOpportunityScanner';
+import { OrderHistory } from './components/OrderHistory';
+import { TransactionDrawer } from './components/TransactionDrawer';
+import { ShoppingCartMacro } from './components/ShoppingCartMacro';
 import {
-  getOrders,
-  getTransactionStatus,
-  composeOrder,
-  type ComposeResult,
-  type Order,
   type TransactionStatus,
   getIsTestnet,
   setTestnet,
 } from './lib/counterparty';
+import { WalletProvider, useWallet } from './contexts/WalletContext';
+import { MarketProvider, useMarket } from './contexts/MarketContext';
+import { TransactionProvider, useTransactions } from './contexts/TransactionContext';
 import './App.css';
 
 export type TrackedLifecycle = 'broadcasted' | TransactionStatus;
 
-function App() {
-  const [userAddress, setUserAddress] = useState('');
-  const [walletCanSign, setWalletCanSign] = useState(false);
-  const [asset1, setAsset1] = useState('XCP');
-  const [asset2, setAsset2] = useState('PEPECASH');
-  const [composeResult, setComposeResult] = useState<ComposeResult | null>(null);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const [prefillOrder, setPrefillOrder] = useState<{
-    giveAsset: string;
-    getAsset: string;
-    giveQuantity: bigint;
-    getQuantity: bigint;
-  } | null>(null);
-  const [trackedTxs, setTrackedTxs] = useState<TrackedTransaction[]>([]);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [isCartOpen, setIsCartOpen] = useState(false);
-  const [selectedPortfolioAssets, setSelectedPortfolioAssets] = useState<string[]>([]);
-  const [macroQueue, setMacroQueue] = useState<MacroOrderParams[]>([]);
+/**
+ * Inner app that consumes all three contexts.
+ */
+function AppContent() {
+  const { userAddress, walletCanSign, connect, disconnect } = useWallet();
+  const market = useMarket();
+  const txCtx = useTransactions();
   const { watchlist, isStarred, togglePair, removePair } = useWatchlist();
-  const ordersRequestId = useRef(0);
+  const {
+    wishlist: buyWishlist,
+    addAsset: addToWishlist,
+    removeAsset: removeFromWishlist,
+  } = useWishlist();
 
-  const handleWalletConnect = useCallback((address: string, canSign = false) => {
-    setUserAddress(address);
-    setWalletCanSign(canSign);
-  }, []);
+  const {
+    asset1, asset2,
+    orders, loading, error, lastRefresh,
+    prefillOrder, composeResult, setComposeResult,
+    fetchOrders,
+    handlePairChange,
+    handleOrderSweep, handleOrderCompete, handleOpportunitySelect,
+    handleExecuteBatch,
+    clearComposeAndQueue,
+    selectedPortfolioAssets, isCartOpen,
+    handleTogglePortfolioAsset, clearPortfolioSelection,
+    openCart, closeCart,
+  } = market;
 
-  const handleWalletDisconnect = useCallback(() => {
-    setUserAddress('');
-    setWalletCanSign(false);
-    setComposeResult(null);
-    setSelectedPortfolioAssets([]);
-    setIsCartOpen(false);
-  }, []);
-
-  const fetchOrders = useCallback(async () => {
-    if (!asset1 || !asset2) {
-      setOrders([]);
-      setLoading(false);
-      setLastRefresh(null);
-      return;
-    }
-    
-    const requestId = ++ordersRequestId.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await getOrders(asset1, asset2, 'open');
-      if (requestId !== ordersRequestId.current) return;
-      setOrders(data);
-      setLastRefresh(new Date());
-    } catch (err) {
-      if (requestId !== ordersRequestId.current) return;
-      setError(err instanceof Error ? err.message : 'Unable to connect to Counterparty API');
-      setOrders([]);
-    } finally {
-      if (requestId === ordersRequestId.current) {
-        setLoading(false);
-      }
-    }
-  }, [asset1, asset2]);
-
-  useEffect(() => {
-    fetchOrders();
-  }, [fetchOrders]);
-
-  const handleOrderSweep = (target: Order, sweepSet: Order[]) => {
-    // Calculate the 'Counter Order' required to fill this sweep
-    // If we are sweeping ASKS (Sellers): We are BUYING.
-    // We Give: Quote Asset (e.g. PEPE)
-    // We Get: Base Asset (e.g. XCP)
-    // Note: Counterparty terminology is from the Order Creator's perspective.
-    
-    const isAsk = target.give_asset === asset1;
-    
-    let totalGive = 0n;
-    let totalGet = 0n;
-
-    sweepSet.forEach(o => {
-      // Aggregate the AMOUNTS from the existing orders
-      totalGive += o.give_remaining; // They Give X
-      totalGet += o.get_remaining;   // They Get Y
-    });
-
-    // Our Order (The Counter) inverses the specific assets
-    if (isAsk) {
-      // They are Selling Asset1 (Give) for Asset2 (Get)
-      // We want to BUY Asset1.
-      // So We Give: Asset2 (Their Get)
-      // We Get: Asset1 (Their Give)
-      setPrefillOrder({
-        giveAsset: asset2,
-        getAsset: asset1,
-        giveQuantity: totalGet, // We match what they want
-        getQuantity: totalGive  // We request what they have
-      });
-    } else {
-      // They are Buying Asset1
-      // We want to SELL Asset1
-      setPrefillOrder({
-        giveAsset: asset1,
-        getAsset: asset2,
-        giveQuantity: totalGet, // We give what they want
-        getQuantity: totalGive  // We get what they offer
-      });
-    }
-  };
-
-  const handleOrderCompete = (target: Order) => {
-    // Copy the exact parameters of the target order to easily create a competing order
-    setPrefillOrder({
-      giveAsset: target.give_asset,
-      getAsset: target.get_asset,
-      giveQuantity: target.give_remaining,
-      getQuantity: target.get_remaining,
-    });
-  };
-
-  const handleOpportunitySelect = (opp: TradeOpportunity) => {
-    setPrefillOrder({
-      giveAsset: opp.asset,
-      getAsset: opp.getAsset,
-      giveQuantity: opp.giveQuantityBase,
-      getQuantity: opp.getQuantityBase,
-    });
-  };
-
-  const handleTogglePortfolioAsset = useCallback((asset: string) => {
-    setSelectedPortfolioAssets(prev => {
-      if (prev.includes(asset)) return prev.filter(a => a !== asset);
-      return [...prev, asset];
-    });
-  }, []);
-
-  const handleTransactionBroadcast = useCallback((txid: string) => {
-    setTrackedTxs(prev => {
-      if (prev.some(t => t.txid === txid)) return prev;
-      return [{
-        txid,
-        status: 'broadcasted',
-        confirmations: 0,
-        lastChecked: new Date(),
-        error: null,
-      }, ...prev];
-    });
-    setIsDrawerOpen(true);
-    
-    // Automatically proceed to the next macro after broadcast
-    setMacroQueue(prev => {
-      if (prev.length > 0) {
-        setComposeResult(null); // Auto-close QR modal if there are more items to sign
-        return prev.slice(1);
-      }
-      return prev;
-    });
-  }, []);
-
-  const refreshTrackedTx = useCallback(async (txid: string) => {
-    try {
-      const state = await getTransactionStatus(txid);
-      setTrackedTxs(prev => prev.map(tx => {
-        if (tx.txid !== txid) return tx;
-        return {
-          ...tx,
-          status: state.status,
-          confirmations: state.confirmations,
-          source: state.source,
-          lastChecked: new Date(),
-          error: null,
-        };
-      }));
-
-      if (state.status === 'confirmed') {
-        void fetchOrders();
-      }
-    } catch (err) {
-      setTrackedTxs(prev => prev.map(tx => {
-        if (tx.txid !== txid) return tx;
-        return {
-          ...tx,
-          lastChecked: new Date(),
-          error: err instanceof Error ? err.message : 'Unable to refresh transaction status',
-        };
-      }));
-    }
-  }, [fetchOrders]);
-
-  useEffect(() => {
-    const pendingTxs = trackedTxs.filter(tx => tx.status !== 'confirmed' && tx.status !== 'failed');
-    if (pendingTxs.length === 0) return;
-
-    // Refresh immediately for new ones
-    for (const tx of pendingTxs) {
-      void refreshTrackedTx(tx.txid);
-    }
-
-    const timerId = window.setInterval(() => {
-      for (const tx of pendingTxs) {
-        void refreshTrackedTx(tx.txid);
-      }
-    }, 15000);
-
-    return () => {
-      window.clearInterval(timerId);
-    };
-  }, [trackedTxs, refreshTrackedTx]);
-
-  const handleDismissTx = useCallback((txid: string) => {
-    setTrackedTxs(prev => prev.filter(tx => tx.txid !== txid));
-  }, []);
-
-  const handleClearCompleted = useCallback(() => {
-    setTrackedTxs(prev => prev.filter(tx => tx.status !== 'confirmed' && tx.status !== 'failed'));
-  }, []);
-
-  const pendingCount = trackedTxs.filter(t => t.status !== 'confirmed' && t.status !== 'failed').length;
-
-  // Process macro queue when it changes
-  useEffect(() => {
-    if (macroQueue.length === 0 || composeResult !== null || !userAddress) return;
-    
-    let cancelled = false;
-    const nextOrder = macroQueue[0];
-    
-    const composeNext = async () => {
-      try {
-        const result = await composeOrder({
-          address: userAddress,
-          give_asset: nextOrder.give_asset,
-          give_quantity: nextOrder.give_quantity,
-          get_asset: nextOrder.get_asset,
-          get_quantity: nextOrder.get_quantity,
-          expiration: nextOrder.expiration
-        });
-        if (!cancelled) setComposeResult(result);
-      } catch (err) {
-        if (!cancelled) {
-          alert(`Failed to compose order for ${nextOrder.give_asset}: ${err instanceof Error ? err.message : String(err)}`);
-          // Shift and continue? Or stop? Let's stop the queue on error to be safe.
-          setMacroQueue([]);
-        }
-      }
-    };
-    
-    void composeNext();
-    
-    return () => { cancelled = true; };
-  }, [macroQueue, composeResult, userAddress]);
-
-  const handleExecuteBatch = useCallback((params: MacroOrderParams[]) => {
-    setMacroQueue(params);
-    setSelectedPortfolioAssets([]); // clear selection
-    setIsCartOpen(false); // close cart
-  }, []);
+  const {
+    trackedTxs, isDrawerOpen, pendingCount,
+    openDrawer, closeDrawer,
+    broadcast, refreshTx, dismissTx, clearCompleted,
+  } = txCtx;
 
   return (
     <div className="app">
@@ -299,7 +76,7 @@ function App() {
           <button 
             className="btn-secondary flex items-center gap-1" 
             style={{ padding: '0.375rem 0.75rem', position: 'relative' }}
-            onClick={() => setIsDrawerOpen(true)}
+            onClick={openDrawer}
           >
             📋 Tx Center
             {pendingCount > 0 && (
@@ -327,8 +104,8 @@ function App() {
 
           <WalletConnect
             connectedAddress={userAddress}
-            onConnect={handleWalletConnect}
-            onDisconnect={handleWalletDisconnect}
+            onConnect={connect}
+            onDisconnect={disconnect}
           />
         </div>
       </header>
@@ -337,16 +114,7 @@ function App() {
         watchlist={watchlist}
         currentBase={asset1}
         currentQuote={asset2}
-        onSelectPair={(base, quote) => {
-          ordersRequestId.current += 1;
-          setAsset1(base);
-          setAsset2(quote);
-          setLoading(false);
-          setOrders([]);
-          setError(null);
-          setLastRefresh(null);
-          setPrefillOrder(null);
-        }}
+        onSelectPair={handlePairChange}
         onRemovePair={removePair}
       />
 
@@ -356,16 +124,7 @@ function App() {
         asset2={asset2}
         isStarred={isStarred(asset1, asset2)}
         onToggleStar={() => togglePair(asset1, asset2)}
-        onPairChange={(base, quote) => {
-          ordersRequestId.current += 1;
-          setAsset1(base);
-          setAsset2(quote);
-          setLoading(false);
-          setOrders([]);
-          setError(null);
-          setLastRefresh(null);
-          setPrefillOrder(null);
-        }}
+        onPairChange={handlePairChange}
       />
 
       {/* Refresh Button */}
@@ -387,9 +146,7 @@ function App() {
         </div>
       )}
 
-      {/* Removed old single trackedTx card */}
-
-      {/* Depth Chart - Visual price/depth display */}
+      {/* Depth Chart */}
       <div className="card mb-2">
         <h2 className="mb-1">Market Depth</h2>
         {loading && (
@@ -444,13 +201,24 @@ function App() {
             userAddress={userAddress} 
             selectedAssets={selectedPortfolioAssets}
             onToggleAsset={handleTogglePortfolioAsset}
-            onClearSelection={() => setSelectedPortfolioAssets([])}
-            onProceedToCart={() => setIsCartOpen(true)}
+            onClearSelection={clearPortfolioSelection}
+            onProceedToCart={openCart}
           />
           <OpportunityScanner 
              userAddress={userAddress} 
              onSelect={handleOpportunitySelect}
              assetFilter={selectedPortfolioAssets.length === 1 ? selectedPortfolioAssets[0] : null}
+          />
+          <BuyOpportunityScanner
+            userAddress={userAddress}
+            wishlist={buyWishlist}
+            onSelect={handleOpportunitySelect}
+            onAddToWishlist={addToWishlist}
+            onRemoveFromWishlist={removeFromWishlist}
+          />
+          <OrderHistory
+            userAddress={userAddress}
+            onViewPair={handlePairChange}
           />
         </div>
       </div>
@@ -458,34 +226,77 @@ function App() {
       {/* QR Signer Modal */}
       <QRSigner 
         composeResult={composeResult} 
-        onClose={() => {
-          setComposeResult(null);
-          if (macroQueue.length > 0) {
-            // Cancel the queue if user dismisses modal
-            setMacroQueue([]);
-          }
-        }}
-        onBroadcast={handleTransactionBroadcast}
-        onTrackTxid={handleTransactionBroadcast}
+        onClose={clearComposeAndQueue}
+        onBroadcast={broadcast}
+        onTrackTxid={broadcast}
       />
 
       <TransactionDrawer 
         transactions={trackedTxs}
         isOpen={isDrawerOpen}
-        onClose={() => setIsDrawerOpen(false)}
-        onDismiss={handleDismissTx}
-        onRefresh={refreshTrackedTx}
-        onClearCompleted={handleClearCompleted}
+        onClose={closeDrawer}
+        onDismiss={dismissTx}
+        onRefresh={refreshTx}
+        onClearCompleted={clearCompleted}
       />
 
       <ShoppingCartMacro 
         userAddress={userAddress}
         selectedAssets={selectedPortfolioAssets}
         isOpen={isCartOpen}
-        onClose={() => setIsCartOpen(false)}
+        onClose={closeCart}
         onExecuteBatch={handleExecuteBatch}
       />
     </div>
+  );
+}
+
+/**
+ * App wraps AppContent in context providers.
+ * Cross-context coordination is handled via callbacks.
+ */
+function App() {
+  return (
+    <WalletProvider>
+      <AppInner />
+    </WalletProvider>
+  );
+}
+
+function AppInner() {
+  const { userAddress } = useWallet();
+
+  return (
+    <MarketProvider userAddress={userAddress}>
+      <TransactionProviderWithMarket>
+        <AppContent />
+      </TransactionProviderWithMarket>
+    </MarketProvider>
+  );
+}
+
+/**
+ * Bridge component that connects TransactionContext to MarketContext
+ * for cross-context coordination (e.g., refetch orders on confirm,
+ * advance macro queue on broadcast).
+ */
+function TransactionProviderWithMarket({ children }: { children: React.ReactNode }) {
+  const market = useMarket();
+  
+  const handleConfirmed = useCallback(() => {
+    void market.fetchOrders();
+  }, [market]);
+
+  const handleBroadcast = useCallback(() => {
+    // Advance the macro queue after each broadcast
+    const m = market as typeof market & { advanceMacroQueue?: () => void };
+    m.advanceMacroQueue?.();
+  }, [market]);
+
+  return (
+    <TransactionProvider onConfirmed={handleConfirmed} onBroadcast={handleBroadcast}>
+      {children}
+    </TransactionProvider>
   );
 }
 

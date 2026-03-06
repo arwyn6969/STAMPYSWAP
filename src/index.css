@@ -1003,3 +1003,198 @@ label {
   color: var(--text-muted);
   font-family: 'JetBrains Mono', monospace;
 }
+
+/* Buy Wishlist Chips */
+.wishlist-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.wishlist-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 999px;
+  color: var(--accent-primary);
+}
+
+.wishlist-chip-remove {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.625rem;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.wishlist-chip-remove:hover {
+  opacity: 1;
+  color: var(--error);
+}
+
+.wishlist-add {
+  display: inline-flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.wishlist-add input {
+  width: 100px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 999px;
+}
+
+.wishlist-add button {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.625rem;
+  border-radius: 999px;
+}
+
+/* Order History */
+.order-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.order-history-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.order-history-filter:hover {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.order-history-filter.active {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.order-history-filter-count {
+  font-size: 0.575rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.order-history-filter.active .order-history-filter-count {
+  background: rgba(99, 102, 241, 0.25);
+}
+
+.order-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 25rem;
+  overflow-y: auto;
+}
+
+.order-history-item {
+  padding: 0.625rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.order-history-item:hover {
+  border-color: rgba(99, 102, 241, 0.3);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.order-history-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.375rem;
+}
+
+.order-history-status {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.order-history-pair {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.order-history-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.order-history-arrow {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.order-history-fill {
+  position: relative;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  margin-top: 0.375rem;
+  overflow: hidden;
+}
+
+.order-history-fill-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.4));
+  border-radius: 8px;
+  transition: width 0.3s ease;
+}
+
+.order-history-fill-text {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 0.575rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.order-history-toggle {
+  width: 100%;
+  text-align: center;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  padding: 0.5rem;
+}

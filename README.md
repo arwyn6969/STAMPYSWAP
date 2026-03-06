@@ -138,7 +138,11 @@ Base: `https://stampchain.io/api/v2`
 - [x] UI end-to-end test coverage (wallet/sign/broadcast flow)
 - [x] Favorite/recent pairs
 - [x] Testnet toggle
-- [x] Dispenser support
+- [x] Dispenser support (BTC pairs)
+- [x] Buy-side opportunity matching
+- [x] Component-level unit tests (OrderBook + TradeForm logic)
+- [x] Order history view
+- [x] State management refactor (App.tsx → WalletContext, MarketContext, TransactionContext)
 
 ## License
 
