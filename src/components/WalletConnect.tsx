@@ -85,7 +85,7 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
     const isWalletConnected = connection?.walletType && connection.walletType !== 'manual';
     
     return (
-      <div className="flex items-center gap-1">
+      <div className="wallet-connected-state">
         <span className="badge wallet-badge">
           {isWalletConnected ? (
             <>
@@ -93,23 +93,23 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
                 {connection?.walletType === 'leather' ? '🔷' : 
                  connection?.walletType === 'xverse' ? '🟣' : '💼'}
               </span>
-              <span className="truncate" style={{ maxWidth: '80px' }}>
+              <span className="truncate wallet-connected-address">
                 {connectedAddress.slice(0, 6)}...{connectedAddress.slice(-4)}
               </span>
             </>
           ) : (
             <>
               <span className="wallet-icon">👁️</span>
-              <span className="truncate" style={{ maxWidth: '80px' }}>
+              <span className="truncate wallet-connected-address">
                 {connectedAddress.slice(0, 6)}...{connectedAddress.slice(-4)}
               </span>
-              <span className="text-warning" style={{ fontSize: '0.5rem' }}>
-                (watch)
+              <span className="wallet-watch-label text-warning">
+                Watch
               </span>
             </>
           )}
         </span>
-        <button className="btn-secondary" onClick={handleDisconnect}>
+        <button className="btn-secondary" type="button" onClick={handleDisconnect}>
           Disconnect
         </button>
       </div>
@@ -118,27 +118,23 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
 
   // Not connected - show connect options
   return (
-    <div className="wallet-connect" style={{ position: 'relative' }}>
+    <div className="wallet-connect">
       {error && (
-        <span className="text-error" style={{ fontSize: '0.75rem', marginRight: '0.5rem' }}>
+        <span className="wallet-connect-error text-error">
           {error}
         </span>
       )}
       
-      {/* Manual Entry Modal */}
       {showManualInput && (
-        <div className="modal-overlay" style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0,0,0,0.8)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000
-        }} onClick={() => setShowManualInput(false)}>
-          <div className="card" onClick={e => e.stopPropagation()} style={{ minWidth: '320px' }}>
-            <h3>Enter Address</h3>
-            <p className="text-muted" style={{ fontSize: '0.9em' }}>Watch-only mode (signing required via Freewallet)</p>
+        <div className="app-overlay" onClick={() => setShowManualInput(false)}>
+          <div className="app-modal wallet-connect-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3 className="modal-title">Enter Address</h3>
+                <p className="modal-subtitle">Connect in watch-only mode and sign through the QR workflow.</p>
+              </div>
+              <button className="btn-icon drawer-close-btn" type="button" onClick={() => setShowManualInput(false)}>✕</button>
+            </div>
             <input 
               type="text" 
               className="form-control" 
@@ -150,20 +146,19 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
                 if (e.key === 'Enter') confirmManualEntry();
                 if (e.key === 'Escape') setShowManualInput(false);
               }}
-              style={{ width: '100%', margin: '1rem 0' }}
             />
-            <div className="flex gap-1 justify-end">
-              <button className="btn-secondary" onClick={() => setShowManualInput(false)}>Cancel</button>
-              <button className="btn-primary" onClick={confirmManualEntry}>Connect</button>
+            <div className="wallet-connect-modal-actions">
+              <button className="btn-secondary" type="button" onClick={() => setShowManualInput(false)}>Cancel</button>
+              <button className="btn-primary" type="button" onClick={confirmManualEntry}>Connect</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Single wallet detected - show direct connect */}
       {availableWallets.length === 1 && (
         <button 
           className="btn-primary" 
+          type="button"
           onClick={() => handleConnect(availableWallets[0])}
           disabled={connecting}
         >
@@ -186,6 +181,7 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
         <div className="wallet-dropdown">
           <button 
             className="btn-primary" 
+            type="button"
             onClick={() => setShowWalletMenu(!showWalletMenu)}
             disabled={connecting}
           >
@@ -204,6 +200,7 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
                 <button 
                   key={wallet}
                   className="wallet-menu-item"
+                  type="button"
                   onClick={() => handleConnect(wallet)}
                 >
                   {wallet === 'leather' && '🔷 '}
@@ -214,6 +211,7 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
               <div className="wallet-menu-divider"></div>
               <button 
                 className="wallet-menu-item text-muted"
+                type="button"
                 onClick={handleManualEntryClick}
               >
                 👁️ Watch Address
@@ -223,14 +221,13 @@ export function WalletConnect({ onConnect, onDisconnect, connectedAddress }: Wal
         </div>
       )}
 
-      {/* No wallets detected - show manual entry */}
       {availableWallets.length === 0 && (
-        <div className="flex items-center gap-1">
-          <button className="btn-primary" onClick={handleManualEntryClick}>
+        <div className="wallet-connect-watchonly">
+          <button className="btn-primary" type="button" onClick={handleManualEntryClick}>
             Connect Wallet
           </button>
-          <span className="text-muted" style={{ fontSize: '0.625rem' }}>
-            (Watch-only)
+          <span className="wallet-watch-note text-muted">
+            Watch-only
           </span>
         </div>
       )}

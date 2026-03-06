@@ -71,19 +71,28 @@ export function BuyOpportunityScanner({
   if (!userAddress) return null;
 
   return (
-    <div className="card" style={{ borderLeft: '4px solid var(--accent-primary)' }}>
-      <div className="flex justify-between items-center mb-2">
-        <h3 className="flex items-center gap-1" style={{ fontSize: '0.9rem', fontWeight: 600 }}>
-          <span style={{ fontSize: '1.25rem' }}>🛍️</span> Buy Opportunities
-        </h3>
+    <div className="card utility-card utility-card-buy">
+      <div className="utility-card-header">
+        <div>
+          <h3 className="utility-card-title">Buy Watchlist</h3>
+          <p className="utility-card-subtitle">
+            Keep a shortlist of target assets and surface sellers you can prefill against.
+          </p>
+        </div>
         {wishlist.length > 0 && (
-          <button className="btn-icon" onClick={scan} title="Rescan buy opportunities">
+          <button className="btn-icon" type="button" onClick={scan} title="Rescan buy opportunities">
             ↻
           </button>
         )}
       </div>
 
-      {/* Wishlist chips */}
+      <div className="wishlist-editor">
+        <div className="wishlist-editor-copy">
+          <span className="wishlist-editor-title">Wanted assets</span>
+          <span className="wishlist-editor-note">Add symbols you want to accumulate.</span>
+        </div>
+      </div>
+
       <div className="wishlist-chips">
         {wishlist.map(asset => (
           <span key={asset} className="wishlist-chip">
@@ -91,6 +100,7 @@ export function BuyOpportunityScanner({
             {asset}
             <button
               className="wishlist-chip-remove"
+              type="button"
               onClick={() => onRemoveFromWishlist(asset)}
               title={`Remove ${asset}`}
             >
@@ -110,6 +120,7 @@ export function BuyOpportunityScanner({
           />
           <button
             className="btn-primary"
+            type="button"
             onClick={handleAddSubmit}
             disabled={!addInput.trim()}
           >
@@ -118,17 +129,16 @@ export function BuyOpportunityScanner({
         </span>
       </div>
 
-      {/* States */}
       {wishlist.length === 0 && (
-        <div className="text-muted" style={{ fontSize: '0.8rem', textAlign: 'center', padding: '0.5rem' }}>
+        <div className="utility-inline-empty text-muted">
           Add assets you'd like to buy to scan for sellers
         </div>
       )}
 
       {loading && (
-        <div className="loading-state" style={{ padding: '1rem' }}>
+        <div className="loading-state utility-loading-state">
           <span className="spinner"></span>
-          <div className="text-muted" style={{ fontSize: '0.875rem' }}>
+          <div className="text-muted utility-loading-copy">
             Scanning for sellers...
           </div>
         </div>
@@ -137,65 +147,57 @@ export function BuyOpportunityScanner({
       {error && (
         <div className="empty-state">
           <div className="empty-state-text text-error">{error}</div>
-          <button className="btn-secondary" onClick={scan}>Retry</button>
+          <button className="btn-secondary" type="button" onClick={scan}>Retry</button>
         </div>
       )}
 
       {!loading && !error && searched && wishlist.length > 0 && opportunities.length === 0 && (
-        <div className="text-muted" style={{ fontSize: '0.8rem', textAlign: 'center', padding: '0.5rem' }}>
+        <div className="utility-inline-empty text-muted">
           No sellers found for your wishlist assets
         </div>
       )}
 
       {!loading && !error && opportunities.length > 0 && (
-        <div className="flex flex-col gap-1" style={{ maxHeight: '15rem', overflowY: 'auto' }}>
+        <div className="utility-list">
           {opportunities.map((opp) => (
-            <div
+            <button
+              type="button"
               key={opp.order.tx_hash}
-              className="balance-item"
-              style={{ cursor: 'pointer', border: '1px solid var(--border-color)' }}
+              className="utility-opportunity"
               onClick={() => onSelect(opp)}
             >
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <span className="badge" style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'var(--accent-primary)' }}>
+              <div className="utility-opportunity-top">
+                <div className="utility-opportunity-asset">
+                  <span className="badge badge-primary">
                     BUY
                   </span>
-                  <span style={{ fontWeight: 600 }}>
-                    {opp.getAsset}
-                  </span>
                   <AssetIcon asset={opp.getAsset} size={16} />
+                  <span className="utility-opportunity-symbol">{opp.getAsset}</span>
                 </div>
-                <div className="text-muted" style={{ fontSize: '0.75rem' }}>
+                <div className="utility-opportunity-meta">
                   Available
                 </div>
               </div>
 
-              <div className="mb-1 flex justify-between items-center" style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
+              <div className="utility-opportunity-middle">
                 <div>
                   <span className="text-muted">Get: </span>
-                  <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>
+                  <span className="utility-opportunity-value">
                     {opp.expectedReturn.toLocaleString(undefined, { maximumFractionDigits: 8 })} {opp.getAsset}
                   </span>
                 </div>
-                <div
-                  style={{
-                    fontFamily: 'JetBrains Mono, monospace',
-                    padding: '0.125rem 0.375rem',
-                    borderRadius: '6px',
-                    background: 'var(--bg-secondary)',
-                  }}
-                >
+                <div className="utility-opportunity-price">
                   Price: {opp.price.toFixed(6)}
                 </div>
               </div>
-              <div className="text-muted" style={{ fontSize: '0.75rem' }}>
+              <div className="utility-opportunity-copy text-muted">
                 Pay {opp.quantity.toLocaleString(undefined, { maximumFractionDigits: 8 })} {opp.asset}
               </div>
-              <div className="text-muted truncate" style={{ fontSize: '0.625rem', marginTop: '0.25rem' }}>
-                Tx: {opp.order.tx_hash}
+              <div className="utility-opportunity-foot">
+                <span className="text-muted truncate">Tx: {opp.order.tx_hash}</span>
+                <span className="utility-opportunity-cta">Prefill order</span>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}

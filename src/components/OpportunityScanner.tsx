@@ -41,8 +41,6 @@ export function OpportunityScanner({ userAddress, onSelect, assetFilter }: Oppor
     }
   }, [userAddress, assetFilter]);
 
-  // Auto-scan on mount/address change? Maybe better not to spam API. 
-  // Let's make it a button or auto-scan once.
   useEffect(() => {
     if (userAddress) {
       scan();
@@ -53,10 +51,10 @@ export function OpportunityScanner({ userAddress, onSelect, assetFilter }: Oppor
 
   if (loading) {
     return (
-      <div className="card">
-        <div className="loading-state" style={{ padding: '1rem' }}>
+      <div className="card utility-card utility-card-sell">
+        <div className="loading-state utility-loading-state">
           <span className="spinner"></span>
-          <div className="text-muted" style={{ fontSize: '0.875rem' }}>
+          <div className="text-muted utility-loading-copy">
             Scanning market for opportunities...
           </div>
         </div>
@@ -66,77 +64,79 @@ export function OpportunityScanner({ userAddress, onSelect, assetFilter }: Oppor
 
   if (error) {
     return (
-      <div className="card">
+      <div className="card utility-card utility-card-sell">
         <div className="empty-state">
           <div className="empty-state-title">Opportunity Scan Failed</div>
           <div className="empty-state-text text-error">{error}</div>
-          <button className="btn-secondary" onClick={scan}>Retry</button>
+          <button className="btn-secondary" type="button" onClick={scan}>Retry</button>
         </div>
       </div>
     );
   }
 
-  if (searched && opportunities.length === 0) {
-    return null; // Don't show if nothing found, to reduce clutter
-  }
-
   return (
-    <div className="card" style={{ borderLeft: '4px solid var(--success)' }}>
-      <div className="flex justify-between items-center mb-2">
-        <h3 className="flex items-center gap-1" style={{ fontSize: '0.9rem', fontWeight: 600 }}>
-          <span style={{ fontSize: '1.25rem' }}>💰</span> Active Buyers Found!
-        </h3>
-        <button className="btn-icon" onClick={scan} title="Rescan opportunities">
+    <div className="card utility-card utility-card-sell">
+      <div className="utility-card-header">
+        <div>
+          <h3 className="utility-card-title">Sell Opportunities</h3>
+          <p className="utility-card-subtitle">
+            {assetFilter
+              ? `Showing active buyers for ${assetFilter}.`
+              : 'Scan the market for open orders you can fill with your current holdings.'}
+          </p>
+        </div>
+        <button className="btn-icon" type="button" onClick={scan} title="Rescan opportunities">
           ↻
         </button>
       </div>
+
+      {searched && opportunities.length === 0 && (
+        <div className="empty-state utility-empty-state">
+          <div className="empty-state-title">No active buyers found</div>
+          <div className="empty-state-text">
+            {assetFilter ? `No buyers matched ${assetFilter} right now.` : 'No portfolio assets matched an attractive open order right now.'}
+          </div>
+        </div>
+      )}
       
-      <div className="flex flex-col gap-1" style={{ maxHeight: '15rem', overflowY: 'auto' }}>
+      <div className="utility-list">
         {opportunities.map((opp) => (
-          <div 
+          <button
+            type="button"
             key={opp.order.tx_hash}
-            className="balance-item"
-            style={{ cursor: 'pointer', border: '1px solid var(--border-color)' }}
+            className="utility-opportunity"
             onClick={() => onSelect(opp)}
           >
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-2">
+            <div className="utility-opportunity-top">
+              <div className="utility-opportunity-asset">
                 <span className="badge text-success">SELL</span>
-                <span style={{ fontWeight: 600 }}>
-                    {opp.asset}
-                </span>
-                 <AssetIcon asset={opp.asset} size={16} />
+                <AssetIcon asset={opp.asset} size={16} />
+                <span className="utility-opportunity-symbol">{opp.asset}</span>
               </div>
-              <div className="text-muted" style={{ fontSize: '0.75rem' }}>
+              <div className="utility-opportunity-meta">
                 You have it
               </div>
             </div>
             
-            <div className="mb-1 flex justify-between items-center" style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
+            <div className="utility-opportunity-middle">
               <div>
                 <span className="text-muted">Get: </span>
-                <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>
+                <span className="utility-opportunity-value">
                   {opp.expectedReturn.toLocaleString(undefined, { maximumFractionDigits: 8 })} {opp.getAsset}
                 </span>
               </div>
-              <div
-                style={{
-                  fontFamily: 'JetBrains Mono, monospace',
-                  padding: '0.125rem 0.375rem',
-                  borderRadius: '6px',
-                  background: 'var(--bg-secondary)',
-                }}
-              >
+              <div className="utility-opportunity-price">
                 Price: {opp.price.toFixed(6)}
               </div>
             </div>
-            <div className="text-muted" style={{ fontSize: '0.75rem' }}>
+            <div className="utility-opportunity-copy text-muted">
               Sell {opp.quantity.toLocaleString(undefined, { maximumFractionDigits: 8 })} {opp.asset}
             </div>
-             <div className="text-muted truncate" style={{ fontSize: '0.625rem', marginTop: '0.25rem' }}>
-               Tx: {opp.order.tx_hash}
-             </div>
-          </div>
+            <div className="utility-opportunity-foot">
+              <span className="text-muted truncate">Tx: {opp.order.tx_hash}</span>
+              <span className="utility-opportunity-cta">Prefill order</span>
+            </div>
+          </button>
         ))}
       </div>
     </div>

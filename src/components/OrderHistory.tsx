@@ -1,9 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { getUserOrders, type Order } from '../lib/counterparty';
+import { getAssetDivisibility, getUserOrders, type Order } from '../lib/counterparty';
 import { AssetIcon } from './AssetIcon';
-import { baseUnitsToNumber } from '../lib/quantity';
-
-type StatusFilter = 'all' | 'open' | 'filled' | 'cancelled' | 'expired';
+import { formatBaseUnits } from '../lib/quantity';
+import {
+  filterOrdersByStatus,
+  getOrderStatusCounts,
+  type OrderStatusFilter,
+  sortOrdersByNewest,
+} from '../lib/orderHistory';
 
 interface OrderHistoryProps {
   userAddress: string;
@@ -31,21 +35,20 @@ export function OrderHistory({ userAddress, onViewPair }: OrderHistoryProps) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<OrderStatusFilter>('all');
   const [expanded, setExpanded] = useState(false);
+  const [divisibility, setDivisibility] = useState<Record<string, boolean>>({});
   const requestId = useRef(0);
 
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (force = false) => {
     if (!userAddress) return;
     const id = ++requestId.current;
     setLoading(true);
     setError(null);
     try {
-      const data = await getUserOrders(userAddress, statusFilter);
+      const data = await getUserOrders(userAddress, 'all', { force });
       if (id !== requestId.current) return;
-      // Sort by block_time descending (newest first)
-      const sorted = data.sort((a, b) => (b.block_time || 0) - (a.block_time || 0));
-      setOrders(sorted);
+      setOrders(sortOrdersByNewest(data));
     } catch (e) {
       if (id !== requestId.current) return;
       setError(e instanceof Error ? e.message : 'Failed to load order history');
@@ -53,50 +56,93 @@ export function OrderHistory({ userAddress, onViewPair }: OrderHistoryProps) {
     } finally {
       if (id === requestId.current) setLoading(false);
     }
-  }, [userAddress, statusFilter]);
+  }, [userAddress]);
 
   useEffect(() => {
     if (userAddress) fetchOrders();
-  }, [userAddress, statusFilter, fetchOrders]);
+  }, [userAddress, fetchOrders]);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [statusFilter]);
+  const filteredOrders = filterOrdersByStatus(orders, statusFilter);
+  const displayOrders = expanded ? filteredOrders : filteredOrders.slice(0, 5);
+  const statusCounts = getOrderStatusCounts(orders);
+
+  useEffect(() => {
+    let cancelled = false;
+    const assets = Array.from(new Set(displayOrders.flatMap((order) => [order.give_asset, order.get_asset])));
+    const unresolvedAssets = assets.filter((asset) => divisibility[asset] === undefined);
+    if (unresolvedAssets.length === 0) return undefined;
+
+    const load = async () => {
+      const entries = await Promise.all(
+        unresolvedAssets.map(async (asset) => [asset, await getAssetDivisibility(asset)] as const),
+      );
+      if (cancelled) return;
+      setDivisibility((prev) => {
+        const next = { ...prev };
+        for (const [asset, isDivisible] of entries) {
+          next[asset] = isDivisible;
+        }
+        return next;
+      });
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [displayOrders, divisibility]);
 
   if (!userAddress) return null;
 
-  const statusCounts = orders.reduce(
-    (acc, order) => {
-      acc[order.status] = (acc[order.status] || 0) + 1;
-      return acc;
-    },
-    {} as Record<string, number>,
-  );
-
-  const filteredOrders = statusFilter === 'all' ? orders : orders.filter(o => o.status === statusFilter);
-  const displayOrders = expanded ? filteredOrders : filteredOrders.slice(0, 5);
-
   return (
-    <div className="card">
-      <div className="flex justify-between items-center mb-2">
-        <h3 className="flex items-center gap-1" style={{ fontSize: '0.9rem', fontWeight: 600 }}>
-          <span style={{ fontSize: '1.25rem' }}>📋</span> Order History
+    <div className="card utility-card utility-card-history">
+      <div className="utility-card-header">
+        <div>
+          <h3 className="utility-card-title">Order History</h3>
+          <p className="utility-card-subtitle">
+            Filter recent orders by lifecycle and jump back into any traded market.
+          </p>
+        </div>
+        <div className="utility-card-header-actions">
           {orders.length > 0 && (
-            <span className="text-muted" style={{ fontWeight: 400, fontSize: '0.75rem' }}>
-              ({orders.length})
+            <span className="utility-card-count">
+              {orders.length} total
             </span>
           )}
-        </h3>
-        <button className="btn-icon" onClick={fetchOrders} title="Refresh order history">
-          ↻
-        </button>
+          <button className="btn-icon" type="button" onClick={() => void fetchOrders(true)} title="Refresh order history">
+            ↻
+          </button>
+        </div>
       </div>
 
-      {/* Status filter tabs */}
+      <div className="order-history-summary">
+        <div className="order-history-summary-item">
+          <span className="order-history-summary-label">Open</span>
+          <span className="order-history-summary-value">{statusCounts.open}</span>
+        </div>
+        <div className="order-history-summary-item">
+          <span className="order-history-summary-label">Filled</span>
+          <span className="order-history-summary-value">{statusCounts.filled}</span>
+        </div>
+        <div className="order-history-summary-item">
+          <span className="order-history-summary-label">Closed</span>
+          <span className="order-history-summary-value">{statusCounts.cancelled + statusCounts.expired}</span>
+        </div>
+      </div>
+
       <div className="order-history-filters">
-        {(['all', 'open', 'filled', 'cancelled', 'expired'] as StatusFilter[]).map(status => {
+        {(['all', 'open', 'filled', 'cancelled', 'expired'] as OrderStatusFilter[]).map(status => {
           const count = status === 'all' ? orders.length : (statusCounts[status] || 0);
           const isActive = statusFilter === status;
           return (
             <button
               key={status}
+              type="button"
               className={`order-history-filter ${isActive ? 'active' : ''}`}
+              aria-pressed={isActive}
               onClick={() => setStatusFilter(status)}
             >
               {status === 'all' ? 'All' : STATUS_LABELS[status].label}
@@ -106,25 +152,22 @@ export function OrderHistory({ userAddress, onViewPair }: OrderHistoryProps) {
         })}
       </div>
 
-      {/* Loading */}
       {loading && (
-        <div className="loading-state" style={{ padding: '1rem' }}>
+        <div className="loading-state utility-loading-state">
           <span className="spinner"></span>
-          <div className="text-muted" style={{ fontSize: '0.875rem' }}>Loading your orders...</div>
+          <div className="text-muted utility-loading-copy">Loading your orders...</div>
         </div>
       )}
 
-      {/* Error */}
       {error && (
         <div className="empty-state">
           <div className="empty-state-text text-error">{error}</div>
-          <button className="btn-secondary" onClick={fetchOrders}>Retry</button>
+          <button className="btn-secondary" type="button" onClick={() => void fetchOrders(true)}>Retry</button>
         </div>
       )}
 
-      {/* Empty */}
       {!loading && !error && filteredOrders.length === 0 && (
-        <div className="empty-state" style={{ padding: '1.5rem 0' }}>
+        <div className="empty-state utility-empty-state">
           <div className="empty-state-icon">📭</div>
           <div className="empty-state-title">No Orders Found</div>
           <div className="empty-state-text">
@@ -135,7 +178,6 @@ export function OrderHistory({ userAddress, onViewPair }: OrderHistoryProps) {
         </div>
       )}
 
-      {/* Order list */}
       {!loading && !error && filteredOrders.length > 0 && (
         <>
           <div className="order-history-list">
@@ -143,58 +185,56 @@ export function OrderHistory({ userAddress, onViewPair }: OrderHistoryProps) {
               const statusInfo = STATUS_LABELS[order.status];
               const giveNorm = order.give_quantity_normalized;
               const getNorm = order.get_quantity_normalized;
-              const giveDisplay = giveNorm ? giveNorm : baseUnitsToNumber(order.give_quantity, true).toLocaleString(undefined, { maximumFractionDigits: 8 });
-              const getDisplay = getNorm ? getNorm : baseUnitsToNumber(order.get_quantity, true).toLocaleString(undefined, { maximumFractionDigits: 8 });
+              const giveDisplay = giveNorm
+                ? giveNorm
+                : formatBaseUnits(order.give_quantity, divisibility[order.give_asset] ?? true);
+              const getDisplay = getNorm
+                ? getNorm
+                : formatBaseUnits(order.get_quantity, divisibility[order.get_asset] ?? true);
 
-              // Fill percentage for open orders
               const fillPct = order.give_quantity > 0n
                 ? Number(((order.give_quantity - order.give_remaining) * 100n) / order.give_quantity)
                 : 0;
 
               return (
-                <div
+                <button
                   key={order.tx_hash}
-                  className="order-history-item"
+                  type="button"
+                  className={`order-history-item ${onViewPair ? 'is-clickable' : ''}`}
                   onClick={() => onViewPair?.(order.give_asset, order.get_asset)}
-                  style={{ cursor: onViewPair ? 'pointer' : 'default' }}
                 >
                   <div className="order-history-row-top">
                     <div className="flex items-center gap-1">
-                      <span style={{ fontSize: '0.75rem' }}>{statusInfo.emoji}</span>
+                      <span className="order-history-status-emoji">{statusInfo.emoji}</span>
                       <span className="order-history-status" style={{ color: statusInfo.color }}>
                         {statusInfo.label}
                       </span>
                     </div>
-                    <span className="text-muted" style={{ fontSize: '0.625rem' }}>
+                    <span className="order-history-date text-muted">
                       {formatDate(order.block_time)}
                     </span>
                   </div>
 
                   <div className="order-history-pair">
                     <div className="order-history-side">
-                      <span className="text-muted" style={{ fontSize: '0.625rem' }}>Give</span>
+                      <span className="order-history-side-label text-muted">Give</span>
                       <div className="flex items-center gap-1">
                         <AssetIcon asset={order.give_asset} size={14} />
-                        <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.8rem' }}>
-                          {giveDisplay}
-                        </span>
-                        <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>{order.give_asset}</span>
+                        <span className="order-history-amount">{giveDisplay}</span>
+                        <span className="order-history-asset">{order.give_asset}</span>
                       </div>
                     </div>
                     <span className="order-history-arrow">→</span>
                     <div className="order-history-side">
-                      <span className="text-muted" style={{ fontSize: '0.625rem' }}>Get</span>
+                      <span className="order-history-side-label text-muted">Get</span>
                       <div className="flex items-center gap-1">
                         <AssetIcon asset={order.get_asset} size={14} />
-                        <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.8rem' }}>
-                          {getDisplay}
-                        </span>
-                        <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>{order.get_asset}</span>
+                        <span className="order-history-amount">{getDisplay}</span>
+                        <span className="order-history-asset">{order.get_asset}</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Fill bar for open orders */}
                   {order.status === 'open' && (
                     <div className="order-history-fill">
                       <div className="order-history-fill-bar" style={{ width: `${fillPct}%` }}></div>
@@ -202,21 +242,22 @@ export function OrderHistory({ userAddress, onViewPair }: OrderHistoryProps) {
                     </div>
                   )}
 
-                  <div className="text-muted truncate" style={{ fontSize: '0.575rem', marginTop: '0.25rem' }}>
-                    {order.tx_hash}
+                  <div className="order-history-foot">
+                    <span className="text-muted truncate">{order.tx_hash}</span>
+                    {onViewPair && <span className="order-history-cta">Open market</span>}
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
 
-          {/* Show more / less */}
           {filteredOrders.length > 5 && (
             <button
+              type="button"
               className="btn-secondary order-history-toggle"
               onClick={() => setExpanded(!expanded)}
             >
-              {expanded ? `Show less` : `Show all ${filteredOrders.length} orders`}
+              {expanded ? 'Show less' : `Show all ${filteredOrders.length} orders`}
             </button>
           )}
         </>

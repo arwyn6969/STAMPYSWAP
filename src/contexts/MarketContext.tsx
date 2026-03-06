@@ -22,6 +22,7 @@ export interface PrefillOrder {
   getAsset: string;
   giveQuantity: bigint;
   getQuantity: bigint;
+  contextLabel?: string;
 }
 
 interface MarketContextValue {
@@ -37,7 +38,7 @@ interface MarketContextValue {
   composeResult: ComposeResult | null;
   setComposeResult: (result: ComposeResult | null) => void;
   macroQueue: MacroOrderParams[];
-  fetchOrders: () => Promise<void>;
+  fetchOrders: (force?: boolean) => Promise<void>;
   handlePairChange: (base: string, quote: string) => void;
   handleOrderSweep: (target: Order, sweepSet: Order[]) => void;
   handleOrderCompete: (target: Order) => void;
@@ -75,7 +76,7 @@ export function MarketProvider({
   const [macroQueue, setMacroQueue] = useState<MacroOrderParams[]>([]);
   const ordersRequestId = useRef(0);
 
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (force = false) => {
     if (!asset1 || !asset2) {
       setOrders([]);
       setLoading(false);
@@ -87,7 +88,7 @@ export function MarketProvider({
     setLoading(true);
     setError(null);
     try {
-      const data = await getOrders(asset1, asset2, 'open');
+      const data = await getOrders(asset1, asset2, 'open', { force });
       if (requestId !== ordersRequestId.current) return;
       setOrders(data);
       setLastRefresh(new Date());
@@ -119,11 +120,12 @@ export function MarketProvider({
 
   const handleOrderSweep = useCallback((target: Order, sweepSet: Order[]) => {
     const isAsk = target.give_asset === asset1;
+    const effectiveSweepSet = sweepSet.length > 0 ? sweepSet : [target];
 
     let totalGive = 0n;
     let totalGet = 0n;
 
-    sweepSet.forEach(o => {
+    effectiveSweepSet.forEach(o => {
       totalGive += o.give_remaining;
       totalGet += o.get_remaining;
     });
@@ -134,6 +136,9 @@ export function MarketProvider({
         getAsset: asset1,
         giveQuantity: totalGet,
         getQuantity: totalGive,
+        contextLabel: effectiveSweepSet.length > 1
+          ? `Sweep ${effectiveSweepSet.length} asks into one draft order`
+          : `Fill the selected ask`,
       });
     } else {
       setPrefillOrder({
@@ -141,6 +146,9 @@ export function MarketProvider({
         getAsset: asset2,
         giveQuantity: totalGet,
         getQuantity: totalGive,
+        contextLabel: effectiveSweepSet.length > 1
+          ? `Sweep ${effectiveSweepSet.length} bids into one draft order`
+          : `Fill the selected bid`,
       });
     }
   }, [asset1, asset2]);
@@ -151,6 +159,7 @@ export function MarketProvider({
       getAsset: target.get_asset,
       giveQuantity: target.give_remaining,
       getQuantity: target.get_remaining,
+      contextLabel: 'Copied live order terms from the book',
     });
   }, []);
 
@@ -160,6 +169,7 @@ export function MarketProvider({
       getAsset: opp.getAsset,
       giveQuantity: opp.giveQuantityBase,
       getQuantity: opp.getQuantityBase,
+      contextLabel: `Autofilled from ${opp.type === 'buy' ? 'buy' : 'sell'} opportunity scanner`,
     });
   }, []);
 

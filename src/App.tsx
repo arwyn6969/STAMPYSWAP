@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { OrderBook } from './components/OrderBook';
 import { TradeForm } from './components/TradeForm';
 import { QRSigner } from './components/QRSigner';
@@ -33,6 +33,12 @@ function AppContent() {
   const { userAddress, walletCanSign, connect, disconnect } = useWallet();
   const market = useMarket();
   const txCtx = useTransactions();
+  const initialCompactViewport = typeof window !== 'undefined'
+    ? window.matchMedia('(max-width: 768px)').matches
+    : false;
+  const [activeUtilityPanel, setActiveUtilityPanel] = useState<'sell' | 'buy' | 'history'>('sell');
+  const [isCompactViewport, setIsCompactViewport] = useState(initialCompactViewport);
+  const [isDepthExpanded, setIsDepthExpanded] = useState(!initialCompactViewport);
   const { watchlist, isStarred, togglePair, removePair } = useWatchlist();
   const {
     wishlist: buyWishlist,
@@ -60,35 +66,85 @@ function AppContent() {
     broadcast, refreshTx, dismissTx, clearCompleted,
   } = txCtx;
 
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)');
+    const syncViewport = (event?: MediaQueryListEvent) => {
+      const matches = event?.matches ?? mediaQuery.matches;
+      setIsCompactViewport(matches);
+      setIsDepthExpanded(!matches);
+    };
+
+    syncViewport();
+    mediaQuery.addEventListener('change', syncViewport);
+    return () => mediaQuery.removeEventListener('change', syncViewport);
+  }, []);
+
+  const askCount = orders.filter((order) => order.status === 'open' && order.give_asset === asset1).length;
+  const bidCount = orders.filter((order) => order.status === 'open' && order.get_asset === asset1).length;
+  const canCollapseDepth = isCompactViewport && !loading && !error && orders.length > 0;
+
+  const activeUtilityMeta = {
+    sell: {
+      title: 'Sell-side Tools',
+      subtitle: selectedPortfolioAssets.length === 1
+        ? `Scanning for active buyers of ${selectedPortfolioAssets[0]}.`
+        : 'Scan your current holdings for orders you can fill immediately.',
+      badge: selectedPortfolioAssets.length === 1 ? `Focused on ${selectedPortfolioAssets[0]}` : 'Uses portfolio selection',
+    },
+    buy: {
+      title: 'Buy Watchlist',
+      subtitle: 'Track wanted assets, compare seller offers, and prefill a buy order from the results.',
+      badge: `${buyWishlist.length} watched`,
+    },
+    history: {
+      title: 'Order History',
+      subtitle: 'Review recent orders, filter by status, and jump back into a traded market.',
+      badge: userAddress ? 'Account activity' : 'Connect a wallet',
+    },
+  } as const;
+
   return (
     <div className="app">
-      <header className="flex justify-between items-center mb-3">
-        <div>
-          <h1>STAMPYSWAP</h1>
-          <p className="text-muted">Counterparty DEX Interface</p>
+      <header className="app-header">
+        <div className="app-brand-block">
+          <div>
+            <h1>STAMPYSWAP</h1>
+            <p className="text-muted">Counterparty DEX Interface</p>
+          </div>
+          <div className="app-status-strip">
+            <span className={`status-pill ${userAddress ? 'is-live' : ''}`}>
+              {userAddress ? 'Wallet connected' : 'Connect a wallet to trade'}
+            </span>
+            <span className={`status-pill ${walletCanSign ? 'is-live' : ''}`}>
+              {walletCanSign ? 'Direct signing ready' : 'QR signing flow'}
+            </span>
+            {pendingCount > 0 && (
+              <span className="status-pill is-live">
+                {pendingCount} pending tx{pendingCount === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
           {userAddress && !walletCanSign && (
-            <p className="text-warning" style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
-              Watch-only mode: sign transactions via Freewallet QR.
+            <p className="connection-hint text-warning">
+              Watch-only mode detected. Compose orders here and sign them from the QR flow.
             </p>
           )}
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="app-header-actions">
           <button 
-            className="btn-secondary flex items-center gap-1" 
-            style={{ padding: '0.375rem 0.75rem', position: 'relative' }}
+            className="btn-secondary flex items-center gap-1 tx-center-trigger"
             onClick={openDrawer}
           >
             📋 Tx Center
             {pendingCount > 0 && (
-              <span className="badge badge-primary absolute -top-2 -right-2 rounded-full px-1.5 min-w-[1.25rem] h-5 flex items-center justify-center">
+              <span className="badge badge-primary tx-center-count">
                 {pendingCount}
               </span>
             )}
           </button>
           
-          {/* Testnet Toggle */}
-          <div className="flex items-center gap-2 px-3 py-1 bg-base-100 border border-[var(--border-color)] rounded">
-            <label className="text-xs font-bold uppercase tracking-wider text-muted cursor-pointer" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div className="network-toggle">
+            <label className="network-toggle-label">
               Testnet
               <input 
                 type="checkbox" 
@@ -97,7 +153,6 @@ function AppContent() {
                   setTestnet(e.target.checked);
                   window.location.reload();
                 }}
-                style={{ cursor: 'pointer' }}
               />
             </label>
           </div>
@@ -127,76 +182,152 @@ function AppContent() {
         onPairChange={handlePairChange}
       />
 
-      {/* Refresh Button */}
       {asset1 && asset2 && (
-        <div className="flex justify-end items-center gap-1 mb-2">
-          {lastRefresh && (
-            <span className="text-muted" style={{ fontSize: '0.75rem' }}>
-              Updated {lastRefresh.toLocaleTimeString()}
-            </span>
-          )}
-          <button 
-            className="btn-icon" 
-            onClick={fetchOrders}
-            disabled={loading}
-            title="Refresh orders"
-          >
-            {loading ? <span className="spinner"></span> : '↻'}
-          </button>
+        <>
+        <div className="workspace-toolbar">
+          <div className="workspace-copy">
+            <span className="workspace-kicker">Primary workflow</span>
+            <span className="workspace-title">{asset1}/{asset2}</span>
+            <span className="workspace-subtitle">Choose a market, shape the order, then verify the transaction.</span>
+          </div>
+          <div className="workspace-toolbar-actions">
+            {lastRefresh && (
+              <span className="workspace-refresh-label">
+                Updated {lastRefresh.toLocaleTimeString()}
+              </span>
+            )}
+            <button 
+              className="btn-icon" 
+              onClick={() => void fetchOrders(true)}
+              disabled={loading}
+              title="Refresh orders"
+            >
+              {loading ? <span className="spinner"></span> : '↻'}
+            </button>
+          </div>
         </div>
-      )}
-
-      {/* Depth Chart */}
-      <div className="card mb-2">
-        <h2 className="mb-1">Market Depth</h2>
-        {loading && (
-          <div className="loading-state">
-            <span className="spinner spinner-lg"></span>
-            <span className="text-muted">Loading market data...</span>
-          </div>
-        )}
-        {error && (
-          <div className="empty-state">
-            <div className="empty-state-icon">⚠️</div>
-            <div className="empty-state-title">Connection Error</div>
-            <div className="empty-state-text">{error}</div>
-            <button className="btn-secondary" onClick={fetchOrders}>Try Again</button>
-          </div>
-        )}
-        {!loading && !error && orders.length === 0 && (
-          <div className="empty-state">
-            <div className="empty-state-icon">📊</div>
-            <div className="empty-state-title">No Open Orders</div>
-            <div className="empty-state-text">
-              Be the first to create an order for {asset1}/{asset2}!
+        <div className="workspace-overview">
+          <div className="workspace-overview-card is-emphasis">
+            <span className="workspace-overview-step">1</span>
+            <div>
+              <div className="workspace-overview-title">Set the market</div>
+              <div className="workspace-overview-copy">You are trading <strong>{asset1}</strong> against <strong>{asset2}</strong>.</div>
             </div>
           </div>
-        )}
-        {!loading && !error && orders.length > 0 && (
-          <DepthChart orders={orders} asset1={asset1} asset2={asset2} />
-        )}
-      </div>
+          <div className="workspace-overview-card">
+            <span className="workspace-overview-step">2</span>
+            <div>
+              <div className="workspace-overview-title">Choose an action</div>
+              <div className="workspace-overview-copy">
+                {selectedPortfolioAssets.length > 0
+                  ? `${selectedPortfolioAssets.length} portfolio asset${selectedPortfolioAssets.length === 1 ? '' : 's'} selected for focused actions.`
+                  : 'Use the portfolio selector or order book to prefill your next order.'}
+              </div>
+            </div>
+          </div>
+          <div className="workspace-overview-card">
+            <span className="workspace-overview-step">3</span>
+            <div>
+              <div className="workspace-overview-title">Sign and track</div>
+              <div className="workspace-overview-copy">
+                {walletCanSign
+                  ? 'Direct wallet signing is available when you are ready to review the transaction.'
+                  : 'Orders will move into the QR signer and transaction center for manual approval.'}
+              </div>
+            </div>
+          </div>
+        </div>
+        </>
+      )}
 
-      {/* Main Grid */}
-      <div className="grid-3 gap-2">
-        <OrderBook 
-          orders={orders} 
-          asset1={asset1} 
-          asset2={asset2} 
-          loading={loading} 
-          error={error}
-          onOrderClick={handleOrderSweep} 
-          onOrderCompete={handleOrderCompete}
-        />
-        <TradeForm 
-          userAddress={userAddress} 
-          onOrderComposed={setComposeResult}
-          giveAssetDefault={asset1}
-          getAssetDefault={asset2}
-          prefill={prefillOrder}
-          orders={orders}
-        />
-        <div className="flex flex-col gap-2">
+      <div className="workspace-shell">
+        <div className="workspace-main">
+          <div className="trade-workspace-grid">
+            <TradeForm 
+              userAddress={userAddress} 
+              onOrderComposed={setComposeResult}
+              giveAssetDefault={asset1}
+              getAssetDefault={asset2}
+              prefill={prefillOrder}
+              orders={orders}
+            />
+            <OrderBook 
+              orders={orders} 
+              asset1={asset1} 
+              asset2={asset2} 
+              loading={loading} 
+              error={error}
+              onOrderClick={handleOrderSweep} 
+              onOrderCompete={handleOrderCompete}
+            />
+          </div>
+
+          <div className="card market-depth-card">
+            <div className="workspace-card-header">
+              <div>
+                <h2 className="mb-1">Market Depth</h2>
+                <p className="workspace-card-subtitle">
+                  {canCollapseDepth
+                    ? 'Collapsed by default on smaller screens so the trading path stays focused.'
+                    : 'Use this as context, not the first stop.'}
+                </p>
+              </div>
+              {canCollapseDepth && (
+                <button
+                  type="button"
+                  className="btn-secondary market-depth-toggle"
+                  aria-expanded={isDepthExpanded}
+                  onClick={() => setIsDepthExpanded((current) => !current)}
+                >
+                  {isDepthExpanded ? 'Hide Chart' : 'Show Chart'}
+                </button>
+              )}
+            </div>
+            {loading && (
+              <div className="loading-state">
+                <span className="spinner spinner-lg"></span>
+                <span className="text-muted">Loading market data...</span>
+              </div>
+            )}
+            {error && (
+              <div className="empty-state">
+                <div className="empty-state-icon">⚠️</div>
+                <div className="empty-state-title">Connection Error</div>
+                <div className="empty-state-text">{error}</div>
+                <button className="btn-secondary" onClick={() => void fetchOrders(true)}>Try Again</button>
+              </div>
+            )}
+            {!loading && !error && orders.length === 0 && (
+              <div className="empty-state">
+                <div className="empty-state-icon">📊</div>
+                <div className="empty-state-title">No Open Orders</div>
+                <div className="empty-state-text">
+                  Be the first to create an order for {asset1}/{asset2}!
+                </div>
+              </div>
+            )}
+            {canCollapseDepth && !isDepthExpanded && (
+              <div className="market-depth-collapsed">
+                <div className="market-depth-collapsed-stat">
+                  <span className="market-depth-collapsed-label">Bids</span>
+                  <span className="market-depth-collapsed-value text-success">{bidCount}</span>
+                </div>
+                <div className="market-depth-collapsed-stat">
+                  <span className="market-depth-collapsed-label">Asks</span>
+                  <span className="market-depth-collapsed-value text-error">{askCount}</span>
+                </div>
+                <div className="market-depth-collapsed-copy">
+                  Open the chart when you want a fuller view of ladder depth and spread positioning.
+                </div>
+              </div>
+            )}
+            {!loading && !error && orders.length > 0 && (!canCollapseDepth || isDepthExpanded) && (
+              <DepthChart orders={orders} asset1={asset1} asset2={asset2} />
+            )}
+          </div>
+        </div>
+
+        <div className="workspace-sidebar">
           <PortfolioGrid 
             userAddress={userAddress} 
             selectedAssets={selectedPortfolioAssets}
@@ -204,22 +335,67 @@ function AppContent() {
             onClearSelection={clearPortfolioSelection}
             onProceedToCart={openCart}
           />
-          <OpportunityScanner 
-             userAddress={userAddress} 
-             onSelect={handleOpportunitySelect}
-             assetFilter={selectedPortfolioAssets.length === 1 ? selectedPortfolioAssets[0] : null}
-          />
-          <BuyOpportunityScanner
-            userAddress={userAddress}
-            wishlist={buyWishlist}
-            onSelect={handleOpportunitySelect}
-            onAddToWishlist={addToWishlist}
-            onRemoveFromWishlist={removeFromWishlist}
-          />
-          <OrderHistory
-            userAddress={userAddress}
-            onViewPair={handlePairChange}
-          />
+
+          {userAddress && (
+            <div className="card utility-hub-card">
+              <div className="workspace-card-header">
+                <div>
+                  <h2>{activeUtilityMeta[activeUtilityPanel].title}</h2>
+                  <p className="workspace-card-subtitle">{activeUtilityMeta[activeUtilityPanel].subtitle}</p>
+                </div>
+                <span className="badge">{activeUtilityMeta[activeUtilityPanel].badge}</span>
+              </div>
+              <div className="utility-panel-switcher">
+                <button
+                  type="button"
+                  className={`intent-chip ${activeUtilityPanel === 'sell' ? 'active' : ''}`}
+                  aria-pressed={activeUtilityPanel === 'sell'}
+                  onClick={() => setActiveUtilityPanel('sell')}
+                >
+                  Sell Matches
+                </button>
+                <button
+                  type="button"
+                  className={`intent-chip ${activeUtilityPanel === 'buy' ? 'active' : ''}`}
+                  aria-pressed={activeUtilityPanel === 'buy'}
+                  onClick={() => setActiveUtilityPanel('buy')}
+                >
+                  Buy Watchlist
+                </button>
+                <button
+                  type="button"
+                  className={`intent-chip ${activeUtilityPanel === 'history' ? 'active' : ''}`}
+                  aria-pressed={activeUtilityPanel === 'history'}
+                  onClick={() => setActiveUtilityPanel('history')}
+                >
+                  Order History
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeUtilityPanel === 'sell' && (
+            <OpportunityScanner 
+              userAddress={userAddress} 
+              onSelect={handleOpportunitySelect}
+              assetFilter={selectedPortfolioAssets.length === 1 ? selectedPortfolioAssets[0] : null}
+            />
+          )}
+          {activeUtilityPanel === 'buy' && (
+            <BuyOpportunityScanner
+              userAddress={userAddress}
+              wishlist={buyWishlist}
+              onSelect={handleOpportunitySelect}
+              onAddToWishlist={addToWishlist}
+              onRemoveFromWishlist={removeFromWishlist}
+            />
+          )}
+          {activeUtilityPanel === 'history' && (
+            <OrderHistory
+              userAddress={userAddress}
+              onViewPair={handlePairChange}
+            />
+          )}
         </div>
       </div>
 
@@ -284,7 +460,7 @@ function TransactionProviderWithMarket({ children }: { children: React.ReactNode
   const market = useMarket();
   
   const handleConfirmed = useCallback(() => {
-    void market.fetchOrders();
+    void market.fetchOrders(true);
   }, [market]);
 
   const handleBroadcast = useCallback(() => {

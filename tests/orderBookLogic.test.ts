@@ -7,7 +7,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Order } from '../src/lib/counterparty.js';
-import { calculatePrice, formatBaseUnits } from '../src/lib/quantity.js';
+import {
+  buildSweepSetForOrder,
+  buildSweepStats,
+  getMarketSnapshot,
+  splitOrders,
+} from '../src/lib/orderBook.js';
 
 // ─── Helpers ────────────────────────────────────────
 
@@ -29,61 +34,6 @@ function buildOrder(overrides: Partial<Order> = {}): Order {
     block_time: 0,
     ...overrides,
   };
-}
-
-// Replicate the OrderBook's splitting logic
-function splitOrders(orders: Order[], asset1: string, isDivisible: (a: string) => boolean) {
-  const asks = orders
-    .filter(o => o.give_asset === asset1 && o.status === 'open')
-    .sort((a, b) => {
-      const priceA = calculatePrice(a.get_quantity, isDivisible(a.get_asset), a.give_quantity, isDivisible(a.give_asset));
-      const priceB = calculatePrice(b.get_quantity, isDivisible(b.get_asset), b.give_quantity, isDivisible(b.give_asset));
-      return priceA - priceB;
-    });
-
-  const bids = orders
-    .filter(o => o.get_asset === asset1 && o.status === 'open')
-    .sort((a, b) => {
-      const priceA = calculatePrice(a.give_quantity, isDivisible(a.give_asset), a.get_quantity, isDivisible(a.get_asset));
-      const priceB = calculatePrice(b.give_quantity, isDivisible(b.give_asset), b.get_quantity, isDivisible(b.get_asset));
-      return priceB - priceA;
-    });
-
-  return { asks, bids };
-}
-
-// Replicate sweep set logic
-function getSweepSet(hoveredOrder: Order, asks: Order[], bids: Order[], asset1: string) {
-  const isAsk = hoveredOrder.give_asset === asset1;
-  const list = isAsk ? asks : bids;
-  const index = list.indexOf(hoveredOrder);
-  if (index === -1) return [];
-  return list.slice(0, index + 1);
-}
-
-// Replicate sweep stats logic
-function getSweepStats(
-  sweepSet: Order[],
-  asset1: string,
-  asset2: string,
-  isDivisible: (a: string) => boolean,
-) {
-  if (sweepSet.length === 0) return null;
-  const count = sweepSet.length;
-  let totalGive = 0n;
-  let totalGet = 0n;
-  sweepSet.forEach(o => { totalGive += o.give_remaining; totalGet += o.get_remaining; });
-  const isAsk = sweepSet[0].give_asset === asset1;
-  const avgPrice = isAsk
-    ? calculatePrice(totalGet, isDivisible(asset2), totalGive, isDivisible(asset1))
-    : calculatePrice(totalGive, isDivisible(asset2), totalGet, isDivisible(asset1));
-  const getDisplay = isAsk
-    ? formatBaseUnits(totalGive, isDivisible(asset1))
-    : formatBaseUnits(totalGet, isDivisible(asset1));
-  const payDisplay = isAsk
-    ? formatBaseUnits(totalGet, isDivisible(asset2))
-    : formatBaseUnits(totalGive, isDivisible(asset2));
-  return { count, avgPrice, isAsk, getDisplay, payDisplay };
 }
 
 // ─── Tests ────────────────────────────────────────
@@ -188,17 +138,18 @@ test('getSweepSet returns orders up to and including hovered order', () => {
   const ask3 = buildOrder({ tx_hash: 'a3', give_asset: 'XCP' });
   const asks = [ask1, ask2, ask3];
 
-  const sweep = getSweepSet(ask2, asks, [], 'XCP');
+  const sweep = buildSweepSetForOrder(ask2, asks, [], 'XCP');
   assert.equal(sweep.length, 2);
   assert.equal(sweep[0].tx_hash, 'a1');
   assert.equal(sweep[1].tx_hash, 'a2');
 });
 
-test('getSweepSet returns empty if order not in list', () => {
+test('buildSweepSetForOrder falls back to the clicked order when it is not in the visible list', () => {
   const ask1 = buildOrder({ tx_hash: 'a1', give_asset: 'XCP' });
   const orphan = buildOrder({ tx_hash: 'orphan', give_asset: 'XCP' });
-  const sweep = getSweepSet(orphan, [ask1], [], 'XCP');
-  assert.equal(sweep.length, 0);
+  const sweep = buildSweepSetForOrder(orphan, [ask1], [], 'XCP');
+  assert.equal(sweep.length, 1);
+  assert.equal(sweep[0].tx_hash, 'orphan');
 });
 
 test('getSweepStats calculates aggregate totals and average price', () => {
@@ -217,7 +168,7 @@ test('getSweepStats calculates aggregate totals and average price', () => {
     }),
   ];
 
-  const stats = getSweepStats(sweep, 'XCP', 'PEPECASH', div);
+  const stats = buildSweepStats(sweep, 'XCP', 'PEPECASH', div);
   assert.ok(stats !== null);
   assert.equal(stats!.count, 2);
   assert.equal(stats!.isAsk, true);
@@ -227,5 +178,31 @@ test('getSweepStats calculates aggregate totals and average price', () => {
 });
 
 test('getSweepStats returns null for empty sweep', () => {
-  assert.equal(getSweepStats([], 'XCP', 'PEPECASH', div), null);
+  assert.equal(buildSweepStats([], 'XCP', 'PEPECASH', div), null);
+});
+
+test('getMarketSnapshot reports best prices and spread', () => {
+  const { asks, bids } = splitOrders([
+    buildOrder({
+      tx_hash: 'ask',
+      give_asset: 'XCP',
+      give_quantity: 100000000n,
+      get_asset: 'PEPECASH',
+      get_quantity: 5000n,
+    }),
+    buildOrder({
+      tx_hash: 'bid',
+      give_asset: 'PEPECASH',
+      give_quantity: 4500n,
+      get_asset: 'XCP',
+      get_quantity: 100000000n,
+    }),
+  ], 'XCP', div);
+
+  const snapshot = getMarketSnapshot(asks, bids, div);
+  assert.equal(snapshot.askCount, 1);
+  assert.equal(snapshot.bidCount, 1);
+  assert.equal(snapshot.bestAsk, 5000);
+  assert.equal(snapshot.bestBid, 4500);
+  assert.ok(snapshot.spread > 0);
 });

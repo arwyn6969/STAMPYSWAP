@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { getAssetDivisibility, getBalances, type Balance } from '../lib/counterparty';
 import { AssetIcon } from './AssetIcon';
 import { baseUnitsToNumber } from '../lib/quantity';
+import { isNumericAsset } from '../lib/stamps';
 
 interface PortfolioGridProps {
   userAddress: string;
@@ -22,6 +23,9 @@ export function PortfolioGrid({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [divisibility, setDivisibility] = useState<Record<string, boolean>>({});
+  const [search, setSearch] = useState('');
+  const [sortMode, setSortMode] = useState<'quantity' | 'alpha'>('quantity');
+  const [filterMode, setFilterMode] = useState<'all' | 'stamps' | 'selected'>('all');
 
   const sortValue = useCallback((balance: Balance): number | null => {
     const normalized = balance.quantity_normalized;
@@ -56,13 +60,8 @@ export function PortfolioGrid({
       setError(null);
       try {
         const data = await getBalances(userAddress);
-        // Sort by quantity (highest first), limit to top 40 for grid
-        const sorted = data
-          .filter(b => b.quantity > 0n)
-          .sort(compareBalances)
-          .slice(0, 40);
         if (cancelled) return;
-        setBalances(sorted);
+        setBalances(data.filter(b => b.quantity > 0n));
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Failed to load balances');
@@ -120,13 +119,55 @@ export function PortfolioGrid({
     return null;
   }
 
+  const stampCount = balances.filter((balance) => isNumericAsset(balance.asset)).length;
+  const normalizedSearch = search.trim().toUpperCase();
+  const filteredBalances = balances
+    .filter((balance) => {
+      if (filterMode === 'stamps' && !isNumericAsset(balance.asset)) return false;
+      if (filterMode === 'selected' && !selectedAssets.includes(balance.asset)) return false;
+      if (normalizedSearch && !balance.asset.includes(normalizedSearch)) return false;
+      return true;
+    })
+    .sort((left, right) => {
+      if (sortMode === 'alpha') {
+        return left.asset.localeCompare(right.asset);
+      }
+      return compareBalances(left, right);
+    })
+    .slice(0, 60);
+  const selectedLabel = selectedAssets.length === 0
+    ? 'Select one or more assets to focus the workspace.'
+    : selectedAssets.length === 1
+      ? `${selectedAssets[0]} is selected. Sell-side scanning is now focused on that asset.`
+      : `${selectedAssets.length} assets selected. Batch listing will build one order per asset.`;
+
   return (
-    <div className="card">
-      <div className="flex justify-between items-center mb-2">
-        <h2>Your Portfolio</h2>
-        <span className="badge truncate" style={{ maxWidth: '100px' }}>
+    <div className="card portfolio-card">
+      <div className="portfolio-header">
+        <div>
+          <h2>Your Portfolio</h2>
+          <p className="portfolio-subtitle">
+            Select holdings to build a batch listing plan or scan for active buyers.
+          </p>
+        </div>
+        <span className="badge truncate" style={{ maxWidth: '120px' }}>
           {userAddress.slice(0, 6)}...{userAddress.slice(-4)}
         </span>
+      </div>
+
+      <div className="portfolio-stats">
+        <div className="portfolio-stat">
+          <span className="portfolio-stat-label">Holdings</span>
+          <span className="portfolio-stat-value">{balances.length}</span>
+        </div>
+        <div className="portfolio-stat">
+          <span className="portfolio-stat-label">Stamps</span>
+          <span className="portfolio-stat-value">{stampCount}</span>
+        </div>
+        <div className="portfolio-stat">
+          <span className="portfolio-stat-label">Selected</span>
+          <span className="portfolio-stat-value">{selectedAssets.length}</span>
+        </div>
       </div>
 
       {loading && (
@@ -152,8 +193,75 @@ export function PortfolioGrid({
 
       {!loading && !error && balances.length > 0 && (
         <>
+          <div className="portfolio-toolbar">
+            <input
+              type="text"
+              placeholder="Search asset or collection"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <select value={sortMode} onChange={(e) => setSortMode(e.target.value as 'quantity' | 'alpha')}>
+              <option value="quantity">Sort by quantity</option>
+              <option value="alpha">Sort A-Z</option>
+            </select>
+          </div>
+          <div className="portfolio-filter-row">
+            <button
+              type="button"
+              className={`intent-chip ${filterMode === 'all' ? 'active' : ''}`}
+              aria-pressed={filterMode === 'all'}
+              onClick={() => setFilterMode('all')}
+            >
+              All ({balances.length})
+            </button>
+            <button
+              type="button"
+              className={`intent-chip ${filterMode === 'stamps' ? 'active' : ''}`}
+              aria-pressed={filterMode === 'stamps'}
+              onClick={() => setFilterMode('stamps')}
+            >
+              Stamps ({stampCount})
+            </button>
+            <button
+              type="button"
+              className={`intent-chip ${filterMode === 'selected' ? 'active' : ''}`}
+              aria-pressed={filterMode === 'selected'}
+              onClick={() => setFilterMode('selected')}
+            >
+              Selected ({selectedAssets.length})
+            </button>
+          </div>
+
+          <div className="portfolio-selection-banner">
+            <div>
+              <div className="portfolio-selection-title">Selection focus</div>
+              <div className="portfolio-selection-copy">{selectedLabel}</div>
+            </div>
+            {selectedAssets.length > 0 && (
+              <div className="portfolio-selection-chips">
+                {selectedAssets.slice(0, 4).map((asset) => (
+                  <span key={asset} className="portfolio-selection-chip">
+                    <AssetIcon asset={asset} size={14} showStampNumber={false} />
+                    {asset}
+                  </span>
+                ))}
+                {selectedAssets.length > 4 && (
+                  <span className="portfolio-selection-chip">+{selectedAssets.length - 4} more</span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {filteredBalances.length === 0 && (
+            <div className="empty-state" style={{ paddingTop: '1rem' }}>
+              <div className="empty-state-text">
+                No assets match the current search/filter.
+              </div>
+            </div>
+          )}
+
           <div className="portfolio-grid">
-            {balances.map((balance) => {
+            {filteredBalances.map((balance) => {
               const normalized = balance.quantity_normalized?.trim();
               const parsedNormalized = normalized ? Number.parseFloat(normalized) : Number.NaN;
               const qty = Number.isFinite(parsedNormalized)
@@ -163,40 +271,55 @@ export function PortfolioGrid({
               const isSelected = selectedAssets.includes(balance.asset);
               
               return (
-                <div 
+                <button 
                   key={balance.asset} 
                   className={`portfolio-item ${isSelected ? 'selected' : ''}`}
                   onClick={() => onToggleAsset(balance.asset)}
                   title={balance.asset}
+                  type="button"
                 >
-                  <AssetIcon asset={balance.asset} size={40} showStampNumber={false} />
-                  <span className="portfolio-item-amount truncate" style={{ maxWidth: '100%' }}>
-                    {qty >= 1000 ? qty.toLocaleString(undefined, { maximumFractionDigits: 0 }) : qty.toLocaleString()}
+                  <div className="portfolio-item-top">
+                    <AssetIcon asset={balance.asset} size={32} showStampNumber={false} />
+                    <div className="portfolio-item-copy">
+                      <span className="portfolio-item-asset">{balance.asset}</span>
+                      <span className="portfolio-item-amount">
+                        {qty >= 1000 ? qty.toLocaleString(undefined, { maximumFractionDigits: 0 }) : qty.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="portfolio-item-state">
+                    {isSelected ? 'Selected for batch listing' : 'Tap to add'}
                   </span>
-                </div>
+                </button>
               );
             })}
           </div>
-          {selectedAssets.length > 0 && (
-            <div className="mt-2 text-center flex flex-col gap-2 items-center" style={{ marginTop: '1rem' }}>
-              <div className="flex gap-2">
-                <button 
-                  className="btn-primary flex items-center gap-1 font-bold" 
-                  style={{ fontSize: '0.875rem', padding: '0.5rem 1rem' }}
-                  onClick={onProceedToCart}
-                >
-                  🛒 Review Cart ({selectedAssets.length})
-                </button>
+          <div className="portfolio-action-bar">
+            <div>
+              <div className="portfolio-action-count">{selectedAssets.length} asset{selectedAssets.length === 1 ? '' : 's'} selected</div>
+              <div className="portfolio-action-text">
+                Use the selector to build a batch listing plan or narrow the sell scanner.
               </div>
+            </div>
+            <div className="portfolio-action-buttons">
               <button 
-                className="btn-secondary" 
-                style={{ fontSize: '0.625rem', padding: '0.25rem 0.5rem' }}
-                onClick={onClearSelection}
+                className="btn-primary"
+                type="button"
+                onClick={onProceedToCart}
+                disabled={selectedAssets.length === 0}
               >
-                Clear Selection
+                Review Batch Plan
+              </button>
+              <button 
+                className="btn-secondary"
+                type="button"
+                onClick={onClearSelection}
+                disabled={selectedAssets.length === 0}
+              >
+                Clear
               </button>
             </div>
-          )}
+          </div>
         </>
       )}
     </div>

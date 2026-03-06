@@ -50,7 +50,7 @@ test.describe('STAMPYSWAP Trading Flow', () => {
     await page.waitForTimeout(500);
 
     // 6. Submit the order
-    const createOrderBtn = page.getByRole('button', { name: 'Create Order' });
+    const createOrderBtn = page.getByRole('button', { name: /Review .* Order/i });
     await expect(createOrderBtn).toBeEnabled();
     await createOrderBtn.click();
 

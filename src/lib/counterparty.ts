@@ -3,6 +3,8 @@
  * Production: https://api.counterparty.io:4000
  */
 
+import { getCachedQuery } from './queryCache.js';
+
 let API_BASE = 'https://api.counterparty.io:4000/v2';
 
 export function getIsTestnet(): boolean {
@@ -37,9 +39,18 @@ const REQUEST_TIMEOUT_MS = 15000;
 const MAX_RETRIES = 2;
 const RETRY_BACKOFF_MS = 500;
 const DEFAULT_DIVISIBLE_ASSETS = new Set(['BTC', 'XCP']);
+const ORDER_CACHE_TTL_MS = 15_000;
+const BALANCE_CACHE_TTL_MS = 20_000;
+const MARKET_CACHE_TTL_MS = 30_000;
+const HISTORY_CACHE_TTL_MS = 20_000;
+const SCANNER_CACHE_TTL_MS = 15_000;
 
 type JsonObject = Record<string, unknown>;
 type BaseUnitsLike = bigint | number | string;
+
+interface RequestOptions {
+  force?: boolean;
+}
 
 export interface Order {
   tx_hash: string;
@@ -110,37 +121,47 @@ export interface AssetInfo {
 export async function getOrders(
   asset1: string,
   asset2: string,
-  status: 'open' | 'all' = 'open'
+  status: 'open' | 'all' = 'open',
+  options: RequestOptions = {},
 ): Promise<Order[]> {
   const norm1 = asset1.trim().toUpperCase();
   const norm2 = asset2.trim().toUpperCase();
 
-  const orders = await requestCounterparty(
-    `/orders/${encodeURIComponent(asset1)}/${encodeURIComponent(asset2)}?status=${status}&verbose=true`,
-    parseOrders,
-  );
-  
-  // Mix in dispensers!
-  let dispensers: Order[] = [];
-  if (norm1 === 'BTC' && norm2 !== 'BTC') {
-    dispensers = await getDispensersAsOrders(norm2, status);
-    // Dispenser is selling norm2 for BTC, meaning it "gives" norm2 and "gets" BTC
-    // But since the query was order(BTC, norm2), we only show open orders if they match the pair. Wait, getOrders fetches all orders for the PAIR, regardless of direction. 
-    // The query `/orders/BTC/PEPECASH` returns both BTC->PEPE and PEPE->BTC orders.
-  } else if (norm2 === 'BTC' && norm1 !== 'BTC') {
-    dispensers = await getDispensersAsOrders(norm1, status);
-  }
+  return getCachedQuery(
+    `orders:${API_BASE}:${norm1}:${norm2}:${status}`,
+    ORDER_CACHE_TTL_MS,
+    async () => {
+      const orders = await requestCounterparty(
+        `/orders/${encodeURIComponent(norm1)}/${encodeURIComponent(norm2)}?status=${status}&verbose=true`,
+        parseOrders,
+      );
 
-  return [...orders, ...dispensers];
+      let dispensers: Order[] = [];
+      if (norm1 === 'BTC' && norm2 !== 'BTC') {
+        dispensers = await getDispensersAsOrders(norm2, status, options);
+      } else if (norm2 === 'BTC' && norm1 !== 'BTC') {
+        dispensers = await getDispensersAsOrders(norm1, status, options);
+      }
+
+      return [...orders, ...dispensers];
+    },
+    options,
+  );
 }
 
 /**
  * Get balances for an address
  */
-export async function getBalances(address: string): Promise<Balance[]> {
-  return requestCounterparty(
-    `/addresses/${encodeURIComponent(address)}/balances?verbose=true`,
-    parseBalances,
+export async function getBalances(address: string, options: RequestOptions = {}): Promise<Balance[]> {
+  const normalizedAddress = address.trim();
+  return getCachedQuery(
+    `balances:${API_BASE}:${normalizedAddress}`,
+    BALANCE_CACHE_TTL_MS,
+    () => requestCounterparty(
+      `/addresses/${encodeURIComponent(normalizedAddress)}/balances?verbose=true`,
+      parseBalances,
+    ),
+    options,
   );
 }
 
@@ -150,11 +171,18 @@ export async function getBalances(address: string): Promise<Balance[]> {
 export async function getUserOrders(
   address: string,
   status: 'open' | 'filled' | 'cancelled' | 'expired' | 'all' = 'all',
+  options: RequestOptions = {},
 ): Promise<Order[]> {
+  const normalizedAddress = address.trim();
   const statusParam = status === 'all' ? 'all' : status;
-  return requestCounterparty(
-    `/addresses/${encodeURIComponent(address)}/orders?status=${statusParam}&verbose=true`,
-    parseOrders,
+  return getCachedQuery(
+    `user-orders:${API_BASE}:${normalizedAddress}:${statusParam}`,
+    HISTORY_CACHE_TTL_MS,
+    () => requestCounterparty(
+      `/addresses/${encodeURIComponent(normalizedAddress)}/orders?status=${statusParam}&verbose=true`,
+      parseOrders,
+    ),
+    options,
   );
 }
 
@@ -258,100 +286,114 @@ export interface MarketPair {
 /**
  * Get raw open orders involving a specific asset (either giving or receiving)
  */
-export async function getOrdersForAsset(asset: string, status: 'open' | 'all' = 'open'): Promise<Order[]> {
-  try {
-    return await requestCounterparty(
-      `/assets/${encodeURIComponent(asset)}/orders?status=${status}&verbose=true`,
+export async function getOrdersForAsset(
+  asset: string,
+  status: 'open' | 'all' = 'open',
+  options: RequestOptions = {},
+): Promise<Order[]> {
+  const normalizedAsset = asset.trim().toUpperCase();
+  return getCachedQuery(
+    `asset-orders:${API_BASE}:${normalizedAsset}:${status}`,
+    MARKET_CACHE_TTL_MS,
+    async () => requestCounterparty(
+      `/assets/${encodeURIComponent(normalizedAsset)}/orders?status=${status}&verbose=true`,
       parseOrders,
-    );
-  } catch (e) {
-    console.error(`Error fetching orders for ${asset}:`, e);
-    return [];
-  }
+    ),
+    options,
+  );
 }
 
 /**
  * Get all open orders across the entire DEX
  */
-export async function getAllOpenOrders(): Promise<Order[]> {
-  const allOrders: Order[] = [];
-  let cursor: string | undefined;
-  const limit = 1000;
+export async function getAllOpenOrders(options: RequestOptions = {}): Promise<Order[]> {
+  return getCachedQuery(
+    `all-open-orders:${API_BASE}`,
+    SCANNER_CACHE_TTL_MS,
+    async () => {
+      const allOrders: Order[] = [];
+      let cursor: string | undefined;
+      const limit = 1000;
 
-  while (true) {
-    let url = `${API_BASE}/orders?status=open&verbose=true&limit=${limit}`;
-    if (cursor) {
-      url += `&cursor=${cursor}`;
-    }
+      while (true) {
+        const queryParams = new URLSearchParams({
+          status: 'open',
+          verbose: 'true',
+          limit: limit.toString(),
+        });
+        if (cursor) {
+          queryParams.set('cursor', cursor);
+        }
 
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const payload = await res.json();
-      
-      if (payload.result) {
-        allOrders.push(...parseOrders(payload.result));
+        const payload = await requestJson(`${API_BASE}/orders?${queryParams.toString()}`);
+        const { result, error, nextCursor } = parsePaginatedApiResult(payload);
+        if (error) {
+          throw new Error(`Counterparty API error: ${error}`);
+        }
+
+        const rawPageLength = Array.isArray(result) ? result.length : 0;
+        const pageOrders = parseOrders(result);
+        allOrders.push(...pageOrders);
+
+        if (!nextCursor || rawPageLength < limit) {
+          break;
+        }
+
+        cursor = nextCursor;
+        await wait(100);
       }
-      
-      if (!payload.next_cursor || (payload.result && payload.result.length < limit)) {
-        break;
-      }
-      cursor = payload.next_cursor;
-      
-      // Delay to respect rate limits
-      await new Promise(r => setTimeout(r, 100));
-    } catch (err) {
-      console.error("Failed to fetch page of all open orders:", err);
-      break; 
-    }
-  }
 
-  return allOrders;
+      return allOrders;
+    },
+    options,
+  );
 }
 
 /**
  * Fetch open dispensers for an asset and shape them as Orders
  */
-export async function getDispensersAsOrders(asset: string, status: 'open' | 'all' = 'open'): Promise<Order[]> {
-  try {
-    const statusQuery = status === 'open' ? 'status=10|0' : 'status=all';
-    return await requestCounterparty(
-      `/assets/${encodeURIComponent(asset)}/dispensers?${statusQuery}&verbose=true`,
+export async function getDispensersAsOrders(
+  asset: string,
+  status: 'open' | 'all' = 'open',
+  options: RequestOptions = {},
+): Promise<Order[]> {
+  const normalizedAsset = asset.trim().toUpperCase();
+  const statusQuery = status === 'open' ? 'status=10|0' : 'status=all';
+  return getCachedQuery(
+    `dispensers:${API_BASE}:${normalizedAsset}:${status}`,
+    ORDER_CACHE_TTL_MS,
+    () => requestCounterparty(
+      `/assets/${encodeURIComponent(normalizedAsset)}/dispensers?${statusQuery}&verbose=true`,
       parseDispensers,
-    );
-  } catch (e) {
-    console.error(`Error fetching dispensers for ${asset}:`, e);
-    return [];
-  }
+    ),
+    options,
+  );
 }
 
 /**
  * Get all active markets (pairs with open orders) for a base asset
  * Fetches orders for the base asset and aggregates unique quote assets
  */
-export async function getMarketsForBase(baseAsset: string): Promise<MarketPair[]> {
-  try {
-    // Get all open orders where this asset is being given or received
-    const orders = await getOrdersForAsset(baseAsset);
-    
-    // Count orders per quote asset
-    const pairCounts = new Map<string, number>();
-    
-    for (const order of orders) {
-      // Determine which asset is the "quote" (the other side of the trade)
-      const quote = order.give_asset === baseAsset ? order.get_asset : order.give_asset;
-      pairCounts.set(quote, (pairCounts.get(quote) || 0) + 1);
-    }
-    
-    // Convert to array and sort by order count
-    const markets: MarketPair[] = Array.from(pairCounts.entries())
-      .map(([quote, orderCount]) => ({ quote, orderCount }))
-      .sort((a, b) => b.orderCount - a.orderCount);
-    
-    return markets;
-  } catch {
-    return [];
-  }
+export async function getMarketsForBase(baseAsset: string, options: RequestOptions = {}): Promise<MarketPair[]> {
+  const normalizedBase = baseAsset.trim().toUpperCase();
+  return getCachedQuery(
+    `markets:${API_BASE}:${normalizedBase}`,
+    MARKET_CACHE_TTL_MS,
+    async () => {
+      const orders = await getOrdersForAsset(normalizedBase, 'open', options);
+      const pairCounts = new Map<string, number>();
+
+      for (const order of orders) {
+        const quote = order.give_asset === normalizedBase ? order.get_asset : order.give_asset;
+        pairCounts.set(quote, (pairCounts.get(quote) || 0) + 1);
+      }
+
+      return Array.from(pairCounts.entries())
+        .map(([quote, orderCount]) => ({ quote, orderCount }))
+        .sort((left, right) => right.orderCount - left.orderCount);
+    },
+    options,
+  );
 }
 
 // Popular base assets for quick selection
@@ -696,6 +738,22 @@ function parseApiResult(payload: unknown): { result: unknown; error?: string } {
 
   const error = asOptionalString(payload.error);
   return { result: payload.result, error };
+}
+
+function parsePaginatedApiResult(payload: unknown): {
+  result: unknown;
+  error?: string;
+  nextCursor?: string;
+} {
+  if (!isJsonObject(payload)) {
+    throw new Error('Counterparty API returned an unexpected payload');
+  }
+
+  return {
+    result: payload.result,
+    error: asOptionalString(payload.error),
+    nextCursor: asOptionalString(payload.next_cursor) ?? asOptionalString(payload.nextCursor),
+  };
 }
 
 function extractApiErrorMessage(payload: unknown): string | null {

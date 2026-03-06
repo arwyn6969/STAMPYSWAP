@@ -1,4 +1,5 @@
 import { type TrackedLifecycle } from '../App';
+import { getBitcoinExplorerLabel, getBitcoinExplorerTxUrl } from '../lib/explorer';
 
 export interface TrackedTransaction {
   txid: string;
@@ -49,42 +50,31 @@ export function TransactionDrawer({
   const pendingCount = transactions.filter(t => t.status !== 'confirmed' && t.status !== 'failed').length;
 
   return (
-    <div className="fixed inset-0 z-50 pointer-events-none" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100 }}>
-      {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-black/50 pointer-events-auto" 
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', transition: 'opacity 0.3s' }}
-        onClick={onClose}
-      />
-      
-      {/* Drawer */}
-      <div 
-        className="absolute right-0 top-0 bottom-0 w-[350px] bg-base-100 shadow-2xl pointer-events-auto flex flex-col"
-        style={{ 
-          position: 'absolute', right: 0, top: 0, bottom: 0, width: '350px', 
-          background: 'var(--bg-secondary)', borderLeft: '1px solid var(--border-color)',
-          display: 'flex', flexDirection: 'column', padding: '1.5rem', overflowY: 'auto'
-        }}
-      >
-        <div className="flex justify-between items-center mb-4 border-b pb-2" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '1.25rem', margin: 0 }}>Transaction Center</h2>
-          <button className="btn-icon" onClick={onClose} style={{ padding: '0.25rem 0.5rem' }}>✕</button>
+    <div className="app-overlay">
+      <div className="app-backdrop" onClick={onClose} />
+      <aside className="app-drawer" aria-label="Transaction Center">
+        <div className="drawer-header">
+          <div>
+            <h2 className="drawer-title">Transaction Center</h2>
+            <p className="drawer-subtitle">Monitor pending broadcasts and jump to the correct network explorer.</p>
+          </div>
+          <button className="btn-icon drawer-close-btn" type="button" onClick={onClose}>✕</button>
         </div>
 
         {transactions.length === 0 ? (
-          <div className="empty-state" style={{ marginTop: '2rem' }}>
+          <div className="empty-state drawer-empty-state">
             <div className="empty-state-icon">📝</div>
             <div className="empty-state-text">No recent transactions</div>
           </div>
         ) : (
-          <div className="flex flex-col gap-3">
-             <div className="flex justify-between items-center" style={{ marginBottom: '0.5rem' }}>
-               <span className="text-muted" style={{ fontSize: '0.75rem' }}>
+          <div className="drawer-content">
+             <div className="drawer-toolbar">
+               <span className="drawer-toolbar-copy text-muted">
                  {pendingCount} {pendingCount === 1 ? 'transaction' : 'transactions'} pending
                </span>
                <button 
-                 className="btn-secondary" 
-                 style={{ fontSize: '0.625rem', padding: '0.25rem 0.5rem' }}
+                 type="button"
+                 className="btn-secondary drawer-toolbar-btn"
                  onClick={onClearCompleted}
                >
                  Clear Completed
@@ -101,38 +91,42 @@ export function TransactionDrawer({
               const isPending = tx.status !== 'confirmed' && tx.status !== 'failed';
 
               return (
-                <div key={tx.txid} className="card" style={{ padding: '1rem', backgroundColor: 'var(--bg-card)' }}>
-                  <div className="flex justify-between items-center mb-2" style={{ marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between' }}>
-                    <span className={`badge ${statusClass}`} style={{ fontSize: '0.625rem' }}>{tx.status.toUpperCase()}</span>
-                    <button className="btn-icon" onClick={() => onDismiss(tx.txid)} style={{ padding: '0 0.25rem', fontSize: '0.75rem', border: 'none' }}>✕</button>
+                <div key={tx.txid} className="drawer-status-card">
+                  <div className="drawer-status-top">
+                    <span className={`badge ${statusClass}`}>{tx.status.toUpperCase()}</span>
+                    <button className="btn-icon drawer-dismiss-btn" type="button" onClick={() => onDismiss(tx.txid)}>✕</button>
                   </div>
                   
-                  <div className="text-muted mb-1" style={{ fontSize: '0.625rem', fontFamily: 'JetBrains Mono, monospace', wordBreak: 'break-all', marginBottom: '0.5rem' }}>
+                  <div className="drawer-txid text-muted">
                     {tx.txid}
                   </div>
                   
-                  <div className="mb-2" style={{ fontSize: '0.875rem', marginBottom: '0.5rem' }}>
+                  <div className="drawer-status-message">
                     {getTrackedStatusMessage(tx)}
                   </div>
+                  {tx.error && (
+                    <div className="drawer-error text-error">
+                      {tx.error}
+                    </div>
+                  )}
 
-                  <div className="flex justify-end gap-2" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  <div className="drawer-status-actions">
                     {isPending && (
                       <button 
-                        className="btn-secondary" 
-                        style={{ fontSize: '0.625rem', padding: '0.25rem 0.5rem' }}
+                        type="button"
+                        className="btn-secondary drawer-toolbar-btn"
                         onClick={() => onRefresh(tx.txid)}
                       >
                         Refresh
                       </button>
                     )}
                     <a
-                      className="btn-secondary"
-                      href={`https://mempool.space/tx/${tx.txid}`}
+                      href={getBitcoinExplorerTxUrl(tx.txid)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      style={{ fontSize: '0.625rem', padding: '0.25rem 0.5rem', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+                      className="btn-secondary drawer-link-btn"
                     >
-                      Explorer
+                      {getBitcoinExplorerLabel()}
                     </a>
                   </div>
                 </div>
@@ -140,7 +134,7 @@ export function TransactionDrawer({
             })}
           </div>
         )}
-      </div>
+      </aside>
     </div>
   );
 }

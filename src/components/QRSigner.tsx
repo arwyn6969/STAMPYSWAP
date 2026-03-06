@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import type { ComposeResult } from '../lib/counterparty';
 import { getCurrentConnection, signAndBroadcast } from '../lib/wallet';
 import { extractTxid } from '../lib/transaction';
+import { getBitcoinExplorerLabel, getBitcoinExplorerTxUrl } from '../lib/explorer';
 
 interface QRSignerProps {
   composeResult: ComposeResult | null;
@@ -60,73 +61,59 @@ export function QRSigner({ composeResult, onClose, onBroadcast, onTrackTxid }: Q
   };
 
   return (
-    <div 
-      className="modal-overlay"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0, 0, 0, 0.8)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-      }}
-      onClick={onClose}
-    >
-      <div 
-        className="card"
-        style={{ maxWidth: '400px', textAlign: 'center' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2>Sign Transaction</h2>
+    <div className="app-overlay" onClick={onClose}>
+      <div className="app-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h2 className="modal-title">Sign Transaction</h2>
+            <p className="modal-subtitle">Approve the composed order with your connected wallet or the QR signing flow.</p>
+          </div>
+          <button className="btn-icon drawer-close-btn" type="button" onClick={onClose}>✕</button>
+        </div>
         
-        {/* Success State */}
-        {signResult?.success && (
+        {signResult?.success && signResult.txid && (
           <div className="empty-state">
             <div className="empty-state-icon">✅</div>
             <div className="empty-state-title">Transaction Broadcast!</div>
             <div className="empty-state-text">
               <a 
-                href={`https://xchain.io/tx/${signResult.txid}`}
+                href={getBitcoinExplorerTxUrl(signResult.txid)}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: 'var(--accent-primary)' }}
+                className="modal-link"
               >
-                View on XChain →
+                View on {getBitcoinExplorerLabel()} →
               </a>
             </div>
-            <button className="btn-primary" onClick={onClose} style={{ marginTop: '1rem' }}>
+            <button className="btn-primary modal-primary-btn" type="button" onClick={onClose}>
               Done
             </button>
           </div>
         )}
 
-        {/* Error State */}
         {signResult?.success === false && (
           <div className="empty-state">
             <div className="empty-state-icon">❌</div>
             <div className="empty-state-title">Signing Failed</div>
             <div className="empty-state-text text-error">{signResult.error}</div>
-            <button className="btn-secondary" onClick={() => setSignResult(null)} style={{ marginTop: '1rem' }}>
+            <button className="btn-secondary modal-primary-btn" type="button" onClick={() => setSignResult(null)}>
               Try Again
             </button>
           </div>
         )}
 
-        {/* Normal State - Show signing options */}
         {!signResult && (
           <>
-            {/* Wallet Signing Option - Only if we have wallet connection */}
             {canWalletSign && (
-              <div className="mb-2">
+              <div className="modal-section">
                 <button 
-                  className="btn-primary" 
+                  className="btn-primary modal-wallet-btn" 
                   onClick={handleWalletSign}
                   disabled={signing}
-                  style={{ width: '100%' }}
+                  type="button"
                 >
                   {signing ? (
-                    <span className="flex items-center gap-1" style={{ justifyContent: 'center' }}>
+                    <span className="flex items-center gap-1 modal-inline-center">
                       <span className="spinner"></span> Signing...
                     </span>
                   ) : (
@@ -137,33 +124,31 @@ export function QRSigner({ composeResult, onClose, onBroadcast, onTrackTxid }: Q
                     </>
                   )}
                 </button>
-                <p className="text-muted" style={{ fontSize: '0.625rem', marginTop: '0.5rem' }}>
+                <p className="modal-note text-muted">
                   Your wallet will prompt you to review and sign the transaction.
                 </p>
               </div>
             )}
 
             {hasWalletConnection && !psbtHex && (
-              <p className="text-warning" style={{ fontSize: '0.75rem', marginBottom: '1rem' }}>
+              <p className="modal-note text-warning">
                 Wallet signing is unavailable for this compose result (missing PSBT). Use QR signing instead.
               </p>
             )}
 
-            {/* QR Code for Freewallet - Always shown as fallback or primary */}
-            <div className="divider mb-2">
-              <span className="text-muted" style={{ fontSize: '0.75rem' }}>
+            <div className="divider modal-divider">
+              <span className="text-muted modal-divider-label">
                 {canWalletSign ? 'or scan with Freewallet' : 'Scan with Freewallet Mobile'}
               </span>
             </div>
 
-            {/* Watch-only warning */}
             {connection?.walletType === 'manual' && (
-              <p className="text-warning" style={{ fontSize: '0.75rem', marginBottom: '1rem' }}>
-                ⚠️ Watch-only address. Use Freewallet to sign.
+              <p className="modal-note text-warning">
+                Watch-only address detected. Use Freewallet to sign.
               </p>
             )}
 
-            <div className="qr-container mb-2">
+            <div className="qr-container modal-qr-section">
               <QRCodeSVG 
                 value={`counterparty:?action=signtx&tx=${txHex}`} 
                 size={200}
@@ -172,12 +157,12 @@ export function QRSigner({ composeResult, onClose, onBroadcast, onTrackTxid }: Q
               />
             </div>
 
-            <p className="text-muted" style={{ fontSize: '0.625rem', marginBottom: '1rem' }}>
+            <p className="modal-note text-muted">
               Open Freewallet app → Tools → Scan QR → Confirm to sign &amp; broadcast
             </p>
 
-            <div style={{ textAlign: 'left', marginBottom: '1rem' }}>
-              <label style={{ marginBottom: '0.25rem' }}>Track Broadcasted Tx</label>
+            <div className="modal-section">
+              <label className="modal-field-label">Track Broadcasted Tx</label>
               <div className="flex gap-1">
                 <input
                   type="text"
@@ -196,36 +181,24 @@ export function QRSigner({ composeResult, onClose, onBroadcast, onTrackTxid }: Q
                 </button>
               </div>
               {manualTxidError && (
-                <p className="text-error" style={{ fontSize: '0.75rem', marginTop: '0.5rem' }}>
+                <p className="modal-field-error text-error">
                   {manualTxidError}
                 </p>
               )}
             </div>
 
-            <details style={{ textAlign: 'left', marginBottom: '1rem' }}>
-              <summary className="text-muted" style={{ fontSize: '0.75rem', cursor: 'pointer' }}>
+            <details className="modal-details">
+              <summary className="text-muted modal-details-summary">
                 View transaction hex
               </summary>
               <textarea
                 readOnly
                 value={txHex}
-                style={{
-                  width: '100%',
-                  height: '60px',
-                  fontSize: '0.625rem',
-                  fontFamily: 'monospace',
-                  resize: 'none',
-                  background: 'var(--bg-secondary)',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: '8px',
-                  padding: '0.5rem',
-                  color: 'var(--text-muted)',
-                  marginTop: '0.5rem',
-                }}
+                className="modal-textarea"
               />
             </details>
 
-            <button className="btn-secondary" onClick={onClose}>
+            <button className="btn-secondary modal-secondary-btn" type="button" onClick={onClose}>
               Cancel
             </button>
           </>

@@ -22,6 +22,8 @@ interface ShoppingCartMacroProps {
 export function ShoppingCartMacro({ userAddress, selectedAssets, isOpen, onClose, onExecuteBatch }: ShoppingCartMacroProps) {
   const [balances, setBalances] = useState<Balance[]>([]);
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   
   // Strategy State
   const [targetAsset, setTargetAsset] = useState('XCP');
@@ -39,11 +41,13 @@ export function ShoppingCartMacro({ userAddress, selectedAssets, isOpen, onClose
       try {
         const data = await getBalances(userAddress);
         if (!cancelled) {
-          // Filter to only the selected assets
           setBalances(data.filter(b => selectedAssets.includes(b.asset)));
+          setFormError(null);
         }
-      } catch (err) {
-        console.error("Failed to load balances for macro", err);
+      } catch {
+        if (!cancelled) {
+          setFormError('Unable to load the selected balances for this batch plan.');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -56,27 +60,27 @@ export function ShoppingCartMacro({ userAddress, selectedAssets, isOpen, onClose
   if (!isOpen) return null;
 
   const handleExecute = async () => {
-    // Generate the order params for each selected asset
+    setFormError(null);
+    setNotice(null);
     const parsedPrice = parseFloat(pricePerUnit);
     if (isNaN(parsedPrice) || parsedPrice <= 0) {
-      alert("Please enter a valid price per unit.");
+      setFormError('Enter a valid price per unit.');
       return;
     }
 
     if (!targetAsset.trim()) {
-      alert("Please enter a valid target asset.");
+      setFormError('Enter a valid target asset.');
       return;
     }
 
     const exp = parseInt(expiration, 10);
     if (isNaN(exp) || exp <= 0) {
-      alert("Please enter a valid expiration.");
+      setFormError('Enter a valid expiration.');
       return;
     }
 
     setLoading(true);
     try {
-      // Pre-fetch divisibility for the target asset if not in cache
       let targetDivisible = divisibilityCache[targetAsset];
       if (targetDivisible === undefined) {
         targetDivisible = await getAssetDivisibility(targetAsset);
@@ -93,19 +97,17 @@ export function ShoppingCartMacro({ userAddress, selectedAssets, isOpen, onClose
         const giveQty = sellPercentage === 100 ? b.quantity : (b.quantity / 2n);
         const giveAmountNumber = baseUnitsToNumber(giveQty, giveDivisible);
         
-        // Exact Math Formatting for Divisible vs Indivisible
         let getAmountTotalStr;
         if (targetDivisible) {
-          getAmountTotalStr = (giveAmountNumber * parsedPrice).toFixed(8); // Ensure max 8 decimals
+          getAmountTotalStr = (giveAmountNumber * parsedPrice).toFixed(8);
         } else {
-          getAmountTotalStr = Math.round(giveAmountNumber * parsedPrice).toString(); // Whole numbers only
+          getAmountTotalStr = Math.round(giveAmountNumber * parsedPrice).toString();
         }
         
         const getQty = displayToBaseUnits(getAmountTotalStr, targetDivisible);
 
-        // Safety Zero-Check
         if (giveQty <= 0n || getQty <= 0n) {
-          return null; // Skip if math zeroed out token limits
+          return null;
         }
 
         return {
@@ -120,54 +122,47 @@ export function ShoppingCartMacro({ userAddress, selectedAssets, isOpen, onClose
       const validParams = generatedParams.filter((p): p is MacroOrderParams => p !== null);
       
       if (validParams.length < balances.length) {
-         alert(`Skipped ${balances.length - validParams.length} token(s) due to calculated quantity rounding to exactly zero (cannot sell 50% of 1 indivisible token, etc).`);
+        setNotice(`Skipped ${balances.length - validParams.length} asset(s) because the calculated quantity rounded to zero.`);
       }
       
       if (validParams.length > 0) {
         onExecuteBatch(validParams);
       }
     } catch (err) {
-      alert("Failed to build orders: " + (err instanceof Error ? err.message : String(err)));
+      setFormError(`Failed to build orders: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 pointer-events-none" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100 }}>
-      {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-black/50 pointer-events-auto" 
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', transition: 'opacity 0.3s' }}
-        onClick={onClose}
-      />
-      
-      {/* Drawer */}
-      <div 
-        className="absolute right-0 top-0 bottom-0 w-[400px] bg-base-100 shadow-2xl pointer-events-auto flex flex-col"
-        style={{ 
-          position: 'absolute', right: 0, top: 0, bottom: 0, width: '400px', 
-          background: 'var(--bg-secondary)', borderLeft: '1px solid var(--border-color)',
-          display: 'flex', flexDirection: 'column', padding: '1.5rem', overflowY: 'auto'
-        }}
-      >
-        <div className="flex justify-between items-center mb-4 border-b pb-2" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '1.25rem', margin: 0 }}>🛒 Macro Strategy</h2>
-          <button className="btn-icon" onClick={onClose} style={{ padding: '0.25rem 0.5rem' }}>✕</button>
+    <div className="app-overlay">
+      <div className="app-backdrop" onClick={onClose} />
+      <aside className="app-drawer app-drawer-wide" aria-label="Batch Listing Plan">
+        <div className="drawer-header">
+          <div>
+            <h2 className="drawer-title">Batch Listing Plan</h2>
+            <p className="drawer-subtitle">Build a repeatable sell rule across the assets you selected in the portfolio.</p>
+          </div>
+          <button className="btn-icon drawer-close-btn" type="button" onClick={onClose}>✕</button>
         </div>
 
         {loading ? (
-          <div className="loading-state flex flex-col items-center p-4">
+          <div className="loading-state utility-loading-state">
              <span className="spinner"></span>
-             <p className="text-muted mt-2 text-sm">Loading wallet balances...</p>
+             <p className="text-muted utility-loading-copy">Loading wallet balances...</p>
           </div>
         ) : (
-          <div className="flex flex-col gap-4">
-            <div className="card" style={{ padding: '1rem', backgroundColor: 'var(--bg-card)' }}>
-               <h3 className="mb-2 text-sm font-bold">Selected Assets ({balances.length})</h3>
-               <div className="flex flex-wrap gap-2" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <div className="drawer-content">
+            <div className="trade-context-banner drawer-banner">
+              Turn the selected assets into individually signed sell orders. Each order still requires its own wallet approval or QR signature.
+            </div>
+
+            <div className="drawer-status-card">
+               <h3 className="drawer-section-title">Selected Assets ({balances.length})</h3>
+               <div className="drawer-chip-list">
                  {balances.map(b => (
-                   <div key={b.asset} className="badge badge-primary flex items-center gap-1" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                   <div key={b.asset} className="badge badge-primary drawer-chip">
                      <AssetIcon asset={b.asset} size={14} showStampNumber={false} />
                      {b.asset}
                    </div>
@@ -175,23 +170,23 @@ export function ShoppingCartMacro({ userAddress, selectedAssets, isOpen, onClose
                </div>
             </div>
 
-            <div className="card" style={{ padding: '1rem', backgroundColor: 'var(--bg-card)' }}>
-              <h3 className="mb-2 text-sm font-bold">Strategy Builder</h3>
+            <div className="drawer-status-card">
+              <h3 className="drawer-section-title">Plan Builder</h3>
               
-              <div className="flex flex-col gap-3" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="drawer-form-grid">
                 <div>
                   <label>I want to sell...</label>
-                  <div className="flex gap-2 mt-1" style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                  <div className="drawer-toggle-row">
                     <button 
-                      className={`flex-1 ${sellPercentage === 100 ? 'btn-primary' : 'btn-secondary'}`}
-                      style={{ flex: 1 }}
+                      type="button"
+                      className={`${sellPercentage === 100 ? 'btn-primary' : 'btn-secondary'} drawer-toggle-btn`}
                       onClick={() => setSellPercentage(100)}
                     >
                       100%
                     </button>
                     <button 
-                       className={`flex-1 ${sellPercentage === 50 ? 'btn-primary' : 'btn-secondary'}`}
-                       style={{ flex: 1 }}
+                       type="button"
+                       className={`${sellPercentage === 50 ? 'btn-primary' : 'btn-secondary'} drawer-toggle-btn`}
                        onClick={() => setSellPercentage(50)}
                     >
                        50%
@@ -206,7 +201,6 @@ export function ShoppingCartMacro({ userAddress, selectedAssets, isOpen, onClose
                      placeholder="Asset (e.g. XCP, PEPECASH)" 
                      value={targetAsset}
                      onChange={e => setTargetAsset(e.target.value.toUpperCase())}
-                     style={{ marginTop: '0.25rem' }}
                    />
                 </div>
 
@@ -219,7 +213,6 @@ export function ShoppingCartMacro({ userAddress, selectedAssets, isOpen, onClose
                      placeholder="e.g. 1.5" 
                      value={pricePerUnit}
                      onChange={e => setPricePerUnit(e.target.value)}
-                     style={{ marginTop: '0.25rem' }}
                    />
                 </div>
 
@@ -230,26 +223,55 @@ export function ShoppingCartMacro({ userAddress, selectedAssets, isOpen, onClose
                     min="1"
                     value={expiration}
                     onChange={(e) => setExpiration(e.target.value)}
-                    style={{ marginTop: '0.25rem' }}
                   />
                 </div>
               </div>
             </div>
 
-            <div className="mt-2 text-muted" style={{ fontSize: '0.75rem', lineHeight: 1.4 }}>
-              <p>⚡ <strong>Sequential Execution:</strong> Clicking execute will generate {balances.length} separate orders. You will be prompted to sign and broadcast each one sequentially due to Bitcoin UTXO constraints.</p>
+            <div className="drawer-status-card">
+              <h3 className="drawer-section-title">Preview</h3>
+              <div className="trade-summary-row">
+                <span className="trade-summary-label">Orders</span>
+                <span className="trade-summary-value">{balances.length}</span>
+              </div>
+              <div className="trade-summary-row">
+                <span className="trade-summary-label">Target asset</span>
+                <span className="trade-summary-value">{targetAsset || '—'}</span>
+              </div>
+              <div className="trade-summary-row">
+                <span className="trade-summary-label">Sale size</span>
+                <span className="trade-summary-value">{sellPercentage}% of each selected asset</span>
+              </div>
+              <div className="trade-summary-row">
+                <span className="trade-summary-label">Price rule</span>
+                <span className="trade-summary-value">{pricePerUnit || '—'} {targetAsset || 'asset'} per token</span>
+              </div>
+            </div>
+
+            {formError && (
+              <div className="form-feedback form-feedback-error">{formError}</div>
+            )}
+
+            {notice && (
+              <div className="trade-context-banner drawer-banner">
+                {notice}
+              </div>
+            )}
+
+            <div className="drawer-footnote text-muted">
+              <p>Sequential execution: this will generate {balances.length} separate orders, and you will sign or broadcast them one at a time because of Bitcoin UTXO constraints.</p>
             </div>
 
             <button 
-               className="btn-primary mt-2 flex justify-center items-center gap-2" 
-               style={{ width: '100%', padding: '0.75rem', fontSize: '1rem', fontWeight: 'bold', marginTop: '1rem' }}
+               className="btn-primary drawer-primary-btn" 
+               type="button"
                onClick={handleExecute}
             >
-              🚀 Queue {balances.length} Orders
+              Build {balances.length} Order{balances.length === 1 ? '' : 's'}
             </button>
           </div>
         )}
-      </div>
+      </aside>
     </div>
   );
 }

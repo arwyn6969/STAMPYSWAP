@@ -38,7 +38,7 @@ test('getOrders parses integer-string quantities as bigint', async (t) => {
       ],
     })) as typeof fetch;
 
-  const orders = await getOrders('XCP', 'RAREPEPE');
+  const orders = await getOrders('XCP', 'RAREPEPE', 'open', { force: true });
   assert.equal(orders.length, 1);
   const [order] = orders;
   assert.equal(order.give_asset, 'XCP');
@@ -75,7 +75,7 @@ test('getOrders drops malformed rows that use unsafe numeric quantities', async 
       ],
     })) as typeof fetch;
 
-  const orders = await getOrders('XCP', 'RAREPEPE');
+  const orders = await getOrders('XCP', 'RAREPEPE', 'open', { force: true });
   assert.equal(orders.length, 0);
 });
 
@@ -97,7 +97,7 @@ test('getBalances parses integer-string quantities as bigint', async (t) => {
       ],
     })) as typeof fetch;
 
-  const balances = await getBalances('bc1qtestaddress0000000000000000000000000000');
+  const balances = await getBalances('bc1qtestaddress0000000000000000000000000000', { force: true });
   assert.equal(balances.length, 1);
   const [balance] = balances;
   assert.equal(balance.asset, 'XCP');
