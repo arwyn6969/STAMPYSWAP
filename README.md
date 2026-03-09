@@ -1,157 +1,122 @@
-# STAMPYSWAP 🔄
+# STAMPYSWAP
 
-A lightweight, non-custodial DEX interface for **Counterparty (XCP)** and **Bitcoin Stamps** assets.
+Non-custodial Counterparty DEX workspace for Bitcoin Stamps, XCP, and other Counterparty assets.
 
-![Dark Theme](https://img.shields.io/badge/Theme-Dark-black)
-![React](https://img.shields.io/badge/React-19-61dafb)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
-![Version](https://img.shields.io/badge/Version-1.5-purple)
-
-## Features
-
-- 📊 **Live Order Book** — View open buy/sell orders from the Counterparty DEX
-- 📈 **Depth Visualization** — Visual bid/ask walls with mid price and spread
-- 🔎 **Market Discovery** — Smart dropdown showing 100+ active trading pairs
-- 🖼️ **Asset Icons** — Visual identification with Stampchain integration
-- 💼 **Balance Display** — See your Counterparty assets at a glance
-- 🔐 **Non-Custodial** — Your keys never leave your wallet
-- 🔷 **Leather/Xverse Support** — Browser wallet signing with PSBT
-- 📱 **Freewallet QR** — Scan to sign with Freewallet mobile app
-- ⏱️ **Transaction Tracking** — Auto-poll mempool/confirmation status after broadcast
-- ⚡ **Real-time Data** — Direct connection to Counterparty & Stampchain APIs
+The current app is organized around one workflow: choose a market, understand the book, shape an order, sign it, and track it. It also includes a portfolio-driven batch listing flow for listing multiple held assets one by one.
 
 ## Quick Start
 
 ```bash
-# Install dependencies
 npm install
-
-# Run development server
 npm run dev
-
-# Run lint + unit tests
-npm run lint
-npm run test
-
-# Run all quality gates
 npm run check
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Open [http://localhost:5173](http://localhost:5173).
 
-Pull requests and pushes are automatically validated in CI using `npm run check`.
+`npm run check` runs the full local quality gate:
 
-## How to Trade
+- `npm run lint`
+- `npm run test`
+- `npm run test:e2e`
+- `npm run build`
 
-1. **Connect Wallet** — Click "Connect Wallet" and choose:
-   - 🔷 **Leather** or 🟣 **Xverse** — Browser extensions with PSBT signing
-   - 📝 **Manual Entry** — Watch-only mode (requires Freewallet to sign)
-2. **Quick Select** — Click XCP, BTC, PEPECASH, or RAREPEPE buttons
-3. **Pick Market** — Browse dropdown showing active pairs with order counts
-4. **View Depth** — See visual bid/ask walls and order book
-5. **Create Order** — Fill in amounts and click "Create Order"
-6. **Sign Transaction**:
-   - **With Wallet**: Click "Sign with Leather/Xverse" — wallet prompts for approval
-   - **With Freewallet**: Scan QR code → Tools → Sign Transaction → Broadcast, then paste txid to track status
-7. **Done!** — Transaction is broadcast to the network
+CI runs the same `npm run check` command on pushes and pull requests.
 
-## Signing Methods
+## Product Surface
 
-### Browser Wallet (Leather/Xverse)
-When connected via browser extension, you can sign directly:
-- Wallet receives a **PSBT (Partially Signed Bitcoin Transaction)**
-- You review and approve in the wallet popup
-- Transaction is broadcast automatically
+### Trading Workspace
 
-### Freewallet QR Code
-For mobile or watch-only addresses:
-- QR encodes: `counterparty:?action=signtx&tx=<HEX>`
-- Freewallet parses the unsigned raw hex transaction
-- Sign locally with your private keys, then Freewallet broadcasts
+- `Pair Selector` and `Watchlist Toolbar` choose the active market.
+- `Trade Form` is the primary action surface for composing an order.
+- `Order Book` supports explicit `Fill`, `Sweep`, and `Copy` actions.
+- `Market Depth` provides chart context and collapses on smaller screens.
 
-## Project Structure
+### Portfolio And Batch Listings
 
-```
+- `Your Portfolio` loads Counterparty balances for the connected address.
+- Holdings can be searched, sorted, and filtered.
+- Selected assets stay visible in a sticky action area.
+- `Batch Listing Plan` turns the current selection into sequential sell orders that are signed individually.
+
+### Utility Panels
+
+- `Sell Matches` scans open orders for actionable sell-side opportunities from the selected portfolio asset.
+- `Buy Watchlist` tracks wanted assets and scans for attractive asks.
+- `Order History` shows account-level activity and can jump back into a previously traded pair.
+
+### Signing And Tracking
+
+- `Leather` and `Xverse` can sign directly when a PSBT is available.
+- `Watch-only` mode supports manual address entry and QR signing through Freewallet.
+- `Transaction Center` tracks broadcasted transactions, exposes refresh errors inline, and links to the correct explorer for mainnet or testnet.
+
+### Network Support
+
+- Mainnet and testnet are switchable from the header.
+- Explorer links and API requests follow the active network.
+
+## Trading Flow
+
+1. Connect a wallet with Leather, Xverse, or watch-only manual entry.
+2. Pick a market from quick pairs, the search selector, or the watchlist.
+3. Use the order book, scanners, or portfolio selector to prefill intent.
+4. Review the order in the trade form and submit it for composition.
+5. Sign directly in-wallet or scan the Freewallet QR flow.
+6. Track the resulting tx in `Transaction Center`.
+
+For portfolio-driven selling:
+
+1. Connect a wallet.
+2. Select one or more assets in `Your Portfolio`.
+3. Open `Batch Listing Plan`.
+4. Build the batch and approve each composed order sequentially.
+
+## Architecture
+
+The frontend is a Vite + React 19 + TypeScript single-page app.
+
+```text
 src/
-├── App.tsx                    # Main application
-├── lib/
-│   ├── counterparty.ts        # Counterparty API v2 client
-│   ├── stamps.ts              # Stampchain API client
-│   └── wallet.ts              # Wallet connector (Leather/Xverse)
-└── components/
-    ├── AssetIcon.tsx          # Asset icons with Stamp detection
-    ├── BalanceDisplay.tsx     # User balance panel
-    ├── DepthChart.tsx         # Visual bid/ask depth
-    ├── OrderBook.tsx          # Order table with icons
-    ├── PairSelector.tsx       # Smart pair selector
-    ├── QRSigner.tsx           # Multi-method signing modal
-    ├── TradeForm.tsx          # Create order form
-    └── WalletConnect.tsx      # Wallet connection button
+  App.tsx                    # Workspace composition and cross-context wiring
+  components/                # UI sections (order book, trade form, portfolio, scanners, drawers)
+  contexts/
+    WalletContext.tsx        # Connected address and signing capability
+    MarketContext.tsx        # Active market, order state, batch queue state
+    TransactionContext.tsx   # Tracked tx lifecycle state and refresh polling
+  hooks/                     # Watchlist and wishlist persistence
+  lib/
+    counterparty.ts          # Counterparty API client, retries, parsing, testnet switch
+    explorer.ts              # Network-aware explorer URLs
+    queryCache.ts            # Shared in-memory query cache
+    quantity.ts              # Base-unit and display-unit conversions
+    stamps.ts                # Stampchain metadata and icon helpers
+    wallet.ts                # Leather/Xverse/manual wallet integration
+  scripts/                   # Order-broadcast utility runtime used outside the browser app
+tests/
+  e2e/                       # Playwright flows
+  *.test.ts                  # Node-based logic and parsing tests
 ```
 
-## Agentic Market Making
+## External Services
 
-The `/scripts` directory contains specialized Node.js tools and documentation designed to algorithmically seed the DEX using your high-supply assets (e.g., `FAUXCORNCASH`, `DANKROSECASH`). See [scripts/README_Botless_Market_Making.md](./scripts/README_Botless_Market_Making.md) for strategy execution.
+- Counterparty Core API v2 for orders, balances, compose, and account history
+- Counterparty testnet API when the header toggle is enabled
+- Stampchain API for stamp metadata
+- XChain icon endpoints for asset thumbnails
+- mempool.space and Blockstream as transaction-status explorer fallbacks
+- Leather and Xverse browser wallet providers
+- Freewallet via Counterparty QR signing URI
 
-## APIs
+## Scripts And Operational Tooling
 
-### Counterparty Core API v2
-Base: `https://api.counterparty.io:4000/v2`
+The browser app does not depend on the market-maker scripts at runtime.
 
-| Endpoint | Purpose |
-|:---------|:--------|
-| `GET /orders/{asset1}/{asset2}` | Fetch order book |
-| `GET /assets/{asset}/orders` | Get markets for asset |
-| `GET /addresses/{addr}/balances` | Get user balances |
-| `GET /addresses/{addr}/compose/order` | Compose order tx (returns `rawtransaction` + `psbt`) |
+- App runtime: `src/`, `tests/`, `public/`
+- Operational tooling: `scripts/` plus `src/scripts/market_maker.ts`
 
-### Stampchain API
-Base: `https://stampchain.io/api/v2`
+If you are looking for the separate market-making workflow, start with [scripts/README_Botless_Market_Making.md](./scripts/README_Botless_Market_Making.md).
 
-| Endpoint | Purpose |
-|:---------|:--------|
-| `GET /stamps/{cpid}` | Get stamp metadata & image |
+## Handoff Docs
 
-## Tech Stack
-
-- **Vite** — Fast dev server and build (~74KB gzipped)
-- **React 19** — UI framework
-- **TypeScript** — Type safety
-- **qrcode.react** — QR code generation
-- **Leather/Xverse APIs** — Browser wallet integration
-
-## Version History
-
-| Version | Features |
-|:--------|:---------|
-| v1.0 | Order book, depth chart, trade form, QR signing |
-| v1.1 | Balance display panel |
-| v1.2 | Asset icons with Stampchain enrichment |
-| v1.3 | Smart Pair Selector with market discovery |
-| v1.4 | Leather/Xverse wallet support, PSBT signing |
-| v1.5 | Fixed Freewallet QR (Counterparty URI scheme), session persistence |
-
-## Future Enhancements
-- [x] Agentic Market Maker macros (Shopping Cart execution)
-- [x] Token-specific Opportunity Scanner
-- [x] Visual Portfolio Selector for Stamp Assets
-- [x] UI end-to-end test coverage (wallet/sign/broadcast flow)
-- [x] Favorite/recent pairs
-- [x] Testnet toggle
-- [x] Dispenser support (BTC pairs)
-- [x] Buy-side opportunity matching
-- [x] Component-level unit tests (OrderBook + TradeForm logic)
-- [x] Order history view
-- [x] State management refactor (App.tsx → WalletContext, MarketContext, TransactionContext)
-
-## License
-
-MIT
-
-## Credits
-
-- [Counterparty](https://counterparty.io) — DEX protocol
-- [Stampchain](https://stampchain.io) — Bitcoin Stamps metadata
-- [Freewallet](https://freewallet.io) — Mobile signing (Counterparty URI scheme)
-- [Leather](https://leather.io) — Bitcoin browser wallet
-- [Xverse](https://xverse.app) — Bitcoin browser wallet
+For the Stampchain handoff packet, see [docs/stampchain-handoff.md](./docs/stampchain-handoff.md).

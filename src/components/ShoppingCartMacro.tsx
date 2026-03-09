@@ -17,9 +17,19 @@ interface ShoppingCartMacroProps {
   isOpen: boolean;
   onClose: () => void;
   onExecuteBatch: (params: MacroOrderParams[]) => void;
+  macroError?: string | null;
+  onClearMacroError?: () => void;
 }
 
-export function ShoppingCartMacro({ userAddress, selectedAssets, isOpen, onClose, onExecuteBatch }: ShoppingCartMacroProps) {
+export function ShoppingCartMacro({
+  userAddress,
+  selectedAssets,
+  isOpen,
+  onClose,
+  onExecuteBatch,
+  macroError = null,
+  onClearMacroError,
+}: ShoppingCartMacroProps) {
   const [balances, setBalances] = useState<Balance[]>([]);
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -157,6 +167,24 @@ export function ShoppingCartMacro({ userAddress, selectedAssets, isOpen, onClose
             <div className="trade-context-banner drawer-banner">
               Turn the selected assets into individually signed sell orders. Each order still requires its own wallet approval or QR signature.
             </div>
+
+            {macroError && (
+              <div className="form-feedback form-feedback-error drawer-inline-feedback" role="alert">
+                <div className="drawer-inline-feedback-copy">
+                  <p className="form-feedback-title">Previous batch attempt failed</p>
+                  <p className="form-feedback-copy">{macroError}</p>
+                </div>
+                {onClearMacroError && (
+                  <button
+                    type="button"
+                    className="btn-secondary drawer-toolbar-btn"
+                    onClick={onClearMacroError}
+                  >
+                    Dismiss
+                  </button>
+                )}
+              </div>
+            )}
 
             <div className="drawer-status-card">
                <h3 className="drawer-section-title">Selected Assets ({balances.length})</h3>

@@ -50,6 +50,7 @@ function AppContent() {
     asset1, asset2,
     orders, loading, error, lastRefresh,
     prefillOrder, composeResult, setComposeResult,
+    macroError, clearMacroError,
     fetchOrders,
     handlePairChange,
     handleOrderSweep, handleOrderCompete, handleOpportunitySelect,
@@ -240,6 +241,33 @@ function AppContent() {
         </>
       )}
 
+      {macroError && (
+        <div className="form-feedback form-feedback-error batch-status-banner" role="alert">
+          <div className="batch-status-copy">
+            <p className="form-feedback-title">Batch listing stopped</p>
+            <p className="form-feedback-copy">{macroError}</p>
+          </div>
+          <div className="batch-status-actions">
+            {selectedPortfolioAssets.length > 0 && (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={openCart}
+              >
+                Review Batch Plan
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={clearMacroError}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="workspace-shell">
         <div className="workspace-main">
           <div className="trade-workspace-grid">
@@ -422,6 +450,8 @@ function AppContent() {
         isOpen={isCartOpen}
         onClose={closeCart}
         onExecuteBatch={handleExecuteBatch}
+        macroError={macroError}
+        onClearMacroError={clearMacroError}
       />
     </div>
   );

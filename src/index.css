@@ -1916,6 +1916,33 @@ label {
   line-height: 1.45;
 }
 
+.batch-status-banner,
+.drawer-inline-feedback {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+}
+
+.batch-status-banner {
+  margin-bottom: 1rem;
+}
+
+.batch-status-copy,
+.drawer-inline-feedback-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.batch-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
 .order-preview-banner {
   background: linear-gradient(180deg, rgba(18, 18, 26, 0.98), rgba(26, 26, 36, 0.96));
   border-color: rgba(255, 255, 255, 0.12);
@@ -2351,6 +2378,10 @@ label {
   margin-bottom: 0;
 }
 
+.drawer-inline-feedback .drawer-toolbar-btn {
+  flex-shrink: 0;
+}
+
 .drawer-section-title {
   margin: 0 0 0.75rem;
   font-size: 0.92rem;
@@ -2688,6 +2719,8 @@ label {
   .app-header,
   .app-header-actions,
   .trade-form-brief,
+  .batch-status-banner,
+  .drawer-inline-feedback,
   .portfolio-selection-banner,
   .utility-card-header,
   .drawer-toolbar,

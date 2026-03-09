@@ -38,6 +38,8 @@ interface MarketContextValue {
   composeResult: ComposeResult | null;
   setComposeResult: (result: ComposeResult | null) => void;
   macroQueue: MacroOrderParams[];
+  macroError: string | null;
+  clearMacroError: () => void;
   fetchOrders: (force?: boolean) => Promise<void>;
   handlePairChange: (base: string, quote: string) => void;
   handleOrderSweep: (target: Order, sweepSet: Order[]) => void;
@@ -74,6 +76,7 @@ export function MarketProvider({
   const [selectedPortfolioAssets, setSelectedPortfolioAssets] = useState<string[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [macroQueue, setMacroQueue] = useState<MacroOrderParams[]>([]);
+  const [macroError, setMacroError] = useState<string | null>(null);
   const ordersRequestId = useRef(0);
 
   const fetchOrders = useCallback(async (force = false) => {
@@ -181,17 +184,23 @@ export function MarketProvider({
   }, []);
 
   const clearPortfolioSelection = useCallback(() => {
+    setMacroError(null);
     setSelectedPortfolioAssets([]);
   }, []);
 
+  const clearMacroError = useCallback(() => {
+    setMacroError(null);
+  }, []);
+
   const handleExecuteBatch = useCallback((params: MacroOrderParams[]) => {
+    setMacroError(null);
     setMacroQueue(params);
-    setSelectedPortfolioAssets([]);
     setIsCartOpen(false);
   }, []);
 
   const clearComposeAndQueue = useCallback(() => {
     setComposeResult(null);
+    setMacroError(null);
     if (macroQueue.length > 0) {
       setMacroQueue([]);
     }
@@ -217,7 +226,9 @@ export function MarketProvider({
         if (!cancelled) setComposeResult(result);
       } catch (err) {
         if (!cancelled) {
-          alert(`Failed to compose order for ${nextOrder.give_asset}: ${err instanceof Error ? err.message : String(err)}`);
+          const message = err instanceof Error ? err.message : String(err);
+          setMacroError(`Batch listing stopped while composing ${nextOrder.give_asset}: ${message}`);
+          setComposeResult(null);
           setMacroQueue([]);
         }
       }
@@ -254,6 +265,8 @@ export function MarketProvider({
     composeResult,
     setComposeResult,
     macroQueue,
+    macroError,
+    clearMacroError,
     fetchOrders,
     handlePairChange,
     handleOrderSweep,
