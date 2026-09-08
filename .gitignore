@@ -1,0 +1,30 @@
+# === dependencies / build noise ===
+node_modules/
+*.log
+app.log
+
+# === SECRETS — real-value keys & runtime auth. NEVER commit. ===
+# raw gas/deployer keys
+.protocol-keypair.json
+.evm-deployer.json
+# multisig signer key material + local state
+.squads-members.json
+.squads-state.json
+.safe-owners.json
+.safe-state.json
+# runtime auth / gating flags
+.custody-live
+.operator-token
+.solana-authority
+.evm-authority
+# env files
+.env
+.env.*
+
+# === defense-in-depth: catch any stray key material by pattern ===
+*keypair*.json
+*-owners.json
+*-members.json
+*.key
+*.pem
+*.seed

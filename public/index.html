@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>StampySwap — SRC-20 Multichain Liquidity Network</title>
+<meta name="description" content="Canonical registry & discovery for Bitcoin SRC-20 assets. One canonical source identity, many chains. Provenance over ticker." />
+<!-- Open Graph / social unfurl -->
+<meta property="og:title" content="StampySwap — SRC-20 Multichain Liquidity Network" />
+<meta property="og:description" content="Bring Bitcoin SRC-20 assets to Solana, Base & Ethereum — with one canonical, fully-backed identity. Provenance over ticker." />
+<meta property="og:image" content="https://build-d2d467f759d544ed9773288f.emblem.build/pub/kevmart/stampyswap/og.png" />
+<meta property="og:url" content="https://build-d2d467f759d544ed9773288f.emblem.build/pub/kevmart/stampyswap/" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="StampySwap — SRC-20 Multichain Liquidity Network" />
+<meta name="twitter:description" content="Bitcoin SRC-20, made liquid across chains. One canonical identity, fully backed. Provenance over ticker." />
+<meta name="twitter:image" content="https://build-d2d467f759d544ed9773288f.emblem.build/pub/kevmart/stampyswap/og.png" />
+<!-- Emoji fallback font so emoji/unicode SRC-20 tickers (e.g. 🙂) render even where the OS lacks an emoji font (spec §16) -->
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Color+Emoji&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#07080b; --surface:#0e1017; --surface2:#141824; --line:rgba(255,255,255,.08);
+    --line2:rgba(255,255,255,.16); --text:#e8ecf4; --muted:#8b93a7; --muted2:#5f677a;
+    --btc:#f7931a; --sol:#14f195; --eth:#8aa0ff; --base:#3c7dff; --good:#43d38a; --warn:#ffcc55; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:radial-gradient(1200px 600px at 50% -200px,rgba(247,147,26,.10),transparent 60%),var(--bg);
+    color:var(--text);font-family:'Inter',system-ui,-apple-system,'Noto Color Emoji','Apple Color Emoji','Segoe UI Emoji',sans-serif;
+    font-size:14px;line-height:1.55;min-height:100vh;padding:26px 16px 60px}
+  .wrap{max-width:840px;margin:0 auto}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:4px;flex-wrap:wrap}
+  .logo{font-size:24px;font-weight:800;letter-spacing:-.02em}
+  .logo b{color:var(--btc)}
+  .badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(247,147,26,.14);
+    color:var(--btc);border:1px solid rgba(247,147,26,.3);text-transform:uppercase;letter-spacing:.05em}
+  .sub{color:var(--muted);margin:2px 0 22px;font-size:13.5px}
+  .sub b{color:var(--text);font-weight:600}
+  .proofs{display:flex;flex-wrap:wrap;gap:8px;margin:-8px 0 24px}
+  .proof{font-size:11.5px;font-weight:600;color:var(--muted);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:5px 11px}
+  .wallets{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:22px}
+  .wslot{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+  .wtop{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .wdot{width:9px;height:9px;border-radius:50%;flex:none}
+  .wlabel{font-weight:700;font-size:13px}
+  .wchain{font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:.04em}
+  .wbody{display:flex;align-items:center;gap:9px;flex-wrap:wrap;min-height:32px}
+  .wbtn{background:var(--surface2);border:1px solid var(--line2);color:var(--text);border-radius:9px;
+    padding:8px 13px;font-size:12.5px;font-weight:700;cursor:pointer;transition:.15s;text-decoration:none;display:inline-block}
+  .wbtn:hover{border-color:var(--btc);color:var(--btc)}
+  .wbtn.ghost{background:transparent;font-weight:600;color:var(--muted)}
+  .waddr{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:600}
+  .wbadge{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:.03em}
+  .wbadge.ok{background:rgba(67,211,138,.14);color:var(--good)}
+  .wbadge.warn{background:rgba(255,204,85,.14);color:var(--warn)}
+  .wmiss{color:var(--muted2);font-size:12.5px}
+  .werr{color:var(--bad);font-size:12px}
+  .wspin{width:13px;height:13px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--btc);border-radius:50%;
+    animation:spin .7s linear infinite;display:inline-block;vertical-align:-2px}
+  .wnote{font-size:10.5px;color:var(--muted2);margin-top:9px;line-height:1.4}
+  .wtag{font-size:10.5px;color:var(--muted);background:var(--surface2);border:1px solid var(--line);
+    border-radius:6px;padding:2px 7px;font-weight:600}
+  .wraw{font-size:9px;color:var(--warn);border:1px solid rgba(255,204,85,.3);border-radius:4px;padding:1px 4px;font-weight:700}
+  @media(max-width:560px){.wallets{grid-template-columns:1fr}}
+  .searchbar{display:flex;gap:10px;margin-bottom:8px}
+  .searchbar input{flex:1;background:var(--surface);border:1px solid var(--line2);border-radius:12px;
+    padding:14px 16px;color:var(--text);font-size:16px;font-weight:600;outline:none;transition:.15s}
+  .searchbar input:focus{border-color:var(--btc);background:var(--surface2)}
+  .searchbar button{background:var(--btc);color:#1a0f00;border:none;border-radius:12px;padding:0 22px;
+    font-size:15px;font-weight:800;cursor:pointer;transition:.15s}
+  .searchbar button:hover{filter:brightness(1.08)}
+  .searchbar button:disabled{opacity:.5;cursor:default}
+  .hint{color:var(--muted2);font-size:12px;margin-bottom:24px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px;margin-bottom:18px}
+  .prov{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap}
+  .tickbig{font-size:34px;font-weight:800;letter-spacing:-.02em;line-height:1}
+  .provline{display:inline-flex;align-items:center;gap:7px;margin-top:8px;font-size:13px;color:var(--muted);
+    background:rgba(247,147,26,.08);border:1px solid rgba(247,147,26,.22);padding:4px 10px;border-radius:999px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--btc);display:inline-block}
+  .vpill{margin-left:auto;font-size:11px;font-weight:700;padding:5px 11px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em}
+  .v-good{background:rgba(67,211,138,.14);color:var(--good);border:1px solid rgba(67,211,138,.3)}
+  .v-warn{background:rgba(255,204,85,.14);color:var(--warn);border:1px solid rgba(255,204,85,.3)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:20px}
+  .stat{background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .stat .k{font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+  .stat .v{font-size:16px;font-weight:700;word-break:break-word}
+  .identity{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+  .identity .k{font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+  .mono{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12px;color:var(--muted);word-break:break-all}
+  .mono a{color:var(--eth);text-decoration:none}
+  .mono a:hover{text-decoration:underline}
+  h3{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:26px 0 12px}
+  .devnet{background:rgba(255,204,85,.09);border:1px solid rgba(255,204,85,.28);border-radius:10px;
+    padding:10px 13px;font-size:12px;color:var(--warn);margin-bottom:14px;line-height:1.5}
+  .bform{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .bform select,.bform input{background:var(--surface2);border:1px solid var(--line2);border-radius:10px;
+    padding:10px 12px;color:var(--text);font-size:13.5px;outline:none;flex:1;min-width:120px}
+  .bform select:focus,.bform input:focus{border-color:var(--btc)}
+  .bform button{background:var(--btc);color:#1a0f00;border:none;border-radius:10px;padding:10px 16px;
+    font-size:13px;font-weight:800;cursor:pointer;flex:none}
+  .bform button:hover{filter:brightness(1.08)}
+  .inspector{margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+  .ihdr{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em}
+  .ihdr span{text-transform:none;letter-spacing:0;color:var(--muted2);font-weight:400;margin-left:6px}
+  .ires{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:8px}
+  .ires .b{background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .ires .b .k{font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:.05em}
+  .ires .b .v{font-size:15px;font-weight:700;margin-top:3px}
+  .pill2{display:inline-block;font-size:11px;font-weight:700;padding:4px 10px;border-radius:7px}
+  .p-yes{background:rgba(67,211,138,.14);color:var(--good)}
+  .p-no{background:rgba(255,107,107,.12);color:var(--bad)}
+  .p-wait{background:rgba(255,204,85,.14);color:var(--warn)}
+  .okmsg{background:rgba(67,211,138,.08);border:1px solid rgba(67,211,138,.22);border-radius:10px;
+    padding:11px 13px;font-size:12.5px;margin-top:8px;line-height:1.6}
+  .porhdr{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+  .porhdr .inv{font-size:11px;color:var(--muted2);font-family:ui-monospace,monospace}
+  .portab{width:100%;border-collapse:collapse;font-size:13px}
+  .portab th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted2);
+    padding:7px 10px;border-bottom:1px solid var(--line)}
+  .portab td{padding:9px 10px;border-bottom:1px solid var(--line)}
+  .portab .num{text-align:right;font-family:ui-monospace,monospace}
+  .bar{height:6px;background:var(--surface2);border-radius:4px;overflow:hidden}
+  .barf{height:100%;border-radius:4px;transition:width .3s}
+  .rt{font-size:10px;color:var(--muted2);margin-top:3px}
+  .poolrow{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:11px 0;border-bottom:1px solid var(--line)}
+  .poolrow:last-child{border-bottom:none}
+  .poolrow .mono{color:var(--eth);text-decoration:none}
+  .preserve{font-size:12.5px;color:var(--muted);font-family:ui-monospace,monospace}
+  .pprice{font-size:11.5px;color:var(--sol)}
+  .rstep{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--line)}
+  .rstep:last-child{border-bottom:none}
+  .rstep .rn{width:18px;height:18px;border-radius:50%;background:var(--surface2);border:1px solid var(--line);
+    display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted);flex:none}
+  .rtype{font-size:10px;font-weight:700;text-transform:uppercase;padding:2px 7px;border-radius:5px;letter-spacing:.04em}
+  .rmove{background:rgba(247,147,26,.14);color:var(--btc)}
+  .rswap{background:rgba(20,241,149,.14);color:var(--sol)}
+  .trow{display:grid;grid-template-columns:90px auto 1fr;gap:10px;align-items:center;padding:6px 0;font-size:12.5px}
+  .trow .tk{color:var(--muted2);text-transform:uppercase;font-size:10.5px;letter-spacing:.05em}
+  .trow .mono{color:var(--muted);font-size:11.5px}
+  .tint{color:var(--muted2);font-size:11.5px}
+  .reps{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+  .rep{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;position:relative}
+  .rep .chain{display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px}
+  .cdot{width:10px;height:10px;border-radius:50%}
+  .rep .kind{font-size:11px;color:var(--muted2);margin:2px 0 12px;text-transform:uppercase;letter-spacing:.04em}
+  .status{font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:8px;display:inline-block;letter-spacing:.03em}
+  .st-none{background:rgba(255,255,255,.05);color:var(--muted)}
+  .st-canon{background:rgba(67,211,138,.14);color:var(--good)}
+  .gate{position:absolute;top:14px;right:14px;font-size:10px;font-weight:700;color:var(--btc);
+    background:rgba(247,147,26,.12);border:1px solid rgba(247,147,26,.28);padding:2px 7px;border-radius:6px}
+  .reserves{background:linear-gradient(180deg,rgba(20,241,149,.05),transparent);border:1px solid rgba(20,241,149,.18);
+    border-radius:14px;padding:16px 18px;display:flex;gap:14px;align-items:center;margin-top:8px}
+  .reserves .ic{font-size:22px}
+  .reserves .t{font-weight:700;margin-bottom:2px}
+  .reserves .d{font-size:12.5px;color:var(--muted)}
+  .empty{color:var(--muted2);font-size:13px;text-align:center;padding:30px}
+  .err{color:var(--bad);font-size:13px;padding:14px 0}
+  .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--btc);
+    border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:-3px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  footer{margin-top:40px;color:var(--muted2);font-size:11.5px;text-align:center;line-height:1.7}
+  .reglist{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{background:var(--surface2);border:1px solid var(--line);border-radius:999px;padding:6px 12px;
+    font-size:12.5px;font-weight:600;cursor:pointer;transition:.15s}
+  .chip:hover{border-color:var(--btc);color:var(--btc)}
+  .chip .h{color:var(--muted2);font-weight:500;margin-left:6px}
+  .chip.wl{border-color:rgba(247,147,26,.35)}
+  .chip .star{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--btc);margin-right:7px;vertical-align:1px}
+
+  /* ============================ REHAUL v2 — premium design system (override layer) ============================ */
+  :root{
+    --bg:#06070a; --bg2:#0a0c12; --surface:#0f1219cc; --surface2:#161a26; --glass:rgba(20,24,36,.62);
+    --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.14);
+    --text:#eef1f8; --muted:#9aa3b8; --muted2:#646d82;
+    --btc:#f7931a; --btc2:#ffb454; --sol:#14f195; --eth:#8aa0ff; --base:#3c7dff; --good:#3ddc97; --warn:#ffcc55; --bad:#ff6b6b;
+    --maxw:1020px; --r:16px; --r2:12px;
+  }
+  html{scroll-behavior:smooth}
+  body{background:
+      radial-gradient(900px 500px at 85% -10%,rgba(247,147,26,.10),transparent 55%),
+      radial-gradient(900px 600px at 10% 5%,rgba(20,241,149,.06),transparent 50%),
+      linear-gradient(180deg,var(--bg2),var(--bg));
+    color:var(--text);font-size:14.5px;line-height:1.6;padding:0 0 80px;letter-spacing:-.005em}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 20px}
+
+  /* sticky product header */
+  .topbar{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    background:linear-gradient(180deg,rgba(6,7,10,.92),rgba(6,7,10,.72));border-bottom:1px solid var(--line)}
+  .topbar .inner{max-width:var(--maxw);margin:0 auto;padding:13px 20px;display:flex;align-items:center;gap:20px}
+  .brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:800;letter-spacing:-.03em}
+  .brand .mark{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--btc),#ff5e3a);
+    display:grid;place-items:center;font-size:15px;box-shadow:0 4px 16px rgba(247,147,26,.35)}
+  .brand b{background:linear-gradient(90deg,var(--btc),var(--btc2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .nav{display:flex;gap:4px;margin-left:8px}
+  .nav a{font-size:13px;font-weight:600;color:var(--muted);text-decoration:none;padding:7px 12px;border-radius:9px;transition:.15s}
+  .nav a:hover{color:var(--text);background:var(--surface2)}
+  .navr{margin-left:auto;display:flex;align-items:center;gap:12px}
+  .tvlchip{font-size:12px;font-weight:700;color:var(--btc);background:rgba(247,147,26,.12);
+    border:1px solid rgba(247,147,26,.28);border-radius:999px;padding:6px 13px;white-space:nowrap}
+  .tvlchip span{color:var(--muted2);font-weight:500;margin-right:5px}
+  .connectbtn{background:linear-gradient(135deg,var(--btc),#ff6a2b);color:#1a0e00;border:none;border-radius:11px;
+    padding:9px 18px;font-size:13.5px;font-weight:800;cursor:pointer;transition:.15s;box-shadow:0 4px 18px rgba(247,147,26,.32)}
+  .connectbtn:hover{filter:brightness(1.06);transform:translateY(-1px)}
+  @media(max-width:820px){.nav{display:none}}
+
+  /* hero */
+  .hero{text-align:center;padding:64px 0 30px}
+  .hero .kick{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--btc);
+    background:rgba(247,147,26,.1);border:1px solid rgba(247,147,26,.24);border-radius:999px;padding:6px 14px;margin-bottom:20px;text-transform:uppercase;letter-spacing:.06em}
+  .hero h1{font-size:clamp(30px,5vw,50px);font-weight:850;letter-spacing:-.035em;line-height:1.04;margin-bottom:16px}
+  .hero h1 b{background:linear-gradient(90deg,var(--btc),var(--sol));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p{color:var(--muted);font-size:16px;max-width:620px;margin:0 auto 26px;line-height:1.6}
+  .hstats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;max-width:680px;margin:0 auto}
+  .hstat{background:var(--glass);border:1px solid var(--line);border-radius:var(--r2);padding:15px 12px;backdrop-filter:blur(8px)}
+  .hstat .v{font-size:22px;font-weight:800;letter-spacing:-.02em}
+  .hstat .k{font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:.05em;margin-top:3px}
+  @media(max-width:640px){.hstats{grid-template-columns:repeat(2,1fr)}.hero{padding-top:40px}}
+
+  /* refined cards / sections */
+  .card{background:var(--glass);border:1px solid var(--line);border-radius:var(--r);padding:22px;margin-bottom:18px;
+    backdrop-filter:blur(10px);box-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 20px 40px -30px rgba(0,0,0,.8)}
+  h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:38px 0 14px;font-weight:700;
+    display:flex;align-items:baseline;gap:10px;scroll-margin-top:70px}
+  h3::before{content:"";width:14px;height:2px;border-radius:2px;background:linear-gradient(90deg,var(--btc),transparent);flex:none;align-self:center}
+
+  /* wallet slots refined */
+  .wallets{gap:14px;margin:8px 0 6px}
+  .wslot{background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:16px 18px;backdrop-filter:blur(8px)}
+  .wbtn{background:var(--surface2);border:1px solid var(--line2);border-radius:10px;padding:9px 14px;font-weight:700;transition:.15s}
+  .wbtn:hover{border-color:var(--btc);color:var(--btc);background:rgba(247,147,26,.06)}
+  .recommend{font-size:10px;font-weight:800;color:var(--good);background:rgba(61,220,151,.14);border-radius:5px;padding:2px 6px;margin-left:6px;text-transform:uppercase;letter-spacing:.04em}
+
+  /* search */
+  .searchbar input{border-radius:13px;padding:15px 18px;font-size:15.5px;background:var(--glass);backdrop-filter:blur(8px)}
+  .searchbar button{border-radius:13px;background:linear-gradient(135deg,var(--btc),#ff6a2b)}
+
+  /* inputs / buttons */
+  .bform input,.bform select{border-radius:11px;background:var(--surface2);padding:11px 13px}
+  .bform button{border-radius:11px;background:linear-gradient(135deg,var(--btc),#ff6a2b);font-weight:800}
+  .chip{border-radius:999px;background:var(--surface2);padding:7px 13px;transition:.15s}
+  .chip:hover{border-color:var(--btc);color:var(--btc);transform:translateY(-1px)}
+
+  /* advanced drawer */
+  .drawer{margin:38px 0 0;border:1px solid var(--line);border-radius:var(--r);background:rgba(255,255,255,.015);overflow:hidden}
+  .drawer>summary{list-style:none;cursor:pointer;padding:15px 20px;font-size:12px;font-weight:700;color:var(--muted2);
+    text-transform:uppercase;letter-spacing:.07em;display:flex;align-items:center;gap:10px;user-select:none}
+  .drawer>summary::-webkit-details-marker{display:none}
+  .drawer>summary::before{content:"⚙";font-size:14px}
+  .drawer>summary::after{content:"▸ dev / testing tools — click to expand";margin-left:auto;font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted2);font-size:11.5px}
+  .drawer[open]>summary::after{content:"▾ collapse"}
+  .drawer .dwrap{padding:0 20px 20px}
+  .porhdr{gap:10px}
+  /* trust rows: flex-wrap so long addresses never get squished to a vertical char-column */
+  .trow{display:flex !important;flex-wrap:wrap;align-items:center;gap:7px 12px;grid-template-columns:none !important}
+  .trow .tk{min-width:78px;flex:none}
+  .trow .mono{word-break:normal;overflow-wrap:anywhere;font-size:12px;color:var(--muted)}
+  .waddr{word-break:normal;overflow-wrap:anywhere}
+  footer{margin-top:50px}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="inner">
+  <div class="brand"><span class="mark">§</span>Stampy<b>Swap</b></div>
+  <nav class="nav">
+    <a href="#markets">Markets</a>
+    <a href="#bridge">Bridge</a>
+    <a href="#stampbridge">Stamp</a>
+    <a href="#sec-pools">Pools</a>
+    <a href="#sec-reserves">Reserves</a>
+    <a href="#sec-trust">Trust</a>
+  </nav>
+  <div class="navr">
+    <span class="tvlchip" id="tvl-chip"><span>TVL</span>—</span>
+    <button class="connectbtn" onclick="document.getElementById('connect').scrollIntoView({block:'start'})">Connect</button>
+  </div>
+</div></div>
+
+<div class="wrap">
+  <section class="hero">
+    <div class="kick">🔒 Emblem-Vault custody · proven on-chain</div>
+    <h1>Bitcoin-native assets,<br><b>liquid across chains</b></h1>
+    <p>Deposit an SRC-20 or Counterparty asset, custody it in an Emblem Vault, and mint a canonical, fully-backed representation on Solana, Base &amp; Ethereum — then trade it and redeem back to Bitcoin. One canonical identity; provenance over ticker.</p>
+    <div class="hstats">
+      <div class="hstat"><div class="v" id="hs-tvl">—</div><div class="k">TVL · indicative</div></div>
+      <div class="hstat"><div class="v" id="hs-assets">—</div><div class="k">Backed assets</div></div>
+      <div class="hstat"><div class="v" id="hs-solv">—</div><div class="k">Solvency</div></div>
+      <div class="hstat"><div class="v">3</div><div class="k">Chains live</div></div>
+    </div>
+  </section>
+
+  <h3 id="connect">Connect wallet</h3>
+  <div class="wallets" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
+    <div class="wslot" id="w-deposit"></div>
+    <div class="wslot" id="w-receive"></div>
+    <div class="wslot" id="w-evm"></div>
+  </div>
+
+  <h3 id="markets">Discover &amp; markets</h3>
+  <div class="searchbar">
+    <input id="q" placeholder="Search any asset — KEVIN, $BALD, PUDSEC, BOSHI…" autocomplete="off" spellcheck="false" />
+    <button id="go">Discover</button>
+  </div>
+  <div class="hint">Assets are identified by their Bitcoin <b>provenance</b> (deploy transaction), never by ticker alone — an unrelated token with the same name is <i>not</i> the same asset.</div>
+
+  <div id="out"></div>
+
+  <h3 id="bridge">Bridge <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· deposit → mint → redeem (real Emblem-Vault custody)</span></h3>
+  <div class="card">
+    <div id="custody-line" class="devnet"></div>
+    <div class="ihdr" style="margin-bottom:10px">1 · Deposit &amp; mint <span>send SRC-20 to the vault, then verify by txid</span></div>
+    <div class="bform">
+      <select id="rd-asset"><option value="">Asset…</option></select>
+      <input id="rd-amount" type="text" inputmode="decimal" placeholder="Amount deposited" autocomplete="off" />
+      <select id="rd-chain"><option value="solana">→ Solana (devnet)</option><option value="base">→ Base (Sepolia)</option><option value="ethereum">→ Ethereum (Sepolia)</option></select>
+    </div>
+    <div class="bform">
+      <input id="rd-recipient" type="text" placeholder="Your receive address (Solana / 0x…)" autocomplete="off" spellcheck="false" />
+      <input id="rd-txid" type="text" placeholder="Your Bitcoin deposit txid" autocomplete="off" spellcheck="false" style="flex:2" />
+      <button id="rd-verify">Verify &amp; mint</button>
+    </div>
+    <div id="rd-out"></div>
+    <div class="inspector">
+      <div class="ihdr">2 · Redeem <span>burn representation → release SRC-20 from the vault</span></div>
+      <div class="bform">
+        <input id="rr-tick" type="text" placeholder="Ticker (e.g. $BALD)" autocomplete="off" spellcheck="false" />
+        <input id="rr-amount" type="text" inputmode="decimal" placeholder="Amount" autocomplete="off" />
+        <input id="rr-to" type="text" placeholder="Your BTC address" autocomplete="off" spellcheck="false" style="flex:2" />
+        <button id="rr-redeem">Redeem</button>
+      </div>
+      <div id="rr-out"></div>
+    </div>
+  </div>
+
+  <h3 id="stampbridge">Stamp bridge <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· convert SRC-20 → its Counterparty Stamp twin (one-way)</span></h3>
+  <div class="card" style="border-color:rgba(255,107,107,.28)">
+    <div style="background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.3);border-radius:12px;padding:13px 15px;margin-bottom:16px;font-size:13px;line-height:1.55">
+      <b style="color:var(--bad)">⚠ Permanent &amp; irreversible.</b> Bridging <b>burns</b> your SRC-20 <b>forever</b> — it is sent to a provably-unspendable address and can <b>never</b> be recovered or refunded. In return you receive the matching Counterparty Stamp (the OG collectible) 1:1 from the vault. There is no way back.
+    </div>
+    <div id="sb-config" style="font-size:12.5px;color:var(--muted);margin-bottom:14px"></div>
+    <div class="ihdr">1 · Quote <span>see what you'll receive + the exact burn instructions</span></div>
+    <div class="bform">
+      <select id="sb-asset"></select>
+      <input id="sb-amount" type="text" inputmode="numeric" placeholder="Amount (whole units)" autocomplete="off" />
+      <button id="sb-quote" style="background:var(--surface2);color:var(--text);border:1px solid var(--line2)">Get quote</button>
+    </div>
+    <div id="sb-quote-out"></div>
+    <div class="inspector">
+      <div class="ihdr">2 · Execute <span>after you've burned — submit the burn txid to receive your Stamp</span></div>
+      <div class="bform">
+        <input id="sb-txid" type="text" placeholder="Your burn txid" autocomplete="off" spellcheck="false" style="flex:2" />
+        <input id="sb-to" type="text" placeholder="The BTC address you burned FROM (receives the Stamp)" autocomplete="off" spellcheck="false" />
+        <button id="sb-exec" style="background:linear-gradient(135deg,var(--bad),#c0392b)">Bridge (burn → receive)</button>
+      </div>
+      <div class="wnote" style="color:var(--muted2)">🔒 The Stamp is released only to the address that burned the SRC-20 — it can't be redirected (the burn address is public, so this prevents anyone claiming someone else's burn).</div>
+      <div id="sb-exec-out"></div>
+    </div>
+  </div>
+
+  <details class="drawer"><summary>Advanced</summary><div class="dwrap">
+  <div class="card bridge" style="margin:0;border:none;background:transparent;padding:0;backdrop-filter:none;box-shadow:none">
+    <div id="devnet-banner" class="devnet"></div>
+    <div class="bform">
+      <select id="b-asset"><option value="">Select asset…</option></select>
+      <input id="b-amount" type="text" inputmode="decimal" placeholder="Amount" autocomplete="off" />
+      <button id="b-create">Create deposit intent</button>
+    </div>
+    <div id="intent-out"></div>
+    <div class="inspector">
+      <div class="ihdr">Relayer inspector <span>verify any live SRC-20 deposit — read-only</span></div>
+      <div class="bform">
+        <input id="i-tick" type="text" placeholder="Ticker (e.g. KEVIN, $BALD)" autocomplete="off" spellcheck="false" />
+        <input id="i-addr" type="text" placeholder="Bitcoin address" autocomplete="off" spellcheck="false" />
+        <input id="i-amt" type="text" inputmode="decimal" placeholder="Min amount" autocomplete="off" />
+        <button id="i-check">Check</button>
+      </div>
+      <div id="inspect-out"></div>
+    </div>
+    <div class="inspector">
+      <div class="ihdr">Mint &amp; redeem <span>operator/admin · direct mint is not public (use deposit→mint above)</span></div>
+      <div id="mint-authority" class="wnote"></div>
+      <div class="bform">
+        <select id="m-asset"><option value="">Asset…</option></select>
+        <select id="m-chain">
+          <option value="solana">Solana (devnet)</option>
+          <option value="base">Base (Sepolia)</option>
+          <option value="ethereum">Ethereum (Sepolia)</option>
+        </select>
+        <input id="m-amount" type="text" inputmode="decimal" placeholder="Amount" autocomplete="off" />
+        <input id="m-recipient" type="text" placeholder="Recipient address" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="bform">
+        <button id="m-mint">Mint on devnet</button>
+        <button id="m-redeem" style="background:var(--surface2);color:var(--text);border:1px solid var(--line2)">Redeem</button>
+      </div>
+      <div id="mint-out"></div>
+    </div>
+  </div>
+  </div></details>
+
+  <h3 id="sec-reserves">Proof of reserves <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· circulating ≤ collateral ≤ source supply</span></h3>
+  <div id="por" class="card"><div class="empty">No representations minted yet.</div></div>
+
+  <h3 id="sec-trust">Trust &amp; custody <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· who controls the peg (full transparency)</span></h3>
+  <div id="trust" class="card"><div class="empty">Loading…</div></div>
+
+  <h3 id="sec-pools">Native markets <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· on-chain AMM (Base Sepolia) · rep/rep + rep/external pairs</span></h3>
+  <div class="card">
+    <div id="pools"><div class="empty">No pools yet.</div></div>
+    <div class="inspector">
+      <div class="ihdr">Create pool <span>operator/admin · seeding liquidity is a protocol action</span></div>
+      <div class="bform" style="margin-bottom:6px">
+        <select id="p-mode" style="max-width:220px">
+          <option value="rep">rep / rep (both custody-backed)</option>
+          <option value="external">rep / external token (e.g. an ETH memecoin)</option>
+        </select>
+      </div>
+      <div class="bform">
+        <input id="p-a" placeholder="Asset A — a backed rep (e.g. KEVIN)" autocomplete="off" spellcheck="false" />
+        <input id="p-b" placeholder="Asset B (e.g. $BALD)" autocomplete="off" spellcheck="false" />
+        <input id="p-bext" placeholder="External token address (0x…)" autocomplete="off" spellcheck="false" style="display:none" />
+        <input id="p-bsym" placeholder="External symbol" autocomplete="off" spellcheck="false" style="display:none;max-width:130px" />
+        <input id="p-amta" type="text" inputmode="decimal" placeholder="Amount A" />
+        <input id="p-amtb" type="text" inputmode="decimal" placeholder="Amount B" />
+        <button id="p-create">Create on Base</button>
+      </div>
+      <div id="pool-hint" class="tint" style="display:none;margin:6px 0 0;line-height:1.6"></div>
+      <div id="pool-out"></div>
+    </div>
+    <div class="inspector">
+      <div class="ihdr">Swap <span>constant-product · 0.30% fee</span></div>
+      <div class="bform">
+        <select id="s-pool"></select>
+        <select id="s-in"></select>
+        <input id="s-amt" type="text" inputmode="decimal" placeholder="Amount in" />
+        <button id="s-quote" style="background:var(--surface2);color:var(--text);border:1px solid var(--line2)">Quote</button>
+        <button id="s-swap">Swap</button>
+      </div>
+      <div id="swap-out"></div>
+    </div>
+  </div>
+
+  <h3>Route finder <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· best path across pools &amp; chains (§25)</span></h3>
+  <div class="card">
+    <div class="wnote">Say what you have and what you want — the router searches the liquidity graph (AMM pools + cross-chain moves) for the path with the best output.</div>
+    <div class="bform">
+      <input id="rt-from" type="text" placeholder="From (e.g. KEVIN)" autocomplete="off" spellcheck="false" />
+      <select id="rt-fc"><option value="">any chain</option><option value="solana">Solana</option><option value="base">Base</option><option value="ethereum">Ethereum</option></select>
+      <input id="rt-to" type="text" placeholder="To (e.g. STAMP)" autocomplete="off" spellcheck="false" />
+      <select id="rt-tc"><option value="">any chain</option><option value="solana">Solana</option><option value="base">Base</option><option value="ethereum">Ethereum</option></select>
+      <input id="rt-amount" type="text" inputmode="decimal" placeholder="Amount" autocomplete="off" />
+      <button id="rt-go">Find route</button>
+    </div>
+    <div id="rt-out"></div>
+  </div>
+
+  <h3>Arbitrage &amp; mispricing <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· read-only signals across the liquidity graph</span></h3>
+  <div class="card">
+    <div class="wnote">Two signals: profitable <b>cycles</b> (a loop that returns more than it started, after the 0.30% fee) and pool <b>mispricing</b> (a pool's ratio vs the assets' indicative native Bitcoin-market prices). Purely informational.</div>
+    <div id="arb-out"><div class="empty">Loading…</div></div>
+  </div>
+
+  <h3>Cross-chain move <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· burn on one chain → mint on another (same backing)</span></h3>
+  <div class="card">
+    <div class="wnote">Move a representation between chains: burn it on the source chain in your wallet, then paste the burn txid. The <b>same Bitcoin collateral</b> backs both sides, so total supply never changes and reserves stay solvent.</div>
+    <div class="bform">
+      <select id="mv-asset"><option value="">Asset…</option></select>
+      <input id="mv-amount" type="text" inputmode="decimal" placeholder="Amount" autocomplete="off" />
+      <select id="mv-from"><option value="solana">from Solana</option><option value="base">from Base</option><option value="ethereum">from Ethereum</option></select>
+      <select id="mv-to"><option value="base">to Base</option><option value="solana">to Solana</option><option value="ethereum">to Ethereum</option></select>
+    </div>
+    <div class="bform">
+      <input id="mv-txid" type="text" placeholder="Your burn txid on the source chain" autocomplete="off" spellcheck="false" style="flex:2" />
+      <input id="mv-toaddr" type="text" placeholder="Destination address" autocomplete="off" spellcheck="false" />
+      <button id="mv-go">Move</button>
+    </div>
+    <div id="mv-out"></div>
+  </div>
+
+  <h3>Supported assets <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· curated whitelist</span></h3>
+  <div id="reg" class="reglist"><span class="empty">—</span></div>
+
+  <footer>
+    StampySwap · real Emblem-Vault custody · deposit → mint → redeem proven on-chain · live proof-of-reserves · no raw keys (Emblem-managed)<br/>
+    Source data: stampchain.io v2 &amp; Counterparty v2 (server-side) · Solana devnet + Base/Ethereum Sepolia · mainnet + multisig + audit are the remaining reviewed phases
+  </footer>
+</div>
+
+<script src="wallet.js"></script>
+<script>
+const $ = s => document.querySelector(s)
+const out = $('#out'), q = $('#q'), go = $('#go')
+const chainColor = { solana:'#14f195', base:'#3c7dff', ethereum:'#8aa0ff' }
+// Group integer digits WITHOUT Number() — SRC-20 supplies can exceed 2^53 (e.g. 2^64-1),
+// so parsing to a float would corrupt them (spec §3). Regex-group the raw digit string.
+const fmt = (v) => {
+  if (v == null) return '—'
+  const s = String(v)
+  if (/^\d+$/.test(s)) return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  const n = Number(s); return isFinite(n) ? n.toLocaleString(undefined,{maximumFractionDigits:0}) : s
+}
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+// Identity-safe display: NEVER synthesize "$". Pure-word tickers are uppercased (KEVIN,
+// GODS); a "$" shows only when it's actually in the ticker ($BALD); unicode/emoji exact.
+const disp = t => { t = String(t||''); const w = s => /^[a-z0-9]+$/i.test(s);
+  if (t.startsWith('$')) { const r = t.slice(1); return w(r) ? '$'+r.toUpperCase() : t }
+  return w(t) ? t.toUpperCase() : t }
+
+async function discover(tick){
+  if(!tick) return
+  go.disabled = true
+  out.innerHTML = '<div class="card"><span class="spinner"></span> Searching the Bitcoin Stamps index…</div>'
+  try{
+    const r = await fetch('api/discover?tick=' + encodeURIComponent(tick))
+    const j = await r.json()
+    if(j.error){ out.innerHTML = '<div class="err">Error: '+esc(j.error)+'</div>'; return }
+    if(!j.found){ out.innerHTML = '<div class="card empty">'+esc(j.message||'Not found')+'</div>'; return }
+    renderAsset(j.asset)
+    loadRegistry()
+  }catch(e){ out.innerHTML = '<div class="err">Network error: '+esc(e.message)+'</div>' }
+  finally{ go.disabled = false }
+}
+
+function renderAsset(a){
+  const vClass = a.verification_status === 'fully-minted' ? 'v-good' : 'v-warn'
+  const reps = (a.representations||[]).map(rep => {
+    const isCanon = rep.status && rep.status !== 'NOT_DEPLOYED'
+    const stClass = isCanon ? 'st-canon' : 'st-none'
+    const label = (rep.status||'NOT_DEPLOYED').replace(/_/g,' ')
+    return `<div class="rep">
+      ${rep.release_gate ? '<span class="gate">RELEASE GATE</span>' : ''}
+      <div class="chain"><span class="cdot" style="background:${chainColor[rep.chain]||'#888'}"></span>${esc(rep.display_name)}</div>
+      <div class="kind">${esc(rep.kind)} representation</div>
+      <span class="status ${stClass}">${esc(label)}</span>
+    </div>`
+  }).join('')
+
+  const scanTx = a.deploy_tx ? `<a href="https://mempool.space/tx/${esc(a.deploy_tx)}" target="_blank" rel="noopener">${esc(a.deploy_tx)}</a>` : '—'
+
+  out.innerHTML = `
+  <div class="card">
+    <div class="prov">
+      <div>
+        <div class="tickbig">${esc(a.display)}</div>
+        <div class="provline"><span class="dot"></span> Bitcoin · ${esc(a.protocol_label || (a.source_protocol==='counterparty'?'Counterparty (XCP)':'SRC-20'))} · canonical source asset</div>
+        ${a.longname?`<div style="font-size:11px;color:var(--muted2);margin-top:3px">${esc(a.longname)}</div>`:''}
+      </div>
+      <span class="vpill ${vClass}">${esc((a.verification_status||'').replace(/-/g,' '))}</span>
+    </div>
+
+    <div class="grid">
+      <div class="stat"><div class="k">Max supply</div><div class="v">${fmt(a.max_supply)}</div></div>
+      <div class="stat"><div class="k">Minted</div><div class="v">${fmt(a.minted_supply)}</div></div>
+      <div class="stat"><div class="k">Holders</div><div class="v">${a.holder_count!=null?fmt(a.holder_count):'—'}</div></div>
+      <div class="stat"><div class="k">Decimals</div><div class="v">${a.decimals!=null?a.decimals:'—'}</div></div>
+      <div class="stat"><div class="k">Mint limit</div><div class="v">${fmt(a.mint_limit)}</div></div>
+      <div class="stat"><div class="k">Mint progress</div><div class="v">${a.progress!=null?esc(a.progress)+'%':'—'}</div></div>
+    </div>
+
+    <div class="identity">
+      <div class="k">Canonical identity — Bitcoin deploy transaction (this, not the ticker, is the asset)</div>
+      <div class="mono">${scanTx}</div>
+      ${a.deployer_address ? `<div class="k" style="margin-top:12px">Deployer</div><div class="mono">${esc(a.deployer_address)}</div>`:''}
+      <div class="k" style="margin-top:12px">Exact indexed ticker (immutable source identity)</div>
+      <div class="mono" style="color:var(--text)">${esc(a.exact_ticker)}</div>
+    </div>
+  </div>
+
+  <h3>Canonical representations</h3>
+  <div class="reps">${reps}</div>
+
+  <div class="reserves" id="reserves">
+    <div class="ic">🔒</div>
+    <div><div class="t">Fully-backed by design</div>
+    <div class="d">Loading collateral status…</div></div>
+  </div>`
+  loadReserves()
+}
+
+async function loadReserves(){
+  try{
+    const j = await fetch('api/reserves').then(r=>r.json())
+    const el = document.querySelector('#reserves .d')
+    if(el) el.textContent = j.note || ''
+  }catch(e){}
+}
+
+async function loadRegistry(){
+  try{
+    const j = await fetch('api/registry').then(r=>r.json())
+    const reg = $('#reg')
+    if(!j.assets || !j.assets.length){ reg.innerHTML = '<span class="empty">No assets indexed yet — search one above.</span>'; return }
+    reg.innerHTML = j.assets.map(a =>
+      `<span class="chip${a.whitelisted?' wl':''}" data-t="${esc(a.exact_ticker)}">${a.whitelisted?'<span class="star"></span>':''}${esc(disp(a.exact_ticker))}<span class="h">${a.holder_count!=null?fmt(a.holder_count)+' holders':''}</span></span>`
+    ).join('')
+    reg.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => { q.value = disp(c.dataset.t); discover(c.dataset.t) }))
+  }catch(e){}
+}
+
+go.addEventListener('click', () => discover(q.value.trim()))
+q.addEventListener('keydown', e => { if(e.key==='Enter') discover(q.value.trim()) })
+loadRegistry()
+
+// ---------- Phase 2: Bridge + relayer inspector ----------
+async function loadBridgeConfig(){
+  try{
+    const c = await fetch('api/bridge/config').then(r=>r.json())
+    const el = $('#devnet-banner')
+    el.innerHTML = '<b>Advanced / testing utilities.</b> Relayer inspector, direct mint/redeem and the intent flow — for debugging and manual ops. The primary deposit → mint → redeem flow is the panel above. All Bitcoin-side reads are real mainnet (SRC-20/Stamps has no testnet).'
+  }catch(e){}
+}
+async function fillAssets(){
+  try{
+    const j = await fetch('api/registry').then(r=>r.json())
+    const sel = $('#b-asset')
+    ;(j.assets||[]).filter(a=>a.whitelisted).forEach(a=>{
+      const o=document.createElement('option'); o.value=a.exact_ticker; o.textContent=disp(a.exact_ticker); sel.appendChild(o)
+    })
+  }catch(e){}
+}
+async function createIntent(){
+  const tick=$('#b-asset').value, amount=$('#b-amount').value.trim()
+  const io=$('#intent-out')
+  if(!tick||!amount){ io.innerHTML='<div class="err">Pick an asset and amount.</div>'; return }
+  const receive = (window.__stampyReceive||null) // set by wallet layer when verified
+  if(!receive){ io.innerHTML='<div class="err">Connect &amp; verify your Solana receive wallet first (it sets the destination for the minted representation).</div>'; return }
+  io.innerHTML='<span class="spinner"></span> Creating intent…'
+  try{
+    const r = await fetch('api/bridge/intent',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({tick,amount,receive_address:receive})}).then(r=>r.json())
+    if(r.error){ io.innerHTML='<div class="err">'+esc(r.error)+'</div>'; return }
+    io.innerHTML=`<div class="card" style="margin-top:6px">
+      <div><b>Intent #${r.intent_id}</b> — ${esc(disp(r.tick))} × ${esc(r.amount)}</div>
+      <div class="mono" style="margin-top:6px;color:var(--muted)">${esc(r.instruction)}</div>
+      <div style="margin-top:8px"><span class="pill2 p-wait">pending</span> requires ${r.confirmations_required} confirmations</div>
+    </div>`
+  }catch(e){ io.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+async function runInspector(){
+  const tick=$('#i-tick').value.trim(), addr=$('#i-addr').value.trim(), amt=$('#i-amt').value.trim()||'0'
+  const o=$('#inspect-out')
+  if(!tick||!addr){ o.innerHTML='<div class="err">Ticker and address required.</div>'; return }
+  o.innerHTML='<span class="spinner"></span> Querying the chain…'
+  try{
+    const j = await fetch(`api/bridge/inspect?tick=${encodeURIComponent(tick)}&addr=${encodeURIComponent(addr)}&amount=${encodeURIComponent(amt)}`).then(r=>r.json())
+    if(j.error){ o.innerHTML='<div class="err">'+esc(j.error)+'</div>'; return }
+    const r=j.result
+    const arrived = r.arrived?'<span class="pill2 p-yes">arrived</span>':'<span class="pill2 p-no">not arrived</span>'
+    const conf = r.confirmed?'<span class="pill2 p-yes">confirmed</span>':(r.arrived?'<span class="pill2 p-wait">confirming</span>':'<span class="pill2 p-no">—</span>')
+    o.innerHTML=`<div style="margin:8px 0">${arrived} ${conf}</div>
+      <div class="ires">
+        <div class="b"><div class="k">Balance</div><div class="v">${fmt((r.balance||'0').split('.')[0])}</div></div>
+        <div class="b"><div class="k">Confirmations</div><div class="v">${fmt(r.confirmations)} / ${j.threshold}</div></div>
+        <div class="b"><div class="k">Deposit block</div><div class="v">${r.deposit_block?fmt(r.deposit_block):'—'}</div></div>
+        <div class="b"><div class="k">Chain height</div><div class="v">${r.height?fmt(r.height):'—'}</div></div>
+      </div>`
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+// ---------- Real custody deposit → mint → redeem ----------
+async function loadCustody(){
+  try{
+    const c = await fetch('api/custody/status').then(r=>r.json())
+    const el = $('#custody-line'); if(!el) return
+    if(c.provider!=='emblem-vault'){ el.innerHTML='Custody unavailable.'; return }
+    // Deposits are live + real assets held → neutral/positive framing, not a yellow warning.
+    el.style.background='rgba(67,211,138,.06)'; el.style.borderColor='rgba(67,211,138,.25)'; el.style.color='var(--muted)'
+    el.innerHTML = `<b style="color:var(--text)">Emblem Vault custody</b> <span class="pill2 p-yes" style="margin-left:6px">LIVE · holding real assets</span>${c.live?'':' <span class="pill2 p-wait" style="margin-left:4px">release gated</span>'}<br/>`
+      + `Deposit / bridge address: <span class="mono" style="color:var(--btc)">${esc(c.address)}</span><br/>`
+      + `<span style="font-size:11px">${esc(c.note||'')}</span>`
+  }catch(e){}
+}
+function fillRD(){
+  fetch('api/registry').then(r=>r.json()).then(j=>{
+    const sel=$('#rd-asset'); (j.assets||[]).filter(a=>a.whitelisted).forEach(a=>{
+      const o=document.createElement('option'); o.value=a.exact_ticker; o.textContent=disp(a.exact_ticker); sel.appendChild(o) })
+  }).catch(()=>{})
+}
+async function verifyAndMint(){
+  const tick=$('#rd-asset').value, amount=$('#rd-amount').value.trim(), chain=$('#rd-chain').value
+  const recipient=$('#rd-recipient').value.trim(), txid=$('#rd-txid').value.trim()
+  const o=$('#rd-out')
+  if(!tick||!amount||!recipient||!txid){ o.innerHTML='<div class="err">Fill asset, amount, receive address and your deposit txid.</div>'; return }
+  // SECURITY: the mint is bound to whoever controls the deposit source. Sign a binding with the
+  // connected Bitcoin wallet (the address that made the deposit) so nobody can claim your deposit.
+  const source=window.__stampyBtc
+  if(!source){ o.innerHTML='<div class="err">Connect your Bitcoin (deposit) wallet first — you must prove you control the address that made the deposit.</div>'; return }
+  const body={tick,amount,txid,receive_address:recipient,chain,source_address:source}
+  try{
+    o.innerHTML='<span class="spinner"></span> Requesting your deposit-binding signature…'
+    // step 1: ask the server for the exact message to sign (with the real source)
+    const pre=await fetch('api/custody/verify-deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(x=>x.json())
+    if(pre.binding_message){
+      const sig=await window.stampySignBtc(pre.binding_message)   // step 2: sign with the BTC wallet
+      body.binding_sig=sig
+    } else if(pre.error){ o.innerHTML='<div class="err">'+esc(pre.error)+'</div>'; return }
+    o.innerHTML='<span class="spinner"></span> Verifying your deposit on-chain…'
+    const r=await fetch('api/custody/verify-deposit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(x=>x.json())
+    if(r.error){ o.innerHTML='<div class="err">'+esc(r.error)+(r.check&&r.check.reason?' — '+esc(r.check.reason):'')+(r.check&&r.check.confirmations!=null?` (confs ${r.check.confirmations})`:'')+'</div>'; return }
+    const m=r.mint||{}
+    o.innerHTML=`<div class="okmsg">✓ Deposit verified (${r.deposit.confirmations} confs) → minted <b>${esc(m.amount_minted)}</b> ${esc(disp(m.tick))} on ${esc(m.chain)}<br/>
+      <span class="mono">${m.chain==='solana'?'mint':'contract'}: ${esc(m.mint_address)}</span> ${m.explorer?`· <a href="${esc(m.explorer)}" target="_blank" rel="noopener">tx ↗</a>`:''}<br/>
+      backed 1:1 by your real deposit · circulating ${esc(m.circulating)} / collateral ${esc(m.collateral)}</div>`
+    loadReserves2(); loadCustody()
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+async function doRealRedeem(){
+  const tick=$('#rr-tick').value.trim(), amount=$('#rr-amount').value.trim(), to=$('#rr-to').value.trim()
+  const o=$('#rr-out')
+  if(!tick||!amount||!to){ o.innerHTML='<div class="err">Fill ticker, amount and your BTC address.</div>'; return }
+  o.innerHTML='<span class="spinner"></span> Releasing from the vault…'
+  try{
+    const r=await fetch('api/custody/redeem',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({tick,amount,to,chain:'solana'})}).then(x=>x.json())
+    if(r.error){ o.innerHTML='<div class="'+(r.gated?'devnet':'err')+'">'+esc(r.error)+'</div>'; return }
+    o.innerHTML=`<div class="okmsg">✓ Released <b>${esc(r.release.amount)}</b> ${esc(disp(r.release.tick))} → your BTC address · <a href="${esc(r.release.explorer)}" target="_blank" rel="noopener">tx ↗</a><br/>circulating now ${esc(r.circulating)}</div>`
+    loadReserves2()
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+$('#rd-verify').addEventListener('click', verifyAndMint)
+$('#rr-redeem').addEventListener('click', doRealRedeem)
+loadCustody(); fillRD()
+
+// ---------- Cross-chain move ----------
+function fillMv(){
+  fetch('api/registry').then(r=>r.json()).then(j=>{
+    const sel=$('#mv-asset'); (j.assets||[]).filter(a=>a.whitelisted).forEach(a=>{
+      const o=document.createElement('option'); o.value=a.exact_ticker; o.textContent=disp(a.exact_ticker); sel.appendChild(o) })
+  }).catch(()=>{})
+}
+async function doMove(){
+  const tick=$('#mv-asset').value, amount=$('#mv-amount').value.trim(), from_chain=$('#mv-from').value, to_chain=$('#mv-to').value
+  const burn_txid=$('#mv-txid').value.trim(), to_address=$('#mv-toaddr').value.trim()
+  const o=$('#mv-out')
+  if(!tick||!amount||!burn_txid||!to_address){ o.innerHTML='<div class="err">Fill asset, amount, burn txid and destination address.</div>'; return }
+  if(from_chain===to_chain){ o.innerHTML='<div class="err">Source and destination must differ.</div>'; return }
+  o.innerHTML='<span class="spinner"></span> Verifying your burn, then minting on '+esc(to_chain)+'…'
+  try{
+    const r=await fetch('api/move',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({tick,amount,from_chain,to_chain,burn_txid,to_address})}).then(x=>x.json())
+    if(r.error){ o.innerHTML='<div class="err">'+esc(r.error)+(r.reason?' — '+esc(r.reason):'')+'</div>'; return }
+    const d=r.destination||{}
+    o.innerHTML=`<div class="okmsg">✓ Moved <b>${esc(r.amount)}</b> ${esc(disp(r.tick))} · ${esc(r.from)} → ${esc(r.to)}<br/>
+      burn verified on ${esc(r.from)} → minted on ${esc(r.to)} <span class="mono">${esc(d.mint_address)}</span> ${d.explorer?`· <a href="${esc(d.explorer)}" target="_blank" rel="noopener">tx ↗</a>`:''}<br/>
+      total supply unchanged · circulating on ${esc(r.to)}: ${esc(d.circulating)}</div>`
+    loadReserves2()
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+$('#mv-go').addEventListener('click', doMove)
+fillMv()
+
+// ---------- Route finder ----------
+async function findRoute(){
+  const from=$('#rt-from').value.trim(), to=$('#rt-to').value.trim(), amount=$('#rt-amount').value.trim()
+  const fc=$('#rt-fc').value, tc=$('#rt-tc').value, o=$('#rt-out')
+  if(!from||!to||!amount){ o.innerHTML='<div class="err">Enter from, to and amount.</div>'; return }
+  o.innerHTML='<span class="spinner"></span> Searching the liquidity graph…'
+  try{
+    const q=`api/route?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&amount=${encodeURIComponent(amount)}`+(fc?`&from_chain=${fc}`:'')+(tc?`&to_chain=${tc}`:'')
+    const r=await fetch(q).then(x=>x.json())
+    if(r.error){ o.innerHTML='<div class="err">'+esc(r.error)+'</div>'; return }
+    if(!r.found){ o.innerHTML='<div class="empty">'+esc(r.note||'No route found')+'</div>'; return }
+    const steps=r.steps.map((s,i)=>`<div class="rstep"><span class="rn">${i+1}</span><span class="rtype ${s.type==='move'?'rmove':'rswap'}">${esc(s.type)}</span> ${esc(s.from)} <span style="color:var(--muted2)">→</span> ${esc(s.to)} <span class="mono" style="color:var(--muted2)">(${esc(s.in)}→${esc(s.out)})</span></div>`).join('')
+    o.innerHTML=`<div class="okmsg" style="margin-bottom:8px">Best route: <b>${esc(String(r.amount_in))}</b> ${esc(r.from)} → <b>${(+r.amount_out).toLocaleString(undefined,{maximumFractionDigits:6})}</b> ${esc(r.to)} · ${r.hops} hop${r.hops>1?'s':''}</div>${steps}`
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+$('#rt-go').addEventListener('click', findRoute)
+
+// ---------- Arbitrage / mispricing (read-only) ----------
+async function loadArbitrage(){
+  const o=$('#arb-out'); if(!o) return
+  try{
+    const d=await fetch('api/arbitrage').then(r=>r.json())
+    const cyc=(d.cycles||[]).map(c=>`<div class="rstep"><span class="pill2 p-yes">+${(+c.profit_pct).toFixed(2)}%</span> <span class="mono">${c.loop.map(esc).join(' → ')}</span> <span class="tint">${c.hops} hops</span></div>`).join('')
+    const pools=(d.pools||[]).map(p=>{
+      const big=Math.abs(p.divergence_pct)>2
+      const col=big?(p.thin?'var(--warn)':'var(--bad)'):'var(--good)'
+      return `<div class="rstep"><b>${esc(p.pair)}</b> ${p.thin?'<span class="pill2 p-wait" title="one side is a thin/scarce market — signal is noisy">⚠ thin</span>':''}
+        <span style="color:${col};font-weight:700">${p.divergence_pct>0?'+':''}${p.divergence_pct}%</span>
+        <span class="tint">${esc(p.signal)}</span></div>`
+    }).join('')
+    o.innerHTML = `
+      <div class="ihdr" style="margin-top:2px">Profitable cycles <span>a loop returning more than it started (fee-aware)</span></div>
+      ${cyc || '<div class="tint" style="padding:4px 0">None — no risk-free loop in the current graph.</div>'}
+      <div class="ihdr" style="margin-top:14px">Pool vs native-market <span>pool ratio compared to indicative Bitcoin-market prices</span></div>
+      ${pools || '<div class="tint" style="padding:4px 0">No pools with comparable native markets.</div>'}
+      <div class="tint" style="margin-top:10px;font-size:10.5px">${esc(d.note||'')}</div>`
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+loadArbitrage()
+
+$('#b-create').addEventListener('click', createIntent)
+$('#i-check').addEventListener('click', runInspector)
+
+// ---------- Phase 3: mint / redeem / proof-of-reserves ----------
+function fillMintAssets(){
+  fetch('api/registry').then(r=>r.json()).then(j=>{
+    const sel=$('#m-asset')
+    ;(j.assets||[]).filter(a=>a.whitelisted).forEach(a=>{
+      const o=document.createElement('option'); o.value=a.exact_ticker; o.textContent=disp(a.exact_ticker); sel.appendChild(o)
+    })
+  }).catch(()=>{})
+}
+async function mintAction(path, label){
+  const tick=$('#m-asset').value, amount=$('#m-amount').value.trim()
+  const o=$('#mint-out')
+  if(!tick||!amount){ o.innerHTML='<div class="err">Pick an asset and amount.</div>'; return }
+  const chain = $('#m-chain').value
+  const receive = ($('#m-recipient').value.trim()) || (chain==='solana'?window.__stampyReceive:'') || ''
+  if(path==='mint' && !receive){ o.innerHTML='<div class="err">Enter a recipient address for '+esc(chain)+'.</div>'; return }
+  o.innerHTML='<span class="spinner"></span> '+label+' on '+esc(chain)+'…'
+  try{
+    const body = path==='mint' ? {tick,amount,receive_address:receive,chain}
+                : path==='redeem' ? {tick,amount,chain} : {tick,amount}
+    const r = await fetch('api/'+(path==='sim'?'preview/confirm-deposit':path),{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(x=>x.json())
+    if(r.error){ o.innerHTML='<div class="err">'+esc(r.error)+(r.reason?' — '+esc(r.reason):'')+
+      (r.needs_funding?` — fund devnet authority: <span class="mono">${esc(r.needs_funding)}</span>`:'')+
+      (r.collateral!=null?` (collateral: ${esc(r.collateral)}, circulating: ${esc(r.circulating||'0')})`:'')+'</div>'; loadReserves2(); return }
+    if(path==='sim') o.innerHTML=`<div class="okmsg">✓ Simulated confirmed deposit of ${esc(r.amount)} ${esc(disp(r.tick))}. Backing collateral now <b>${esc(r.collateral)}</b>.</div>`
+    else if(path==='mint'){ const kind = r.chain==='solana'?'SPL token':'ERC-20'; o.innerHTML=`<div class="okmsg">✓ Minted <b>${esc(r.amount_minted)}</b> ${esc(disp(r.tick))} — <b>real ${kind} on ${esc(r.chain)} ${esc(r.network)}</b>${r.rounded?' <span class="wraw">rounded down</span>':''}<br/>
+      <span class="mono">${r.chain==='solana'?'mint':'contract'}: ${esc(r.mint_address)}</span> ${r.explorer?`· <a href="${esc(r.explorer)}" target="_blank" rel="noopener">view tx ↗</a>`:''}<br/>
+      circulating: <b>${esc(r.circulating)}</b> / collateral: <b>${esc(r.collateral)}</b></div>` }
+    else o.innerHTML=`<div class="okmsg">✓ Redeemed ${esc(r.amount)} ${esc(disp(r.tick))}. Circulating now <b>${esc(r.circulating)}</b>; collateral released.</div>`
+    loadReserves2()
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+async function loadMintAuthority(){
+  const chain = $('#m-chain').value
+  const el=$('#mint-authority'); if(!el) return
+  try{
+    const url = chain==='solana' ? 'api/mint/authority' : 'api/mint/evm-authority?chain='+chain
+    const a = await fetch(url).then(r=>r.json())
+    const unit = chain==='solana'?'SOL':'ETH'
+    const low = parseFloat(a.balance||0) < (chain==='solana'?0.02:0.002)
+    if(chain==='solana' && a.authority_model){
+      el.innerHTML = `Mint authority: <b style="color:var(--good)">${esc(a.authority_model)}</b> <span class="mono">${esc(a.address)}</span> · no raw key`
+        + `<br/>gas payer <span class="mono">${esc(a.fee_payer)}</span> · ${a.balance} SOL` + (low?` <span style="color:var(--warn)">(low)</span>`:'')
+    } else {
+      el.innerHTML = `${esc(a.network)} authority (interim single-key): <span class="mono">${esc(a.address)}</span> · ${a.balance} ${unit}`
+        + (low ? ` — <span style="color:var(--warn)">unfunded; send testnet ${unit} here to mint</span>` : '')
+    }
+    $('#m-recipient').placeholder = chain==='solana' ? 'Solana recipient (devnet address)' : 'EVM recipient (0x…)'
+    if(chain==='solana' && !$('#m-recipient').value && window.__stampyReceive) $('#m-recipient').value = window.__stampyReceive
+  }catch(e){ el.textContent='' }
+}
+async function loadReserves2(){
+  try{
+    const j = await fetch('api/reserves').then(r=>r.json())
+    const el = $('#por')
+    if(!j.assets || !j.assets.length){ el.innerHTML='<div class="empty">No representations minted yet.</div>'; return }
+    const usd = n => n==null ? '—' : (n>=1?'$'+n.toLocaleString(undefined,{maximumFractionDigits:2}):'$'+Number(n).toPrecision(3))
+    const chg = c => c==null?'':`<span style="font-size:11px;color:${c>=0?'var(--good)':'var(--bad)'}">${c>=0?'+':''}${(+c).toFixed(1)}%</span>`
+    const warn = a => a.thin?`<span title="${esc(a.price_note||'thin / scarce market — indicative only')}" style="color:var(--warn);font-weight:700;cursor:help">⚠</span>`:''
+    const rows = j.assets.map(a=>{
+      // Collateralization = collateral ÷ circulating. ≥100% = every minted token is fully backed
+      // (higher = MORE surplus backing). This is the honest metric — a low circ/coll means OVER-
+      // collateralized, not under-backed. Solvent assets always show a full green bar.
+      const circN = Number(a.circulating), collN = Number(a.collateral)
+      const coll = circN>0 ? (collN/circN*100) : null
+      const collLabel = coll==null ? 'unminted' : (coll>=1000 ? Math.round(coll/100)/10+'k%' : Math.round(coll)+'%')
+      const barPct = a.solvent ? 100 : Math.min(100, (collN/Math.max(circN,1))*100)
+      const surplus = coll!=null && coll>100.5 ? ` <span style="color:var(--muted2);font-size:10px" title="only ${Math.round((circN/collN)*100)}% of the backing is minted — the rest is surplus reserve">· ${Math.round(100-circN/collN*100)}% surplus</span>` : ''
+      const badge = a.solvent?'<span class="pill2 p-yes">fully backed</span>':'<span class="pill2 p-no">UNDER-BACKED</span>'
+      const priceCell = a.price_usd!=null ? `${warn(a)} ${usd(a.price_usd)} ${chg(a.change_24h)}` : '<span style="color:var(--muted2)">no mkt</span>'
+      const valueCell = a.value_usd==null ? '—' : (a.thin ? `<span style="color:var(--warn)" title="thin/scarce — not counted in TVL">${usd(a.value_usd)}*</span>` : `<b>${usd(a.value_usd)}</b>`)
+      return `<tr>
+        <td><b>${esc(a.display)}</b></td>
+        <td class="num">${esc(a.collateral)}</td>
+        <td class="num">${priceCell}</td>
+        <td class="num">${valueCell}</td>
+        <td style="min-width:110px"><div class="bar"><div class="barf" style="width:${barPct}%;background:${a.solvent?'var(--good)':'var(--bad)'}"></div></div><div class="rt" title="collateral ÷ circulating">${collLabel} backed${surplus}</div></td>
+        <td>${badge}</td></tr>`
+    }).join('')
+    const tvl = j.tvl_usd!=null ? '$'+Number(j.tvl_usd).toLocaleString(undefined,{maximumFractionDigits:0}) : '—'
+    const anyThin = j.assets.some(a=>a.thin)
+    el.innerHTML = `<div class="porhdr">${j.all_solvent?'<span class="pill2 p-yes">✓ ALL SOLVENT</span>':'<span class="pill2 p-no">⚠ INSOLVENCY</span>'}
+      <span class="pill2" style="background:rgba(247,147,26,.14);color:var(--btc)">TVL ≈ ${tvl}</span>
+      <span class="inv">liquid markets · BTC $${j.btc_usd?Number(j.btc_usd).toLocaleString():'—'}</span></div>
+      <table class="portab"><thead><tr><th>Asset</th><th class="num">Collateral (units)</th><th class="num">Price</th><th class="num">Value</th><th>Collateralization</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
+      <div style="font-size:10.5px;color:var(--muted2);margin-top:8px">Prices are indicative — SRC-20 from stampchain market, Counterparty from the cheapest open on-chain dispenser. <span style="color:var(--warn)">⚠ / *</span> = <b>thin/ultra-scarce</b> market (real on-chain price, but trades in tiny fractions) — shown for reference, <b>excluded from headline TVL</b> so it can't distort the total.${anyThin?'':''}</div>`
+  }catch(e){}
+}
+$('#m-chain').addEventListener('change', loadMintAuthority)
+$('#m-mint').addEventListener('click', ()=>mintAction('mint','Minting'))
+$('#m-redeem').addEventListener('click', ()=>mintAction('redeem','Redeeming'))
+
+// ---------- Phase 7: native SRC-20 AMM ----------
+let POOLS = []
+async function loadPools(){
+  try{
+    const j = await fetch('api/amm/pools').then(r=>r.json())
+    POOLS = j.pools||[]
+    const el=$('#pools')
+    if(!POOLS.length){ el.innerHTML='<div class="empty">No pools yet — create one below.</div>' }
+    else el.innerHTML = POOLS.map(p=>{
+      const r=p.reserves, pr=p.price
+      const price = pr ? Object.entries(pr).map(([k,v])=>`${(+v).toLocaleString(undefined,{maximumFractionDigits:4})} ${k.replace(/_/g,' ')}`).join(' · ') : '—'
+      const extSide = p.kind_b==='external' ? p.symbol_b : (p.kind_a==='external' ? p.symbol_a : null)
+      const extBadge = extSide ? ` <span class="pill2 p-wait" title="External token — not custody-backed by StampySwap. Only the ${esc(p.kind_a==='external'?p.symbol_b:p.symbol_a)} side is a backed representation.">ext: ${esc(extSide)} · unbacked</span>` : ''
+      return `<div class="poolrow"><div><b>${esc(p.label)}</b>${extBadge} <a class="mono" href="${esc(p.explorer)}" target="_blank" rel="noopener" style="font-size:11px">${esc(p.pair.slice(0,10))}… ↗</a></div>
+        <div class="preserve">${r?`${(+r.a).toLocaleString(undefined,{maximumFractionDigits:2})} ${esc(p.symbol_a)} · ${(+r.b).toLocaleString(undefined,{maximumFractionDigits:2})} ${esc(p.symbol_b)}`:'—'}</div>
+        <div class="pprice">${esc(price)}</div></div>`
+    }).join('')
+    // populate swap selects
+    const sp=$('#s-pool'); sp.innerHTML=POOLS.map(p=>`<option value="${p.id}">${esc(p.label)}</option>`).join('')
+    updateSwapTokens()
+  }catch(e){}
+}
+function updateSwapTokens(){
+  const p = POOLS.find(x=>String(x.id)===$('#s-pool').value)
+  const si=$('#s-in'); if(!p){ si.innerHTML=''; return }
+  si.innerHTML = `<option value="${esc(p.symbol_a)}">${esc(p.symbol_a)} →</option><option value="${esc(p.symbol_b)}">${esc(p.symbol_b)} →</option>`
+}
+function updatePoolMode(){
+  const ext = $('#p-mode').value==='external'
+  $('#p-b').style.display = ext?'none':''
+  $('#p-bext').style.display = ext?'':'none'
+  $('#p-bsym').style.display = ext?'':'none'
+  const h=$('#pool-hint')
+  h.style.display = ext?'':'none'
+  h.innerHTML = ext ? '<b style="color:var(--btc)">External token:</b> only side A is a StampySwap custody-backed representation. The external token is <b>not backed by us</b> — the protocol LP must already hold enough of it. Its price/liquidity is set by the market, not our reserves.' : ''
+}
+async function createPool(){
+  const o=$('#pool-out'), ext=$('#p-mode').value==='external'
+  const body={tickA:$('#p-a').value.trim(),amountA:$('#p-amta').value.trim(),amountB:$('#p-amtb').value.trim(),chain:'base'}
+  if(ext){
+    body.external_b={address:$('#p-bext').value.trim(),symbol:$('#p-bsym').value.trim()||'EXT',amount:$('#p-amtb').value.trim()}
+    if(!body.tickA||!body.external_b.address||!body.amountA||!body.amountB){ o.innerHTML='<div class="err">Fill rep asset, amount, external token address + amount.</div>'; return }
+  } else {
+    body.tickB=$('#p-b').value.trim()
+    if(!body.tickA||!body.tickB||!body.amountA||!body.amountB){ o.innerHTML='<div class="err">Fill all fields.</div>'; return }
+  }
+  o.innerHTML='<span class="spinner"></span> Deploying contracts + seeding liquidity on Base (~30-60s)…'
+  try{
+    const r=await fetch('api/amm/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(x=>x.json())
+    if(r.error){ o.innerHTML='<div class="err">'+esc(r.error)+(r.stage?' (at: '+esc(r.stage)+')':'')+'</div>'; return }
+    o.innerHTML=`<div class="okmsg">✓ Pool <b>${esc(r.pair_label)}</b> live on Base · <a href="${esc(r.pair_explorer)}" target="_blank" rel="noopener">pair ↗</a><br/>seeded reserves: ${Object.entries(r.reserves).map(([k,v])=>`${esc(v)} ${esc(k)}`).join(' · ')}</div>`
+    loadPools()
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+async function quoteSwap(){
+  const o=$('#swap-out'), pool=$('#s-pool').value, tin=$('#s-in').value, amt=$('#s-amt').value.trim()
+  if(!pool||!amt){ o.innerHTML='<div class="err">Pick a pool and amount.</div>'; return }
+  try{
+    const q=await fetch(`api/amm/quote?pool_id=${pool}&token_in=${encodeURIComponent(tin)}&amount_in=${encodeURIComponent(amt)}`).then(r=>r.json())
+    if(q.error){ o.innerHTML='<div class="err">'+esc(q.error)+'</div>'; return }
+    o.innerHTML=`<div style="font-size:13px;color:var(--muted)">${esc(q.amount_in)} ${esc(q.token_in)} → <b style="color:var(--text)">${(+q.amount_out).toLocaleString(undefined,{maximumFractionDigits:6})}</b> ${esc(q.token_out)} <span style="color:var(--muted2)">(quote)</span></div>`
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+async function doSwap(){
+  const o=$('#swap-out'), pool=$('#s-pool').value, tin=$('#s-in').value, amt=$('#s-amt').value.trim()
+  if(!pool||!amt){ o.innerHTML='<div class="err">Pick a pool and amount.</div>'; return }
+  o.innerHTML='<span class="spinner"></span> Swapping on Base…'
+  try{
+    const r=await fetch('api/amm/swap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pool_id:+pool,token_in:tin,amount_in:amt})}).then(x=>x.json())
+    if(r.error){ o.innerHTML='<div class="err">'+esc(r.error)+(r.stage?' (at: '+esc(r.stage)+')':'')+'</div>'; return }
+    o.innerHTML=`<div class="okmsg">✓ Swapped ${esc(r.amount_in)} ${esc(r.token_in)} → ${esc(r.token_out)} · <a href="${esc(r.explorer)}" target="_blank" rel="noopener">tx ↗</a><br/>new reserves: ${Object.entries(r.reserves).map(([k,v])=>`${(+v).toLocaleString(undefined,{maximumFractionDigits:2})} ${esc(k)}`).join(' · ')}</div>`
+    loadPools()
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+async function loadTrust(){
+  try{
+    const t=await fetch('api/trust').then(r=>r.json())
+    const el=$('#trust'); if(!el) return
+    const c=t.custody||{}
+    const em = c.provider==='emblem-vault'
+    const auth=(t.authorities||[]).map(a=>{
+      const ms=a.multisig||{}
+      const msRow = ms.available ? `<div class="trow"><span class="tk">└ multisig</span>
+        <span class="pill2 ${ms.active?'p-yes':'p-wait'}">${esc(ms.model||'multisig')} · ${ms.active?'ACTIVE':'ready (not active)'}</span>
+        <span class="mono">${esc((ms.vault||ms.safe||'').slice(0,10))}${(ms.vault||ms.safe)?'…':''}</span>
+        <span class="tint">built + proven · flip to activate</span></div>` : ''
+      return `<div class="trow"><span class="tk">${esc(a.chain)}</span>
+        <span class="pill2 ${/emblem/i.test(a.model||'')?'p-yes':'p-wait'}">${esc(a.model)}</span>
+        <span class="mono">${a.address?esc(a.address.slice(0,10))+'…':'—'}</span>
+        <span class="tint">→ ${esc(a.intended)}</span></div>${msRow}`
+    }).join('')
+    el.innerHTML=`
+      <div class="trow"><span class="tk">custody</span>
+        <span class="pill2 ${em?'p-yes':'p-no'}">${esc(c.provider||'none')}${c.managed?' · managed':''} · ${em?'LIVE · holding real assets':'—'}</span>
+        ${em&&!c.live?'<span class="pill2 p-wait">release gated</span>':''}
+        <span class="tint">${esc(c.note||'')}</span></div>
+      ${c.address?`<div class="trow"><span class="tk">→ btc addr</span><span class="mono" style="grid-column:2/-1">${esc(c.address)}</span></div>`:''}
+      <div style="height:8px"></div>
+      ${auth}
+      <div style="height:10px"></div>
+      <div class="tint" style="line-height:1.7"><b style="color:var(--good)">Guarantees:</b> ${(t.guarantees||[]).map(esc).join(' · ')}<br/>
+      <b style="color:var(--btc)">Path to mainnet:</b> ${(t.roadmap_to_mainnet||[]).map(esc).join(' → ')}</div>`
+  }catch(e){}
+}
+loadTrust()
+$('#p-mode').addEventListener('change', updatePoolMode)
+$('#p-create').addEventListener('click', createPool)
+$('#s-pool').addEventListener('change', updateSwapTokens)
+$('#s-quote').addEventListener('click', quoteSwap)
+$('#s-swap').addEventListener('click', doSwap)
+loadPools()
+
+loadBridgeConfig(); fillAssets(); fillMintAssets(); loadReserves2(); loadMintAuthority()
+
+// ---------- hero stats + TVL chip (dollar-wise headline) ----------
+async function loadHero(){
+  try{
+    const j = await fetch('api/reserves').then(r=>r.json())
+    const tvl = j.tvl_usd!=null ? '$'+Number(j.tvl_usd).toLocaleString(undefined,{maximumFractionDigits:0}) : '—'
+    const set=(id,v)=>{const e=$('#'+id); if(e) e.textContent=v}
+    set('hs-tvl', tvl)
+    set('hs-assets', (j.assets||[]).length)
+    set('hs-solv', j.all_solvent?'100%':'⚠')
+    const chip=$('#tvl-chip'); if(chip) chip.innerHTML='<span>TVL</span>'+tvl
+    const solv=$('#hs-solv'); if(solv&&j.all_solvent) solv.style.color='var(--good)'
+  }catch(e){}
+}
+loadHero()
+
+// ---------- Auto-fill address fields from the connected wallet ----------
+// Ties wallet login to the workflow: a connected BTC wallet fills BTC destinations (redeem,
+// stamp bridge); a connected Solana wallet fills Solana recipients (mint). Only fills EMPTY
+// fields — never overwrites what the user typed.
+function autofillFromWallet(){
+  const btc = window.__stampyBtc, sol = window.__stampyReceive, evm = window.__stampyEvm
+  const fill = (id, val, force) => { const e=$('#'+id); if(e && val && (force || !e.value.trim())){ e.value=val; e.style.borderColor='var(--good)'; e.title='auto-filled from your connected wallet' } }
+  if(btc){ fill('rr-to', btc); fill('sb-to', btc) }
+  // recipient fields are chain-aware: Solana wallet → Solana chains, EVM wallet → Base/Ethereum
+  const rc=$('#rd-chain'), mc=$('#m-chain')
+  const rdEvm = rc && (rc.value==='base'||rc.value==='ethereum')
+  const mEvm = mc && (mc.value==='base'||mc.value==='ethereum')
+  if(sol){ if(!mEvm) fill('m-recipient', sol); if(rc && rc.value==='solana') fill('rd-recipient', sol) }
+  if(evm){ if(mEvm) fill('m-recipient', evm); if(rdEvm) fill('rd-recipient', evm) }
+}
+window.addEventListener('stampy:wallet', autofillFromWallet)
+$('#rd-chain') && $('#rd-chain').addEventListener('change', autofillFromWallet)
+$('#m-chain') && $('#m-chain').addEventListener('change', autofillFromWallet)
+
+// ---------- KEVINSTAMP-style SRC-20 → Stamp bridge (one-way, irreversible) ----------
+let SB_BRIDGES = []
+async function loadStampBridge(){
+  try{
+    const j = await fetch('api/stampbridge/config').then(r=>r.json())
+    SB_BRIDGES = j.bridges||[]
+    const sel=$('#sb-asset'); if(sel) sel.innerHTML = SB_BRIDGES.map(b=>`<option value="${esc(b.src20_tick)}">${esc(b.display)} → ${esc(b.stamp_asset)}</option>`).join('')
+    const cfg=$('#sb-config')
+    if(cfg){
+      if(!SB_BRIDGES.length){ cfg.innerHTML='<span style="color:var(--muted2)">No stamp bridges configured.</span>' }
+      else cfg.innerHTML = SB_BRIDGES.map(b=>`<div><b>${esc(b.display)} → ${esc(b.stamp_asset)}</b> · ratio ${esc(b.ratio)}:1 · ${b.stamp_in_vault!=null?Number(b.stamp_in_vault).toLocaleString()+' in vault':''} · <span class="pill2 ${b.enabled&&b.custody_live?'p-yes':'p-wait'}">${b.enabled&&b.custody_live?'LIVE':'gated (not yet enabled)'}</span></div>`).join('')
+    }
+  }catch(e){}
+}
+async function quoteStampBridge(){
+  const o=$('#sb-quote-out'), tick=$('#sb-asset').value, amt=$('#sb-amount').value.trim()
+  if(!tick||!amt){ o.innerHTML='<div class="err">Pick an asset and a whole amount.</div>'; return }
+  o.innerHTML='<span class="spinner"></span> Quoting…'
+  try{
+    const q=await fetch('api/stampbridge/quote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({src20_tick:tick,amount:amt})}).then(r=>r.json())
+    if(q.error){ o.innerHTML='<div class="err">'+esc(q.error)+'</div>'; return }
+    o.innerHTML=`<div class="okmsg" style="background:rgba(255,204,85,.06);border-color:rgba(255,204,85,.25)">
+      Burn <b>${esc(q.burn_amount)} ${esc(disp(q.src20_tick))}</b> → receive <b>${esc(q.receive_amount)} ${esc(q.stamp_asset)}</b>${q.sufficient?'':' <span style="color:var(--bad)">(insufficient stamp in vault)</span>'}<br/>
+      <div style="margin-top:8px;font-size:12px">Send an SRC-20 <b>TRANSFER</b> of ${esc(q.burn_amount)} ${esc(disp(q.src20_tick))} to the burn address:<br/>
+      <span class="mono" style="color:var(--bad);word-break:break-all">${esc(q.burn_address)}</span><br/>
+      then paste the txid below. <b style="color:var(--bad)">This is permanent.</b></div>
+      ${!q.enabled||!q.custody_live?'<div style="margin-top:8px;font-size:11.5px;color:var(--warn)">⚠ Bridge is currently gated — execution is disabled until the operator enables it after a verification test.</div>':''}</div>`
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+async function execStampBridge(){
+  const o=$('#sb-exec-out'), tick=$('#sb-asset').value, amt=$('#sb-amount').value.trim(), txid=$('#sb-txid').value.trim(), to=$('#sb-to').value.trim()
+  if(!tick||!amt||!txid||!to){ o.innerHTML='<div class="err">Need asset, amount, burn txid and your BTC address.</div>'; return }
+  if(!confirm(`This will bridge ${amt} ${disp(tick)}. The burn is already permanent on-chain. Continue to claim your Stamp?`)) return
+  o.innerHTML='<span class="spinner"></span> Verifying burn + releasing stamp…'
+  try{
+    const r=await fetch('api/stampbridge/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({src20_tick:tick,amount:amt,burn_txid:txid,user_address:to})}).then(x=>x.json())
+    if(r.error){ o.innerHTML='<div class="'+(r.gated?'devnet':'err')+'">'+esc(r.error)+'</div>'; return }
+    o.innerHTML=`<div class="okmsg">✓ Bridged. Burned <b>${esc(r.burned)}</b> → released <b>${esc(r.released)}</b> · <a href="${esc(r.release&&r.release.explorer||'#')}" target="_blank" rel="noopener">release tx ↗</a></div>`
+    loadStampBridge()
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+}
+$('#sb-quote')&&$('#sb-quote').addEventListener('click', quoteStampBridge)
+$('#sb-exec')&&$('#sb-exec').addEventListener('click', execStampBridge)
+loadStampBridge()
+</script>
+</body>
+</html>
