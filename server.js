@@ -750,6 +750,17 @@ async function getAssetByTick(tick) {
   const rows = await dbQuery('SELECT * FROM canonical_assets WHERE lower(exact_ticker)=lower(?) OR lower(exact_ticker)=lower(?)', [clean, '$' + clean])
   return rows[0] || null
 }
+// Resolve a registry asset, honoring an optional "proto:TICKER" qualifier so a collided ticker
+// (e.g. ACME exists as both src-20 and acme) resolves to the intended protocol's row.
+async function resolveAsset(raw) {
+  const s = String(raw || '')
+  const m = s.match(/^(acme|counterparty|xcp|src-?20)\s*:\s*(.+)$/i)
+  if (!m) return getAssetByTick(s)
+  const proto = m[1].toLowerCase().replace('xcp', 'counterparty').replace(/^src-?20$/, 'src-20')
+  const t = m[2].trim().replace(/^\$+/, '')
+  const rows = await dbQuery('SELECT * FROM canonical_assets WHERE (lower(exact_ticker)=lower(?) OR lower(exact_ticker)=lower(?)) AND source_protocol=? LIMIT 1', [t, '$' + t, proto])
+  return rows[0] || null
+}
 
 // PREVIEW-ONLY hook: simulate a confirmed on-chain deposit so the mint lifecycle can be
 // exercised end-to-end. Disabled entirely when PREVIEW is off (real collateral then comes
@@ -823,12 +834,12 @@ app.get('/api/mint/evm-authority', async (req, res) => {
 
 // Deposit-gated mint core — enforces the solvency invariant, mints on-chain, records.
 // Returns { status, body }. Shared by /api/mint and the AMM pool seeder.
-async function performMint(tick, amount, receive_address, chain = 'solana') {
+async function performMint(tick, amount, receive_address, chain = 'solana', assetIn = null) {
   amount = parseAmount(amount)
   if (!amount) return { status: 400, body: { error: 'amount must be a positive number (≤18 dp)' } }
   if (!receive_address) return { status: 400, body: { error: 'a receive address is required' } }
   if (!(chain in DEST_DECIMALS)) return { status: 400, body: { error: 'unsupported destination chain' } }
-  const asset = await getAssetByTick(tick || '')
+  const asset = assetIn || await getAssetByTick(tick || '')
   if (!asset) return { status: 404, body: { error: 'asset not in registry' } }
   if (!asset.whitelisted) return { status: 403, body: { error: 'asset not whitelisted' } }
 
@@ -1519,13 +1530,13 @@ app.post('/api/amm/create', async (req, res) => {
   try {
     const { tickA, tickB, amountA, amountB, chain = 'base', external_b } = req.body || {}
     if (!EVM_CHAINS.includes(chain)) return res.status(400).json({ error: 'AMM currently on EVM testnet (base/ethereum)' })
-    const a = await getAssetByTick(tickA || '')
+    const a = await resolveAsset(tickA || '')
     if (!a) return res.status(404).json({ error: 'asset A must be in the registry' })
     const amtA = parseAmount(amountA); if (!amtA) return res.status(400).json({ error: 'amountA must be positive' })
     const lp = await amm.lpAddress(chain)
 
     // side A — mint the representation to the LP
-    const mA = await performMint(a.exact_ticker, amtA, lp, chain)
+    const mA = await performMint(a.exact_ticker, amtA, lp, chain, a)
     if (mA.status !== 200) return res.status(mA.status).json({ stage: 'mint ' + a.exact_ticker, ...mA.body })
     const token0 = mA.body.mint_address, symA = displayTicker(a.exact_ticker), seedA = mA.body.amount_minted
 
@@ -1538,11 +1549,11 @@ app.post('/api/amm/create', async (req, res) => {
       if (parseFloat(bal) < parseFloat(amt)) return res.status(409).json({ error: `LP holds ${bal} of the external token, need ${amt}. Fund the LP (${lp}) with it first.` })
       token1 = external_b.address; symB = (external_b.symbol || 'EXT').slice(0, 11); canonB = 0; kindB = 'external'; seedB = amt
     } else {
-      const b = await getAssetByTick(tickB || '')
+      const b = await resolveAsset(tickB || '')
       if (!b) return res.status(404).json({ error: 'asset B must be in the registry (or provide external_b)' })
       if (a.id === b.id) return res.status(400).json({ error: 'cannot pair an asset with itself' })
       const amt = parseAmount(amountB); if (!amt) return res.status(400).json({ error: 'amountB must be positive' })
-      const mB = await performMint(b.exact_ticker, amt, lp, chain)
+      const mB = await performMint(b.exact_ticker, amt, lp, chain, b)
       if (mB.status !== 200) return res.status(mB.status).json({ stage: 'mint ' + b.exact_ticker, ...mB.body })
       token1 = mB.body.mint_address; symB = displayTicker(b.exact_ticker); canonB = b.id; kindB = 'rep'; seedB = mB.body.amount_minted
     }
