@@ -28,3 +28,4 @@ app.log
 *.key
 *.pem
 *.seed
+StampyRepMainnet.flat.sol

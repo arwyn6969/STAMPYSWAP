@@ -85,3 +85,6 @@ User: "seed the market, trees/acme mostly on trees side, skip sat-pricing, make 
 - SOLVENT: all_solvent true. TREES coll 420/circ 420 (100%), ACME coll 9999/circ 4200 (42%). wrap/route now populates base rep_contract+explorer for TREES/ACME (enriches terminal integration).
 - Local commits ahead of GitHub: 6b35f6c (ACME round-trip) + 37ccd5f (market seed). PUSH still pending user re-providing STAMPYSWAP_TOKEN.
 - NEXT: finish ACME Terminal integration (peer wiring their Wrap Planner to /api/wrap/route + /api/custody/detect).
+
+## StampySwap — GitHub PUSH #2 (all ACME work backed up) 2026-09-13
+Pushed ac03dfc..ab8e2cb to github.com/arwyn6969/STAMPYSWAP (main). 3 commits: 6b35f6c (ACME full round-trip + terminal integration), 37ccd5f (TREES/ACME market seed + resolveAsset), ab8e2cb (wrap/route live market field). Verified via GitHub API: remote HEAD=ab8e2cb, ZERO secret files landed. A fresh GitHub PAT was pasted for this push (value NOT stored here; user to revoke after). NOTE cross-project confusion: user first pointed at CF_API_TOKEN in the HOMEPAGE session — that's a Cloudflare token for a DIFFERENT project (arwyn.party homepage/Worker), can't push GitHub + agents can't read stored secrets anyway; clarified, user then pasted the correct GitHub PAT. Repo now current.
