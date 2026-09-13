@@ -1080,26 +1080,145 @@ app.get('/api/custody/status', async (_req, res) => {
 // the gated tiny test. ?tick=ACME_ASSET [&source=BTC_ADDR] [&amount=WHOLE].
 app.get('/api/custody/detect', async (req, res) => {
   try {
-    const asset = await getAssetByTick(String(req.query.tick || ''))
-    if (!asset) return res.status(404).json({ error: 'asset not in registry — discover it first' })
     if (!VAULT_ADDR) return res.status(503).json({ error: 'custody address not provisioned' })
-    if (asset.source_protocol === 'acme') {
+    // Protocol may be forced via ?protocol=acme or a `acme:TICKER` prefix. This is what lets a
+    // COLLIDED ticker (ACME/SOAP/SADIE also exist as SRC-20/XCP) reach the ACME adapter — the
+    // bare registry lookup resolves collided names to SRC-20/XCP first (dispatch precedence).
+    const rawTick = String(req.query.tick || '')
+    let protocol = (req.query.protocol ? String(req.query.protocol) : '').toLowerCase()
+    let tick = rawTick
+    const pm = rawTick.match(/^(acme|counterparty|xcp|src-?20)\s*:\s*(.+)$/i)
+    if (pm) { protocol = pm[1].toLowerCase(); tick = pm[2].trim() }
+    if (!tick) return res.status(400).json({ error: 'tick required (optionally ?protocol=acme, or "acme:TICKER")' })
+
+    const known = await getAssetByTick(tick)
+    const isAcme = protocol === 'acme' || (!protocol && known && known.source_protocol === 'acme')
+    if (isAcme) {
       if (!acme) return res.status(400).json({ error: 'ACME adapter unavailable' })
-      const dec = asset.decimals == null ? 8 : Number(asset.decimals)
+      // Prefer registry decimals when the asset is a known ACME row; otherwise resolve straight
+      // from acme.pics so a collided/unregistered ticker still works for read-only detection.
+      let exact = tick, dec = null
+      if (known && known.source_protocol === 'acme') { exact = known.exact_ticker; dec = known.decimals == null ? null : Number(known.decimals) }
+      if (dec == null) {
+        const a = await acme.lookupAsset(tick).catch(() => null)
+        if (!a) return res.status(404).json({ error: `ACME asset '${tick}' not found on acme.pics` })
+        exact = a.exact_ticker || tick; dec = a.divisible ? 8 : 0
+      }
       const source = req.query.source ? String(req.query.source) : null
       const minQtyBase = req.query.amount ? acme.toBase(parseAmount(req.query.amount) || '0', dec) : null
-      const deposits = await acme.findDeposits(asset.exact_ticker, VAULT_ADDR, { source, minQtyBase })
-      const detailed = await Promise.all(deposits.map(async d => ({
-        tx_hash: d.tx_hash, source: d.source, quantity: acme.fromBase(d.quantity_base, dec), block_index: d.block_index,
-        confirmations: await acme.confirmations(d.block_index).catch(() => 0),
-        confirmed: (await acme.confirmations(d.block_index).catch(() => 0)) >= ACME_CONFIRMS,
-      })))
-      const vaultBalance = acme.fromBase(await acme.addressBalanceBase(VAULT_ADDR, asset.exact_ticker), dec)
-      return res.json({ protocol: 'acme', asset: asset.exact_ticker, vault: VAULT_ADDR, vault_balance: vaultBalance,
+      const deposits = await acme.findDeposits(exact, VAULT_ADDR, { source, minQtyBase })
+      // lifecycle: which deposits are already credited/minted? (ledger key = acme:<txid>)
+      const minted = new Set()
+      if (deposits.length) {
+        const keys = deposits.map(d => `acme:${d.tx_hash}`)
+        const rows = await dbQuery(`SELECT btc_txid FROM collateral_ledger WHERE direction='deposit' AND btc_txid IN (${keys.map(() => '?').join(',')})`, keys)
+        for (const r of rows) minted.add(String(r.btc_txid))
+      }
+      const detailed = await Promise.all(deposits.map(async d => {
+        const confs = await acme.confirmations(d.block_index).catch(() => 0)
+        return { tx_hash: d.tx_hash, source: d.source, quantity: acme.fromBase(d.quantity_base, dec),
+          block_index: d.block_index, confirmations: confs, confirmed: confs >= ACME_CONFIRMS,
+          minted: minted.has(`acme:${d.tx_hash}`) }
+      }))
+      const vaultBalance = acme.fromBase(await acme.addressBalanceBase(VAULT_ADDR, exact).catch(() => '0'), dec)
+      return res.json({ protocol: 'acme', asset: exact, decimals: dec, vault: VAULT_ADDR, vault_balance: vaultBalance,
         confirms_required: ACME_CONFIRMS, detected: detailed.length, deposits: detailed,
+        registered: !!(known && known.source_protocol === 'acme'),
         note: 'READ-ONLY detection — nothing credited, minted, or released.' })
     }
-    return res.status(400).json({ error: `detection not wired for source_protocol='${asset.source_protocol}' (ACME only for now)` })
+    if (!known) return res.status(404).json({ error: 'asset not in registry — discover it first, or pass ?protocol=acme' })
+    return res.status(400).json({ error: `detection not wired for source_protocol='${known.source_protocol}' (ACME only for now)` })
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+})
+
+// READ-ONLY wrap ROUTE for external explorers (the ACME Terminal) — describes how an asset wraps
+// through StampySwap: supported/whitelisted, the vault deposit address, target chains + any minted
+// rep contract, current reserves, confirmations, fees, and step-by-step. NO side effects; the
+// value-moving deposit→mint happens in the StampySwap app (wallet + BIP-322), never via this call.
+const WRAP_CHAIN_META = {
+  solana:   { chain_label: 'Solana Devnet',   is_testnet: true, explorer: 'https://explorer.solana.com/address/%s?cluster=devnet' },
+  base:     { chain_label: 'Base Sepolia',     is_testnet: true, explorer: 'https://sepolia.basescan.org/token/%s' },
+  ethereum: { chain_label: 'Ethereum Sepolia', is_testnet: true, explorer: 'https://sepolia.etherscan.io/token/%s' },
+}
+app.get('/api/wrap/route', async (req, res) => {
+  try {
+    const rawTick = String(req.query.asset || req.query.tick || '')
+    let protocol = (req.query.protocol ? String(req.query.protocol) : '').toLowerCase()
+    let tick = rawTick
+    const pm = rawTick.match(/^(acme|counterparty|xcp|src-?20)\s*:\s*(.+)$/i)
+    if (pm) { protocol = pm[1].toLowerCase().replace('xcp', 'counterparty').replace(/^src-?20$/, 'src-20'); tick = pm[2].trim() }
+    if (!tick) return res.status(400).json({ error: 'asset required (optionally ?protocol=acme or "acme:TICKER")' })
+
+    let asset = null
+    if (protocol === 'acme') {
+      // Prefer the REGISTERED acme row (carries id + the whitelisted flag). The bare ticker can
+      // collide with an SRC-20/Counterparty asset, so don't trust getAssetByTick's dispatch order.
+      asset = (await dbQuery(`SELECT * FROM canonical_assets WHERE lower(exact_ticker)=lower(?) AND source_protocol='acme' LIMIT 1`, [tick]))[0] || null
+      if (!asset && acme) { // not registered → resolve from acme.pics so the terminal can still plan it
+        const a = await acme.lookupAsset(tick).catch(() => null)
+        if (a) asset = { id: null, exact_ticker: a.exact_ticker || tick, source_protocol: 'acme', decimals: a.divisible ? 8 : 0, max_supply: a.max_supply, whitelisted: 0 }
+      }
+    } else {
+      asset = await getAssetByTick(tick)
+    }
+    if (!asset) return res.json({ supported: false, asset: tick, reason: 'asset not recognized on any supported Bitcoin protocol (SRC-20 / Counterparty / ACME)' })
+
+    const proto = asset.source_protocol
+    const protoLabel = proto === 'src-20' ? 'Bitcoin SRC-20' : proto === 'counterparty' ? 'Counterparty' : proto === 'acme' ? 'ACME' : String(proto)
+    const wl = !!asset.whitelisted
+
+    const repRows = asset.id != null
+      ? await dbQuery(`SELECT dest_chain, dest_address, circulating_supply FROM representations WHERE canonical_id=? AND status IN ('CANONICAL','VERIFIED')`, [asset.id])
+      : []
+    const repByChain = {}; for (const r of repRows) repByChain[r.dest_chain] = r
+    const target_chains = Object.keys(DEST_DECIMALS).map(chain => {
+      const meta = WRAP_CHAIN_META[chain] || {}, rep = repByChain[chain]
+      return {
+        chain, chain_label: meta.chain_label || chain, is_testnet: !!meta.is_testnet,
+        decimals: chain === 'solana' ? solanaDecimalsFor(asset.max_supply) : DEST_DECIMALS[chain],
+        rep_contract: rep ? rep.dest_address : null,
+        rep_symbol: rep ? displayTicker(asset.exact_ticker) : null,
+        explorer_url: rep && meta.explorer ? meta.explorer.replace('%s', rep.dest_address) : null,
+      }
+    })
+
+    let coll = 0n, circ = 0n
+    if (asset.id != null) {
+      coll = (await collateralBase(asset.id)) - (await redeemedBase(asset.id)); if (coll < 0n) coll = 0n
+      for (const r of repRows) circ += toBaseUnits(r.circulating_supply || '0')
+    }
+    const reserves = { collateral: fromBaseUnits(coll), circulating: fromBaseUnits(circ), solvent: circ <= coll, as_of: new Date().toISOString() }
+
+    const minConf = proto === 'acme' ? ACME_CONFIRMS : CONFIRMS
+    const fees = proto === 'acme'
+      ? { protocol_fee_sats: 888, est_miner_fee_sats: 700, note: 'estimate — ACME protocol fee is fixed at 888 sats; miner fee varies with mempool' }
+      : { protocol_fee_sats: null, est_miner_fee_sats: 700, note: 'estimate — miner fee varies with mempool' }
+
+    const steps = [
+      { n: 1, title: 'Connect a Bitcoin wallet', detail: `Prove control of the address holding your ${protoLabel} ${displayTicker(asset.exact_ticker)} (BIP-322 signature).`, actor: 'user' },
+      { n: 2, title: 'Deposit to the custody vault', detail: `Send the asset to the Emblem-managed vault ${VAULT_ADDR || '(provisioning…)'} on Bitcoin mainnet.`, actor: 'user' },
+      { n: 3, title: 'Detect & confirm', detail: `StampySwap detects the deposit, attributes it to you, and waits for ${minConf} confirmation(s).`, actor: 'stampyswap' },
+      { n: 4, title: 'Mint the fungible representation', detail: 'A 1:1-backed rep is minted to your receive address — solvency-enforced, Emblem-signed (no raw keys).', actor: 'stampyswap' },
+      { n: 5, title: 'Trade or redeem', detail: 'Swap the rep on the AMM, or redeem it 1:1 back to the original Bitcoin asset anytime.', actor: 'user' },
+    ]
+
+    res.json({
+      supported: true,
+      protocol: proto, protocol_label: protoLabel,
+      asset: asset.exact_ticker, display: displayTicker(asset.exact_ticker),
+      decimals: asset.decimals == null ? 8 : Number(asset.decimals),
+      whitelisted: wl, enabled: wl,
+      reason: wl ? null : 'recognized but not yet enabled for wrapping',
+      vault_address: VAULT_ADDR,
+      min_confirmations: minConf,
+      fees, target_chains, reserves,
+      preview: true,
+      network_note: 'Representations + AMM are on testnet (Base Sepolia / Solana devnet) in this preview. Bitcoin custody is mainnet.',
+      steps,
+      detect_url: `api/custody/detect?protocol=${encodeURIComponent(proto)}&tick=${encodeURIComponent(asset.exact_ticker)}`,
+      app_url: `/pub/${GROUP}/stampyswap/`,
+      note: 'READ-ONLY route — nothing is deposited, minted, or moved by this call.',
+    })
   } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
 })
 

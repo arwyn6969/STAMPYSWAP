@@ -92,8 +92,88 @@ async function redeemCounterparty({ asset, amountWhole, qtyBase, toAddress }) {
   return { released: true, protocol: 'counterparty', asset, amount: String(amountWhole), to: toAddress, txid, explorer: `https://mempool.space/tx/${txid}` }
 }
 
+// REDEEM an ACME asset. ACME is Counterparty-style (destination encoded in the OP_RETURN
+// envelope, no BTC output to the recipient) BUT its compose API returns ONLY the envelope +
+// fee metadata — NOT a funded PSBT. So unlike Counterparty we build the whole tx ourselves:
+//   in:   the vault's own BTC UTXOs
+//   out0: OP_RETURN <envelope>          (the ACME send data; recipient is inside it)
+//   out1: 888 sats → ACME_FEE_ADDRESS   (the fixed ACME protocol fee — present on EVERY ACME
+//                                         send observed on-chain: 8/8 txs, 3 senders, always 888)
+//   out2: change → vault  (inputs − 888 − miner fee)
+// Then the vault signs each p2wpkh input via Emblem + broadcast. GATED, param-asserted before signing.
+const ACME_FEE_ADDRESS = process.env.ACME_FEE_ADDRESS || 'bc1qhyp5ate6djkanwrg00wft7jw9e5k456fc8wpgx'
+const ACME_FEE_SATS = parseInt(process.env.ACME_FEE_SATS || '888', 10)
+const DUST = 546
+// ENVELOPE HEADER RE-FRAME (empirical, confirmed with the ACME peer + on-chain byte-diff):
+// /compose/send emits a v1 header (magic 41434d45 + 01000000), but the ACME indexer only
+// CREDITS the v2 header (magic + 0204000000). The zlib-compressed inner message compose returns
+// is ALREADY correct v2 content — only the outer 8-byte header needs swapping v1→v2. The v2
+// prefix is INVARIANT across payload sizes (a version marker, not a length/checksum), so a static
+// swap is safe. Env-overridable in case ACME changes the header. (First test tx c14e6fa3… failed
+// purely because we broadcast the v1 header → indexer ignored it → vault NOT debited, fee only.)
+const ACME_ENV_V1 = process.env.ACME_ENV_V1 || '41434d4501000000'
+const ACME_ENV_V2 = process.env.ACME_ENV_V2 || '41434d450204000000'
+const acme = (() => { try { return require('./acme') } catch (_) { return null } })()
+
+async function mempoolUtxos(addr) {
+  const r = await fetch(`https://mempool.space/api/address/${encodeURIComponent(addr)}/utxo`)
+  if (!r.ok) throw new Error(`utxo fetch ${r.status}`)
+  const u = await r.json()
+  return u.filter(x => x.status && x.status.confirmed).sort((a, b) => b.value - a.value)
+}
+
+async function redeemAcme({ asset, amountWhole, qtyBase, toAddress, feeRate = 3 }) {
+  if (!isLive()) { const e = new Error('custody redemption is gated (STAMPY_CUSTODY_LIVE off) — audited go-ahead required'); e.code = 'GATED'; throw e }
+  if (!acme) throw new Error('ACME adapter unavailable')
+  const from = await depositAddress()
+  const dec = qtyBase != null ? null : null // qtyBase is authoritative
+  // 1) compose → envelope + assert the composed message matches what we asked for (pre-sign safety)
+  const built = await acme.composeSend({ from, toAddress, asset, qtyWhole: amountWhole, dec: 8 })
+  const rawEnv = built && built.envelope && built.envelope.hex
+  if (!rawEnv) throw new Error('acme compose returned no envelope')
+  // swap the compose's v1 header for the v2 header the indexer credits (zlib payload untouched)
+  const env = rawEnv.startsWith(ACME_ENV_V1) ? ACME_ENV_V2 + rawEnv.slice(ACME_ENV_V1.length) : rawEnv
+  if (!env.startsWith(ACME_ENV_V2)) throw new Error(`unexpected ACME envelope header ${env.slice(0, 18)} — expected v1 (${ACME_ENV_V1}) or v2 (${ACME_ENV_V2})`)
+  const p = (built.message && built.message.params) || {}
+  if (String(p.asset) !== String(asset)) throw new Error(`composed asset mismatch: ${p.asset}`)
+  if (String(p.destination) !== String(toAddress)) throw new Error(`composed destination mismatch: ${p.destination}`)
+  if (qtyBase != null && BigInt(p.quantity) !== BigInt(qtyBase)) throw new Error(`composed quantity mismatch: ${p.quantity} != ${qtyBase}`)
+  // 2) gather vault UTXOs, select largest-first to cover fee output + miner fee + a change above dust
+  const utxos = await mempoolUtxos(from)
+  if (!utxos.length) throw new Error('vault has no confirmed BTC UTXOs to fund the redeem')
+  const script = bitcoinjs.address.toOutputScript(from, bitcoinjs.networks.bitcoin)
+  const opReturn = bitcoinjs.payments.embed({ data: [Buffer.from(env, 'hex')] }).output
+  const picked = []; let inSum = 0
+  // rough vsize estimate: base 11 + 68/p2wpkh-in + OP_RETURN out + 31 fee-out + 31 change-out
+  const estFee = (nIn) => Math.ceil((11 + nIn * 68 + (9 + opReturn.length) + 31 + 31) * feeRate)
+  for (const u of utxos) {
+    picked.push(u); inSum += u.value
+    if (inSum >= ACME_FEE_SATS + estFee(picked.length) + DUST) break
+  }
+  const minerFee = estFee(picked.length)
+  const change = inSum - ACME_FEE_SATS - minerFee
+  if (change < 0) throw new Error(`vault BTC insufficient for redeem: have ${inSum}, need ${ACME_FEE_SATS + minerFee}+ sats`)
+  // 3) assemble PSBT
+  const psbt = new bitcoinjs.Psbt({ network: bitcoinjs.networks.bitcoin })
+  for (const u of picked) psbt.addInput({ hash: u.txid, index: u.vout, witnessUtxo: { script, value: u.value } })
+  psbt.addOutput({ script: opReturn, value: 0 })
+  psbt.addOutput({ address: ACME_FEE_ADDRESS, value: ACME_FEE_SATS })
+  if (change >= DUST) psbt.addOutput({ address: from, value: change }) // else dust → let it go to miner fee
+  // 4) sign each input via the Emblem vault + broadcast
+  const toSignInputs = picked.map((_, i) => ({ index: i, address: from, sighashType: 1 }))
+  const signer = await btcSigner()
+  const signedResp = await signer.signPsbt(psbt.toHex(), { transactionType: 'p2wpkh', toSignInputs })
+  const txHex = signedResp && signedResp.signedTxHex
+  if (!txHex) throw new Error('vault signer returned no signedTxHex')
+  const b = await fetch('https://mempool.space/api/tx', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: txHex })
+  const txid = (await b.text()).trim()
+  if (!/^[0-9a-f]{64}$/.test(txid)) throw new Error('broadcast failed: ' + txid.slice(0, 200))
+  return { released: true, protocol: 'acme', asset, amount: String(amountWhole), to: toAddress, txid, fee_sats: minerFee, acme_fee_sats: ACME_FEE_SATS, explorer: `https://mempool.space/tx/${txid}` }
+}
+
 async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20', qtyBase }) {
   if (!isLive()) { const e = new Error('custody redemption is gated (STAMPY_CUSTODY_LIVE off) — audited go-ahead required'); e.code = 'GATED'; throw e }
+  if (protocol === 'acme') return redeemAcme({ asset: tick, amountWhole: amount, qtyBase, toAddress })
   if (protocol === 'counterparty') return redeemCounterparty({ asset: tick, amountWhole: amount, qtyBase, toAddress })
   const from = await depositAddress()
   const r = await fetch('https://stampchain.io/api/v2/src20/create', {
@@ -115,4 +195,4 @@ async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20
   return { released: true, tick, amount: String(amount), to: toAddress, txid, explorer: `https://mempool.space/tx/${txid}` }
 }
 
-module.exports = { depositAddress, status, redeem, vaultInfo, isLive }
+module.exports = { depositAddress, status, redeem, redeemAcme, vaultInfo, isLive }

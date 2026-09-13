@@ -76,8 +76,14 @@ async function lookupAsset(name) {
 // (excludes 'open_order'/escrow, which aren't spendable for custody/redemption). We page via
 // next_cursor. NOTE: flag this discrepancy to the ACME team; if a correct per-address endpoint
 // ships later, prefer it.
+// ACME /holders is an APPEND-ONLY ledger: every balance change writes a NEW 'balances' row
+// (keyed by cursor_id = "balances_<seq>") WITHOUT superseding the old one — an address can have
+// many rows (e.g. vault: balances_1412=10000 stale + balances_1417=9999 current). Summing them
+// DOUBLE-COUNTS. The current balance is the row with the HIGHEST cursor_id sequence. (Root cause
+// found with the acme peer 2026-09-10; verified vault→9999, recipient→1 after the redeem.)
+function _seq(r) { const m = String((r && r.cursor_id) || '').match(/(\d+)\s*$/); return m ? parseInt(m[1], 10) : 0 }
 async function addressBalanceBase(addr, asset) {
-  let total = 0n, cursor = null, pages = 0
+  let bestSeq = -1, bestQty = '0', cursor = null, pages = 0
   try {
     do {
       const q = `/assets/${encodeURIComponent(asset)}/holders?limit=1000${cursor != null ? `&cursor=${encodeURIComponent(cursor)}` : ''}`
@@ -85,14 +91,15 @@ async function addressBalanceBase(addr, asset) {
       const rows = (j && j.result) || []
       for (const r of rows) {
         if (r.address === addr && (r.holding_type === 'balances' || r.holding_type == null)) {
-          total += BigInt(String(r.quantity || '0').replace(/[^0-9]/g, '') || '0')
+          const s = _seq(r)
+          if (s > bestSeq) { bestSeq = s; bestQty = String(r.quantity || '0').replace(/[^0-9]/g, '') || '0' }
         }
       }
       cursor = j && j.next_cursor
       pages++
     } while (cursor != null && pages < 50)
-  } catch (_) { /* fall through to whatever we accumulated */ }
-  return total.toString()
+  } catch (_) { /* fall through to best-so-far */ }
+  return bestQty
 }
 
 // Did `source` send `asset` to `vault` in a confirmed ACME send? Binds a deposit credit to a
