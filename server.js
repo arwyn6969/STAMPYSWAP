@@ -1213,6 +1213,27 @@ app.get('/api/wrap/route', async (req, res) => {
       { n: 5, title: 'Trade or redeem', detail: 'Swap the rep on the AMM, or redeem it 1:1 back to the original Bitcoin asset anytime.', actor: 'user' },
     ]
 
+    // live market(s) this asset trades in — for the terminal's "live market" line. Best-effort.
+    let market = null
+    if (asset.id != null) {
+      const pls = await dbQuery('SELECT * FROM pools WHERE canonical_a=? OR canonical_b=?', [asset.id, asset.id])
+      const pairs = []
+      for (const p of pls) {
+        try {
+          const r = await amm.getReserves(p.chain, p.pair_address)
+          const ra = parseFloat(r.r0), rb = parseFloat(r.r1)
+          const thisIsA = p.canonical_a === asset.id
+          const thisSym = thisIsA ? p.symbol_a : p.symbol_b, otherSym = thisIsA ? p.symbol_b : p.symbol_a
+          const thisRes = thisIsA ? ra : rb, otherRes = thisIsA ? rb : ra
+          pairs.push({ pair_label: `${p.symbol_a}/${p.symbol_b}`, pair_address: p.pair_address, chain: p.chain,
+            price: thisRes > 0 ? { [`${otherSym}_per_${thisSym}`]: otherRes / thisRes } : null,
+            reserves: { [p.symbol_a]: r.r0, [p.symbol_b]: r.r1 },
+            explorer_url: `${amm.EXPLORER[p.chain]}/address/${p.pair_address}` })
+        } catch (_) { /* skip a pool we can't read on-chain */ }
+      }
+      if (pairs.length) market = { pairs }
+    }
+
     res.json({
       supported: true,
       protocol: proto, protocol_label: protoLabel,
@@ -1222,7 +1243,7 @@ app.get('/api/wrap/route', async (req, res) => {
       reason: wl ? null : 'recognized but not yet enabled for wrapping',
       vault_address: VAULT_ADDR,
       min_confirmations: minConf,
-      fees, target_chains, reserves,
+      fees, target_chains, reserves, market,
       preview: true,
       network_note: 'Representations + AMM are on testnet (Base Sepolia / Solana devnet) in this preview. Bitcoin custody is mainnet.',
       steps,
