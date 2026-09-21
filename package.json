@@ -5,7 +5,8 @@
   "description": "StampySwap — SRC-20 multichain liquidity network: canonical registry & discovery (Phase 0)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "lint": "eslint server.js custody.js acme.js counterparty.js evm-mint.js sol-mint.js uniswap.js amm.js evm-signer.js squads.js safe.js prices.js"
   },
   "dependencies": {
     "@emblemvault/auth-sdk": "^2.3.18",
@@ -20,6 +21,7 @@
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
-    "solc": "^0.8.26"
+    "solc": "^0.8.26",
+    "eslint": "^8.57.0"
   }
 }

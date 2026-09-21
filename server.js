@@ -55,12 +55,18 @@ app.use((req, res, next) => {
 // operation is a POST → nothing to enumerate or bypass), plus any legacy intent GET (which mutates).
 // Reads (GET/HEAD) + static files stay available. Operator header = reviewed back-office override.
 app.use((req, res, next) => {
-  if (!MAINTENANCE && SCHEMA_OK) return next() // missing burn-registry schema also forces containment
-  if (isOperator(req)) return next()
   const p = normPath(req.path)
   const isWrite = !(req.method === 'GET' || req.method === 'HEAD')
   const unsafeGet = /^\/api\/bridge\/intent(\/|$)/.test(p)
-  if ((isWrite && p.startsWith('/api/')) || unsafeGet)
+  const blockedTarget = (isWrite && p.startsWith('/api/')) || unsafeGet
+  // HARD schema gate (audit R03): if the burn-registry/operations schema isn't verified, NO writes —
+  // NOT even operator — because the safety invariants (consume-once, durable ops) depend on those
+  // tables. This precedes the operator bypass on purpose.
+  if (!SCHEMA_OK && blockedTarget)
+    return res.status(503).json({ maintenance: true, error: 'writes disabled — burn-registry/operations schema or migration not verified (SCHEMA_OK=false)' })
+  if (!MAINTENANCE) return next()
+  if (isOperator(req)) return next() // operator bypasses MAINTENANCE only; schema is verified above
+  if (blockedTarget)
     return res.status(503).json({ maintenance: true, error: 'StampySwap is in maintenance while a security audit is remediated — value-moving and accounting operations are disabled. Existing on-chain balances and Uniswap trading are unaffected.' })
   next()
 })
@@ -1060,7 +1066,12 @@ async function opReserve(op_key, meta) {
     return { fresh: true }
   } catch (_) { return { fresh: false, row: (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0] || null } }
 }
-async function opComplete(op_key, tx_id, result) { await dbExec(`UPDATE operations SET state='completed', tx_id=?, result_json=?, updated_at=? WHERE op_key=?`, [tx_id || null, JSON.stringify(result || {}), now(), op_key]).catch(() => {}) }
+async function opComplete(op_key, tx_id, result) {
+  // audit: do NOT silently swallow a persistence failure. If this UPDATE fails the op stays 'reserved'
+  // → a retry reconciles (never re-mints), but we must surface it loudly for reconciliation.
+  try { await dbExec(`UPDATE operations SET state='completed', tx_id=?, result_json=?, updated_at=? WHERE op_key=?`, [tx_id || null, JSON.stringify(result || {}), now(), op_key]) }
+  catch (e) { console.error(`opComplete PERSIST FAILED for ${op_key} (tx ${tx_id}) — on-chain effect done, op stuck 'reserved', RECONCILE: ${e.message || e}`) }
+}
 async function opFail(op_key) { await dbExec('DELETE FROM operations WHERE op_key=?', [op_key]).catch(() => {}) } // proven pre-send failure → retryable
 async function opReconcile(op_key) { await dbExec(`UPDATE operations SET state='reconcile', updated_at=? WHERE op_key=?`, [now(), op_key]).catch(() => {}) }
 app.post('/api/move', async (req, res) => {
@@ -2016,10 +2027,9 @@ async function migrateSchema() {
     await dbQuery('SELECT burn_txid FROM consumed_burns LIMIT 1')
     await dbQuery('SELECT burn_txid FROM collateral_ledger LIMIT 1')
     await dbQuery('SELECT op_key FROM operations LIMIT 1') // R05 durable operation records
-    SCHEMA_OK = true
   } catch (e) {
-    console.error('SCHEMA CHECK FAILED — burn registry missing; writes stay contained. Apply migration (consumed_burns + collateral_ledger.burn_txid). ' + (e.message || e))
-    return
+    console.error('SCHEMA CHECK FAILED — burn registry missing; writes stay contained (SCHEMA_OK false). Apply migration (consumed_burns + operations + collateral_ledger.burn_txid). ' + (e.message || e))
+    return // SCHEMA_OK stays false → containment holds even if STAMPY_MAINTENANCE=0
   }
   try {
     // old moves recorded the rep-burn hash only in collateral_ledger.btc_txid (direction='move-out')
@@ -2030,8 +2040,13 @@ async function migrateSchema() {
     await dbExec(`INSERT OR IGNORE INTO consumed_burns (burn_txid, chain, canonical_id, purpose, created_at)
       SELECT CASE WHEN dest_chain='solana' THEN burn_txid ELSE lower(burn_txid) END, dest_chain, canonical_id, 'redeem', created_at
       FROM collateral_ledger WHERE direction='redeem' AND burn_txid IS NOT NULL`)
-    console.log('schema verified + burn backfill complete')
-  } catch (e) { console.error('burn backfill warning: ' + (e.message || e)) }
+  } catch (e) {
+    // audit R03: a FAILED backfill must NOT grant readiness — keep writes contained until it succeeds.
+    console.error('SCHEMA BACKFILL FAILED — writes stay contained (SCHEMA_OK false) until migration completes: ' + (e.message || e))
+    return
+  }
+  SCHEMA_OK = true // granted ONLY after schema verified AND historical backfill both succeed
+  console.log('schema verified + burn backfill complete — SCHEMA_OK=true')
 }
 migrateSchema()
 app.use(express.static(path.join(__dirname, 'public')))
