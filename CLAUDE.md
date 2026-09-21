@@ -143,3 +143,11 @@ On the contained baseline, knocked out self-contained correctness fixes:
 - ACME redeem decimals: custody.redeemAcme+redeem take dec (was hardcoded 8); server passes redeemDec + acme qtyBase so the composed-quantity assertion RUNS for ACME (was skipped).
 Pushed b1c49ce..6a8bb69. App boots, PoR solvent, containment intact.
 STILL TODO (deep rewrites, PRs 2-4, on contained baseline — no rush): PR2 XCP per-tx attribution (replace balance-delta F04) + immutable source-event registry; PR3 burn-returns-owner authorization + shared consume-once registry across redeem/move (F05 full) + stamp full-entitlement (F10); PR4 durable op state machine (verified/reserved/submitted/confirmed) for mint+move crash-safety (F06/F07) + BTC UTXO serialization; PR5 wire base-mainnet mint (OZ artifact) + token-order reserves + pin OZ dep; PR6 reconcile + real PoR + independent signers + CI. Custody stays closed until these + independent re-review.
+
+## StampySwap — AUDIT #2 PR3 (authorized burns) DONE 2026-09-21
+- verifyBurn (evm-mint + sol-mint) now return the real BURNER (EVM Transfer.from topics[1]; Solana burn authority). server verifyRepBurn passes owner through.
+- SHARED consume-once registry: consumed_burns table (burn_txid PRIMARY KEY) + consumeBurn/burnConsumed/normTxid(EVM lowercase, Solana as-is) helpers. VERIFIED: same burn_txid 2nd insert → UNIQUE fail → one burn = one action across redeem+move (F05/F10 class).
+- /api/custody/redeem: non-operator now MUST (a) not-already-consumed, (b) verifyRepBurn, (c) sign an owner→BTC-recipient binding (verifyBurnOwnerSig: EVM ethers.verifyMessage / Solana nacl ed25519 over redeemBindingMsg), (d) consumeBurn reserve BEFORE release; on THROW (no txid) → free reservation (retryable) else fail-closed. VERIFIED owner-sig accept/reject (valid true, tampered false).
+- /api/move: shared consumeBurn (records owner) replaces local dup-check.
+Pushed 6a8bb69..621499e. App boots, PoR solvent, containment intact (move 503).
+REMAINING: F10 stamp full-entitlement (bridge inactive, low pri); PR2 XCP per-tx attribution (frozen operator-only now); PR4 durable op state machine (F06/F07 mint/move crash-safety + BTC UTXO serialization — the big one); PR5 base-mainnet mint wiring + token-order reserves + pin OZ dep; PR6 reconcile + real PoR + independent signers + CI. Custody stays closed until PR2/PR4 + independent re-review.

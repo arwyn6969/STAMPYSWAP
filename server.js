@@ -29,18 +29,39 @@ app.use(express.json({ limit: '64kb' })) // bound request bodies
 // already-deployed Uniswap pool keeps trading independently. Toggle: STAMPY_MAINTENANCE=0.
 // ============================================================================
 const MAINTENANCE = process.env.STAMPY_MAINTENANCE !== '0' // default ON (contained)
-const CONTAINED_PATTERNS = [
-  /^\/api\/redeem$/, /^\/api\/custody\/redeem$/, /^\/api\/custody\/verify-deposit$/,
-  /^\/api\/mint$/, /^\/api\/mint\/migrate-authority$/, /^\/api\/move$/,
-  /^\/api\/amm\/(create|swap|deploy-mock)$/, /^\/api\/preview\/confirm-deposit$/,
-  /^\/api\/bridge\/intent(\/.*)?$/,          // create + :id (poll) + :id/txid (F03) — a GET here is NOT safe
-  /^\/api\/stampbridge\/execute$/,
+let SCHEMA_OK = false // set true once the burn-registry schema is verified at startup (audit R03)
+// Normalize a path the way Express 4 DISPATCHES it (case-insensitive routing + optional trailing
+// slash + collapsed slashes are all ON by default). Audit R01: a regex blacklist on the raw path
+// was bypassable via /API/..., a trailing slash, or //double slashes while Express still routed to
+// the same handler. Match on this normalized form everywhere (maintenance, retired, rate-limit).
+function normPath(p) { return String(p || '/').toLowerCase().replace(/\/{2,}/g, '/').replace(/\/+$/, '') || '/' }
+
+// PERMANENTLY RETIRED routes (audit A): legacy fabrication/mutation surfaces removed regardless of
+// maintenance/operator/preview — they fabricated accounting or allowed deposit-key replay (F03).
+const RETIRED_PATTERNS = [
+  /^\/api\/redeem$/,                          // accounting-only burn, no chain effect
+  /^\/api\/preview\/confirm-deposit$/,        // fabricates backing under a preview flag
+  /^\/api\/bridge\/intent$/,                  // legacy intent create
+  /^\/api\/bridge\/intent\/[^/]+$/,           // legacy intent poll (mutates pending→confirmed)
+  /^\/api\/bridge\/intent\/[^/]+\/txid$/,     // F03: mutable deposit-txid key
 ]
 app.use((req, res, next) => {
-  if (!MAINTENANCE) return next()
-  if (isOperator(req)) return next() // reviewed back-office override (hoisted fn)
-  if (CONTAINED_PATTERNS.some(r => r.test(req.path)))
-    return res.status(503).json({ maintenance: true, error: 'StampySwap is in maintenance while a security audit is remediated — deposits, mints, moves, redemptions, pool ops and legacy intent paths are temporarily disabled. Existing on-chain balances and Uniswap trading are unaffected.' })
+  if (RETIRED_PATTERNS.some(r => r.test(normPath(req.path))))
+    return res.status(410).json({ error: 'this legacy endpoint has been retired for safety (audit) — it fabricated accounting or allowed deposit replay' })
+  next()
+})
+
+// DEFAULT-DENY maintenance containment: block ALL non-GET/HEAD /api requests (every value/accounting
+// operation is a POST → nothing to enumerate or bypass), plus any legacy intent GET (which mutates).
+// Reads (GET/HEAD) + static files stay available. Operator header = reviewed back-office override.
+app.use((req, res, next) => {
+  if (!MAINTENANCE && SCHEMA_OK) return next() // missing burn-registry schema also forces containment
+  if (isOperator(req)) return next()
+  const p = normPath(req.path)
+  const isWrite = !(req.method === 'GET' || req.method === 'HEAD')
+  const unsafeGet = /^\/api\/bridge\/intent(\/|$)/.test(p)
+  if ((isWrite && p.startsWith('/api/')) || unsafeGet)
+    return res.status(503).json({ maintenance: true, error: 'StampySwap is in maintenance while a security audit is remediated — value-moving and accounting operations are disabled. Existing on-chain balances and Uniswap trading are unaffected.' })
   next()
 })
 
@@ -72,7 +93,7 @@ const WRITE_LIMITS = {
 // endpoints that actually spend gas — also counted against a global hourly ceiling
 const GAS_OPS = new Set(['POST /api/mint', 'POST /api/amm/create', 'POST /api/amm/swap', 'POST /api/mint/migrate-authority', 'POST /api/custody/verify-deposit', 'POST /api/move', 'POST /api/stampbridge/execute'])
 app.use((req, res, next) => {
-  const k = `${req.method} ${req.path}`
+  const k = `${req.method} ${normPath(req.path)}` // audit R01: match dispatched route, not raw spelling
   const lim = WRITE_LIMITS[k]
   if (lim && !rateLimit('rl:' + k, lim[0], lim[1]))
     return res.status(429).json({ error: 'rate limited — too many requests, slow down' })
@@ -701,7 +722,7 @@ app.post('/api/bridge/intent/:id/txid', async (req, res) => {
 // Lightweight background sweep — only touches PENDING/DETECTED intents; no-op when idle.
 let sweeping = false
 async function relayerSweep() {
-  if (MAINTENANCE) return // audit PR1: legacy intent sweep disabled during containment
+  return // audit A: legacy intent sweep PERMANENTLY disabled (mutated pending records) — intents retired
   if (sweeping) return
   sweeping = true
   try {
@@ -1478,13 +1499,17 @@ app.post('/api/custody/redeem', async (req, res) => {
       if (asset.source_protocol === 'acme' && acme) redeemArgs.qtyBase = acme.toBase(amt, redeemDec)
       try { release = await custody.redeem(redeemArgs) }
       catch (e) {
-        await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
-        // a THROW = the release returned no txid (gated/compose/sign/broadcast-fail, i.e. nothing
-        // released) → free the burn reservation so a legit claim can retry. A CRASH (no catch)
-        // leaves it consumed = fail-closed, no double-release, pending reconciliation.
-        if (!operatorMode && burn_txid) await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, burn_txid)]).catch(() => {})
-        if (e.code === 'GATED') return { status: 403, body: { error: e.message, gated: true } }
-        return { status: 502, body: { error: 'release failed (nothing decremented): ' + String(e.message || e) } }
+        // R02 (audit): ONLY a proven pre-send failure is retryable. `GATED` means custody is off →
+        // nothing was composed/signed/broadcast → safe to free the reservation. ANY OTHER throw is an
+        // UNKNOWN outcome (the node may have accepted the tx before the connection dropped) → KEEP the
+        // burn consumed and mark the row for reconciliation. Never free a reservation on uncertainty.
+        if (e.code === 'GATED') {
+          await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
+          if (!operatorMode && burn_txid) await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, burn_txid)]).catch(() => {})
+          return { status: 403, body: { error: e.message, gated: true } }
+        }
+        await dbExec(`UPDATE collateral_ledger SET status='reconcile' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
+        return { status: 502, body: { error: 'release outcome UNCERTAIN — burn kept consumed, flagged for manual reconciliation (no automatic retry): ' + String(e.message || e), reconcile: true } }
       }
       // release landed → finalize: decrement circulating + mark the reserved row released
       await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(circ - toBaseUnits(amt), 18), now(), rep.id])
@@ -1918,5 +1943,31 @@ app.get('/api/arbitrage', async (_req, res) => {
   try { res.json(await detectArbitrage()) } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
 })
 
+// ---- Startup schema check + idempotent burn backfill (audit R03/C) ----
+// The app CANNOT run DDL (Dashboard API blocks CREATE/ALTER) — the burn-registry schema is applied
+// out-of-band. Here we VERIFY it exists (else SCHEMA_OK stays false → containment holds) and backfill
+// historical burns so an old cross-chain move burn can't be redeemed again through the new registry.
+async function migrateSchema() {
+  try {
+    await dbQuery('SELECT burn_txid FROM consumed_burns LIMIT 1')
+    await dbQuery('SELECT burn_txid FROM collateral_ledger LIMIT 1')
+    SCHEMA_OK = true
+  } catch (e) {
+    console.error('SCHEMA CHECK FAILED — burn registry missing; writes stay contained. Apply migration (consumed_burns + collateral_ledger.burn_txid). ' + (e.message || e))
+    return
+  }
+  try {
+    // old moves recorded the rep-burn hash only in collateral_ledger.btc_txid (direction='move-out')
+    await dbExec(`INSERT OR IGNORE INTO consumed_burns (burn_txid, chain, canonical_id, purpose, created_at)
+      SELECT CASE WHEN dest_chain='solana' THEN btc_txid ELSE lower(btc_txid) END, dest_chain, canonical_id, 'move', created_at
+      FROM collateral_ledger WHERE direction='move-out' AND btc_txid IS NOT NULL`)
+    // prior redemptions that recorded a burn_txid (new-schema rows)
+    await dbExec(`INSERT OR IGNORE INTO consumed_burns (burn_txid, chain, canonical_id, purpose, created_at)
+      SELECT CASE WHEN dest_chain='solana' THEN burn_txid ELSE lower(burn_txid) END, dest_chain, canonical_id, 'redeem', created_at
+      FROM collateral_ledger WHERE direction='redeem' AND burn_txid IS NOT NULL`)
+    console.log('schema verified + burn backfill complete')
+  } catch (e) { console.error('burn backfill warning: ' + (e.message || e)) }
+}
+migrateSchema()
 app.use(express.static(path.join(__dirname, 'public')))
 app.listen(PORT, () => console.log(`StampySwap Phase 0-9 on ${PORT}`))
