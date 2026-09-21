@@ -892,7 +892,7 @@ app.get('/api/mint/evm-authority', async (req, res) => {
 
 // Deposit-gated mint core — enforces the solvency invariant, mints on-chain, records.
 // Returns { status, body }. Shared by /api/mint and the AMM pool seeder.
-async function performMint(tick, amount, receive_address, chain = 'solana', assetIn = null) {
+async function performMint(tick, amount, receive_address, chain = 'solana', assetIn = null, opKey = null) {
   amount = parseAmount(amount)
   if (!amount) return { status: 400, body: { error: 'amount must be a positive number (≤18 dp)' } }
   if (!receive_address) return { status: 400, body: { error: 'a receive address is required' } }
@@ -902,8 +902,9 @@ async function performMint(tick, amount, receive_address, chain = 'solana', asse
   if (!asset.whitelisted) return { status: 403, body: { error: 'asset not whitelisted' } }
 
   // serialize per asset — the collateral check + mint + ledger write must be atomic vs
-  // other mints of the same asset (they share one collateral pool across all chains).
-  return withAssetLock(asset.id, () => mintCritical(asset, amount, receive_address, chain))
+  // other mints of the same asset (they share one collateral pool across all chains). opKey (audit)
+  // makes the on-chain mint crash-safe/idempotent for callers that pass one.
+  return withAssetLock(asset.id, () => mintCritical(asset, amount, receive_address, chain, opKey))
 }
 async function mintCritical(asset, amount, receive_address, chain, opKey = null) {
   // Effective on-chain decimals: EVM = 18; Solana sized so max_supply fits u64 (≤9, e.g. BOSHI→7).
@@ -982,11 +983,6 @@ async function mintCritical(asset, amount, receive_address, chain, opKey = null)
     }
   } else return { status: 400, body: { error: 'unsupported destination chain' } }
 
-  // mint landed on-chain → mark the operation COMPLETED (with its txid) BEFORE the accounting writes,
-  // so a failure in the DB updates below can never cause a re-mint on retry (F07). The stored result
-  // is what an idempotent retry returns.
-  if (opKey) await opComplete(opKey, signature, { minted: true, real, chain, tick: asset.exact_ticker, amount_minted: mintAmt, mint_address: mintAddr, receive_address, signature, explorer })
-
   const newCirc = circulating + mintBase
   if (rep) await dbExec('UPDATE representations SET circulating_supply=?, status=?, dest_address=?, updated_at=? WHERE id=?',
     [fromBaseUnits(newCirc, 18), 'CANONICAL', mintAddr, now(), rep.id])
@@ -995,6 +991,11 @@ async function mintCritical(asset, amount, receive_address, chain, opKey = null)
     [asset.id, chain, mintAddr, displayTicker(asset.exact_ticker), fromBaseUnits(newCirc, 18), now()])
   await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, dest_tx, status, created_at)
     VALUES (?, 'mint', ?, ?, ?, ?, ?)`, [asset.id, mintAmt, chain, signature, real ? 'minted' : 'simulated', now()])
+
+  // op COMPLETED only AFTER the accounting is written (audit): so a retry that finds 'completed'
+  // truly has consistent accounting. A crash/throw before here leaves the op 'reserved' → a retry
+  // reconciles (never re-mints) and surfaces the incomplete accounting rather than hiding it.
+  if (opKey) await opComplete(opKey, signature, { minted: true, real, chain, tick: asset.exact_ticker, amount_minted: mintAmt, mint_address: mintAddr, receive_address, signature, explorer })
 
   return { status: 200, body: { minted: true, real, chain, network: chain === 'solana' ? 'devnet' : 'testnet',
     tick: asset.exact_ticker, amount_requested: String(amount), amount_minted: mintAmt, rounded: mintAmt !== String(amount),
@@ -1008,7 +1009,7 @@ app.post('/api/mint', async (req, res) => {
   // would be free backed tokens for anyone → operator-only. Legit public minting is verify-deposit
   // (bound to the depositor) or cross-chain move (burn-verified).
   if (requireOperator(req, res)) return
-  try { const { tick, amount, receive_address, chain } = req.body || {}; const r = await performMint(tick, amount, receive_address, chain); res.status(r.status).json(r.body) }
+  try { const { tick, amount, receive_address, chain, op_key } = req.body || {}; const r = await performMint(tick, amount, receive_address, chain, null, op_key || null); res.status(r.status).json(r.body) }
   catch (e) { res.status(500).json({ error: String(e.message || e) }) }
 })
 
@@ -1772,7 +1773,7 @@ app.post('/api/amm/create', async (req, res) => {
     const lp = await amm.lpAddress(chain)
 
     // side A — mint the representation to the LP
-    const mA = await performMint(a.exact_ticker, amtA, lp, chain, a)
+    const mA = await performMint(a.exact_ticker, amtA, lp, chain, a, `pool-mint:${chain}:${a.exact_ticker}:${amtA}:${lp}`)
     if (mA.status !== 200) return res.status(mA.status).json({ stage: 'mint ' + a.exact_ticker, ...mA.body })
     const token0 = mA.body.mint_address, symA = displayTicker(a.exact_ticker), seedA = mA.body.amount_minted
 
@@ -1789,7 +1790,7 @@ app.post('/api/amm/create', async (req, res) => {
       if (!b) return res.status(404).json({ error: 'asset B must be in the registry (or provide external_b)' })
       if (a.id === b.id) return res.status(400).json({ error: 'cannot pair an asset with itself' })
       const amt = parseAmount(amountB); if (!amt) return res.status(400).json({ error: 'amountB must be positive' })
-      const mB = await performMint(b.exact_ticker, amt, lp, chain, b)
+      const mB = await performMint(b.exact_ticker, amt, lp, chain, b, `pool-mint:${chain}:${b.exact_ticker}:${amt}:${lp}`)
       if (mB.status !== 200) return res.status(mB.status).json({ stage: 'mint ' + b.exact_ticker, ...mB.body })
       token1 = mB.body.mint_address; symB = displayTicker(b.exact_ticker); canonB = b.id; kindB = 'rep'; seedB = mB.body.amount_minted
     }
