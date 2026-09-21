@@ -14,6 +14,7 @@ const counterparty = require('./counterparty') // Counterparty (XCP) asset suppo
 const acme = (() => { try { return require('./acme') } catch (_) { return null } })() // ACME adapter (Phase 0: discovery only, read-only)
 const prices = require('./prices') // indicative USD/BTC pricing (SRC-20 market + XCP dispensers)
 const recovery = require('./recovery') // durable-recovery decision logic (audit R05/F06) — pure, unit-tested
+const labels = require('./labels') // on-chain provenance labels (canonical cross-protocol identity) — pure, unit-tested
 const squads = (() => { try { return require('./squads') } catch (_) { return null } })() // Squads v4 multisig (Solana authority upgrade)
 const safe = (() => { try { return require('./safe') } catch (_) { return null } })() // Safe multisig (EVM authority upgrade)
 const { Verifier: Bip322Verifier } = require('bip322-js') // Phase 5: real BIP-322 proof verification
@@ -980,7 +981,7 @@ async function mintCritical(asset, amount, receive_address, chain, opKey = null)
     try {
       const disp = displayTicker(asset.exact_ticker)
       const symbol = /^[!-~]+$/.test(disp) ? disp.replace(/[^A-Za-z0-9$_-]/g, '').slice(0, 11) || ('SRC' + asset.id) : ('SRC' + asset.id)
-      const srcOrigin = `bitcoin:src-20:${asset.exact_ticker}:${asset.deploy_tx || ''}`
+      const srcOrigin = labels.srcOriginFor(asset) // protocol-correct provenance (src-20 / counterparty / acme)
       const useSafe = evmAuthorityMode() === 'safe' && safe
       if (useSafe) {
         // Authority = Safe M-of-N. Ensure a Safe-owned rep exists, then mint via the Safe (owners sign).
