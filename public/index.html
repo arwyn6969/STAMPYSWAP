@@ -405,7 +405,7 @@
   <h3 id="sec-trust">Trust &amp; custody <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· who controls the peg (full transparency)</span></h3>
   <div id="trust" class="card"><div class="empty">Loading…</div></div>
 
-  <h3 id="sec-pools">Native markets <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· on-chain AMM (Base Sepolia) · rep/rep + rep/external pairs</span></h3>
+  <h3 id="sec-pools">Native markets <span style="color:var(--muted2);font-weight:400;text-transform:none;letter-spacing:0">· Base mainnet via Uniswap (live) + testnet demos · trade with your own wallet</span></h3>
   <div class="card">
     <div id="pools"><div class="empty">No pools yet.</div></div>
     <div class="inspector">
@@ -898,7 +898,14 @@ async function loadPools(){
       const price = pr ? Object.entries(pr).map(([k,v])=>`${(+v).toLocaleString(undefined,{maximumFractionDigits:4})} ${k.replace(/_/g,' ')}`).join(' · ') : '—'
       const extSide = p.kind_b==='external' ? p.symbol_b : (p.kind_a==='external' ? p.symbol_a : null)
       const extBadge = extSide ? ` <span class="pill2 p-wait" title="External token — not custody-backed by StampySwap. Only the ${esc(p.kind_a==='external'?p.symbol_b:p.symbol_a)} side is a backed representation.">ext: ${esc(extSide)} · unbacked</span>` : ''
-      return `<div class="poolrow"><div><b>${esc(p.label)}</b>${extBadge} <a class="mono" href="${esc(p.explorer)}" target="_blank" rel="noopener" style="font-size:11px">${esc(p.pair.slice(0,10))}… ↗</a></div>
+      const isMainnet = p.chain==='base-mainnet'
+      const chainBadge = isMainnet
+        ? ` <span class="pill2" style="background:#0b6b3a;color:#fff" title="Live on Base mainnet — real, tradeable on Uniswap">● LIVE · Base mainnet</span>`
+        : ` <span class="pill2 p-wait" title="Testnet demo — not real value">testnet</span>`
+      const uni = isMainnet
+        ? `<a href="https://app.uniswap.org/swap?chain=base&inputCurrency=${esc(p.token_a)}&outputCurrency=${esc(p.token_b)}" target="_blank" rel="noopener" class="btn2" style="font-size:11px;padding:3px 9px;margin-left:8px">Trade on Uniswap ↗</a>`
+        : ''
+      return `<div class="poolrow"><div><b>${esc(p.label)}</b>${extBadge}${chainBadge} <a class="mono" href="${esc(p.explorer)}" target="_blank" rel="noopener" style="font-size:11px">${esc(p.pair.slice(0,10))}… ↗</a>${uni}</div>
         <div class="preserve">${r?`${(+r.a).toLocaleString(undefined,{maximumFractionDigits:2})} ${esc(p.symbol_a)} · ${(+r.b).toLocaleString(undefined,{maximumFractionDigits:2})} ${esc(p.symbol_b)}`:'—'}</div>
         <div class="pprice">${esc(price)}</div></div>`
     }).join('')
