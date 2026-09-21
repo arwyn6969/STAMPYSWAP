@@ -68,7 +68,9 @@ async function verifyBurn(chain, txid, contractAddr, amountToken) {
     for (const log of rcpt.logs) {
       if (log.address.toLowerCase() === contractAddr.toLowerCase() && log.topics[0] === TRANSFER_TOPIC && log.topics[2] === ZERO_TOPIC) {
         const value = BigInt(log.data)
-        if (value >= want) return { valid: true, burned: value.toString() }
+        // owner = the BURNER (Transfer.from, topics[1]) — audit: authorization must bind to who
+        // actually burned, not merely that a transfer-to-zero happened.
+        if (value >= want) return { valid: true, burned: value.toString(), owner: ethers.getAddress('0x' + log.topics[1].slice(-40)), chain }
       }
     }
     return { valid: false, reason: 'no matching burn (Transfer→0x0) of that contract/amount' }

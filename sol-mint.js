@@ -97,7 +97,8 @@ async function verifyBurn(txid, mintAddr, amountBase9) {
         const info = ix.parsed.info || {}
         if (info.mint === mintAddr) {
           const amt = BigInt((info.amount != null ? info.amount : (info.tokenAmount && info.tokenAmount.amount)) || '0')
-          if (amt >= BigInt(amountBase9)) return { valid: true, burned: amt.toString() }
+          // owner = the burn authority (who signed the burn) — audit: bind authorization to the burner.
+          if (amt >= BigInt(amountBase9)) return { valid: true, burned: amt.toString(), owner: info.authority || null, chain: 'solana' }
         }
       }
     }

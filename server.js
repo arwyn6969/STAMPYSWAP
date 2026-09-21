@@ -975,6 +975,28 @@ async function verifyRepBurn(chain, txid, repAddress, amount) {
   if (evmMint.isSupported(chain)) return evmMint.verifyBurn(chain, txid, repAddress, floorToDecimals(amount, DEST_DECIMALS[chain]))
   return { valid: false, reason: 'unsupported source chain' }
 }
+// ---- PR3 (audit): shared consume-once burn registry + owner→recipient authorization ----
+// Normalize a burn txid: EVM hashes are hex (case-insensitive) → lowercase; Solana sigs are
+// base58 (CASE-SENSITIVE) → leave untouched. Prevents case-variant replay on EVM.
+function normTxid(chain, txid) { const t = String(txid || '').trim(); return chain === 'solana' ? t : t.toLowerCase() }
+async function burnConsumed(chain, txid) { return (await dbQuery('SELECT * FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, txid)]))[0] || null }
+// Atomic claim: the PRIMARY KEY makes the INSERT fail if this burn was already consumed by ANY
+// endpoint (redeem OR move) — so a single burn can never authorize two releases/mints.
+async function consumeBurn({ chain, txid, canonical_id, purpose, owner, amount }) {
+  try { await dbExec('INSERT INTO consumed_burns (burn_txid, chain, canonical_id, purpose, owner, amount, created_at) VALUES (?,?,?,?,?,?,?)', [normTxid(chain, txid), chain, canonical_id, purpose, owner || null, String(amount), now()]); return { ok: true } }
+  catch (_) { return { ok: false } } // UNIQUE violation = already consumed
+}
+// Verify the BURNER authorized this exact action (binds owner → destination). msg = a binding
+// string; sig = signature by the burn owner. EVM owner → EIP-191; Solana owner → ed25519.
+function verifyBurnOwnerSig(chain, owner, msg, sig) {
+  if (!owner || !sig) return false
+  try {
+    if (chain === 'solana') return nacl.sign.detached.verify(new TextEncoder().encode(msg), bs58.decode(String(sig)), bs58.decode(String(owner)))
+    return _ethers.verifyMessage(msg, String(sig)).toLowerCase() === String(owner).toLowerCase()
+  } catch (_) { return false }
+}
+function moveBindingMsg({ burn_txid, to_chain, to_address, amount }) { return `StampySwap move: burn ${burn_txid} → mint ${amount} on ${to_chain} to ${to_address}` }
+function redeemBindingMsg({ burn_txid, to, amount }) { return `StampySwap redeem: burn ${burn_txid} → release ${amount} to ${to}` }
 app.post('/api/move', async (req, res) => {
   // P2 (audit 2345961): move mints dest tokens but does NOT bind the burn to the receiver, so a
   // caller could front-run someone's burn and claim the minted output (+ it's a gas drain). Like
@@ -998,10 +1020,10 @@ app.post('/api/move', async (req, res) => {
     if (!burn.valid) return res.status(409).json({ error: 'burn not verified', reason: burn.reason })
 
     const out = await withAssetLock(asset.id, async () => {
-      // idempotency + fresh circulating read INSIDE the lock so concurrent moves of the same
-      // burn txid can't both process, and we don't act on a stale circulating value.
-      const dup = await dbQuery('SELECT id FROM collateral_ledger WHERE btc_txid=?', [burn_txid])
-      if (dup.length) return { status: 409, body: { error: 'burn txid already processed', ledger_id: dup[0].id } }
+      // PR3 shared consume-once: atomic claim across redeem AND move — a single burn can authorize
+      // only ONE action, ever (records the verified burner). Fail-closed on partial failure.
+      const claim = await consumeBurn({ chain: from_chain, txid: burn_txid, canonical_id: asset.id, purpose: 'move', owner: burn.owner, amount })
+      if (!claim.ok) return { status: 409, body: { error: 'burn already consumed by a redeem or move' } }
       const fresh = (await dbQuery('SELECT circulating_supply FROM representations WHERE id=?', [fromRep.id]))[0]
       const circ = toBaseUnits((fresh && fresh.circulating_supply) || '0')
       if (toBaseUnits(amount) > circ) return { status: 409, body: { error: 'move exceeds source circulating', circulating: fromBaseUnits(circ) } }
@@ -1429,16 +1451,24 @@ app.post('/api/custody/redeem', async (req, res) => {
       const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
       const circ = rep ? toBaseUnits(rep.circulating_supply || '0') : 0n
       if (toBaseUnits(amt) > circ) return { status: 409, body: { error: 'cannot redeem more than circulating', circulating: fromBaseUnits(circ) } }
-      const { burn_txid } = req.body || {}
+      const { burn_txid, auth_sig } = req.body || {}
+      let burnInfo = null
       if (!operatorMode) {
         if (!burn_txid) return { status: 401, body: { error: 'burn_txid required — burn your representation on-chain (transfer it to the zero address), then pass the burn txid so the release is bound to a real burn' } }
-        const dup = await dbQuery('SELECT id, status FROM collateral_ledger WHERE burn_txid=?', [burn_txid])
-        if (dup.length) return { status: 409, body: { error: 'burn txid already redeemed', ledger_id: dup[0].id, ledger_status: dup[0].status } }
+        if (await burnConsumed(chain, burn_txid)) return { status: 409, body: { error: 'burn already consumed by a redeem or move' } }
         if (!rep || !rep.dest_address) return { status: 404, body: { error: `no ${chain} representation to burn against` } }
-        const burn = await verifyRepBurn(chain, burn_txid, rep.dest_address, amt)
-        if (!burn.valid) return { status: 409, body: { error: 'representation burn not verified on-chain', reason: burn.reason } }
+        burnInfo = await verifyRepBurn(chain, burn_txid, rep.dest_address, amt)
+        if (!burnInfo.valid) return { status: 409, body: { error: 'representation burn not verified on-chain', reason: burnInfo.reason } }
+        // PR3/F05 BIND: the BURNER must authorize THIS release to THIS BTC address — otherwise
+        // anyone could redeem another holder's burn to their own address. Signed by the burn owner.
+        const bmsg = redeemBindingMsg({ burn_txid, to, amount: amt })
+        if (!verifyBurnOwnerSig(chain, burnInfo.owner, bmsg, auth_sig))
+          return { status: 401, body: { error: 'authorization required — sign the redeem binding message with the key that burned the tokens', binding_message: bmsg, burn_owner: burnInfo.owner } }
+        // reserve the burn in the SHARED registry (atomic) BEFORE the external release
+        const claim = await consumeBurn({ chain, txid: burn_txid, canonical_id: asset.id, purpose: 'redeem', owner: burnInfo.owner, amount: amt })
+        if (!claim.ok) return { status: 409, body: { error: 'burn already consumed' } }
       }
-      // reserve a pending row BEFORE the external release (idempotency + crash-safety)
+      // reserve a pending accounting row BEFORE the external release (crash-safety)
       const pend = await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, burn_txid, status, created_at) VALUES (?, 'redeem', ?, ?, ?, 'pending', ?)`, [asset.id, amt, chain, burn_txid || null, now()])
       let release
       const redeemDec = asset.decimals == null ? 8 : Number(asset.decimals)
@@ -1449,6 +1479,10 @@ app.post('/api/custody/redeem', async (req, res) => {
       try { release = await custody.redeem(redeemArgs) }
       catch (e) {
         await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
+        // a THROW = the release returned no txid (gated/compose/sign/broadcast-fail, i.e. nothing
+        // released) → free the burn reservation so a legit claim can retry. A CRASH (no catch)
+        // leaves it consumed = fail-closed, no double-release, pending reconciliation.
+        if (!operatorMode && burn_txid) await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, burn_txid)]).catch(() => {})
         if (e.code === 'GATED') return { status: 403, body: { error: e.message, gated: true } }
         return { status: 502, body: { error: 'release failed (nothing decremented): ' + String(e.message || e) } }
       }
