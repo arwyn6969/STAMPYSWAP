@@ -29,3 +29,4 @@ app.log
 *.pem
 *.seed
 StampyRepMainnet.flat.sol
+audit-harness/

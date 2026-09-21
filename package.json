@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
     "lint": "eslint server.js custody.js acme.js counterparty.js evm-mint.js sol-mint.js uniswap.js amm.js evm-signer.js squads.js safe.js prices.js recovery.js labels.js"
   },
   "dependencies": {

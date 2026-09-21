@@ -1029,8 +1029,15 @@ app.post('/api/mint', async (req, res) => {
   // would be free backed tokens for anyone → operator-only. Legit public minting is verify-deposit
   // (bound to the depositor) or cross-chain move (burn-verified).
   if (requireOperator(req, res)) return
-  try { const { tick, amount, receive_address, chain, op_key } = req.body || {}; const r = await performMint(tick, amount, receive_address, chain, null, op_key || null); res.status(r.status).json(r.body) }
-  catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  try {
+    const { tick, amount, receive_address, chain, op_key } = req.body || {}
+    // A06/F07 (audit): a value-changing mint MUST carry a durable idempotency key. Without one, a mint
+    // that lands on-chain but whose accounting write fails can be duplicated on retry (two mint effects,
+    // one accounted). Reject omission rather than silently passing null (which bypassed the op guard).
+    if (!op_key || typeof op_key !== 'string') return res.status(400).json({ error: 'op_key required — supply a stable idempotency key so a retried mint cannot double-issue' })
+    const r = await performMint(tick, amount, receive_address, chain, null, op_key)
+    res.status(r.status).json(r.body)
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
 })
 
 // CROSS-CHAIN MOVE — burn a representation on one chain, mint it on another. Same collateral
@@ -2169,6 +2176,21 @@ app.get('/api/arbitrage', async (_req, res) => {
 // The app CANNOT run DDL (Dashboard API blocks CREATE/ALTER) — the burn-registry schema is applied
 // out-of-band. Here we VERIFY it exists (else SCHEMA_OK stays false → containment holds) and backfill
 // historical burns so an old cross-chain move burn can't be redeemed again through the new registry.
+// A08 (audit): schema readiness must verify the UNIQUENESS guarantees the idempotency logic depends on
+// — not merely that columns exist. A same-column table WITHOUT the PRIMARY KEY on operations.op_key /
+// consumed_burns.burn_txid would let two reservations of the same operation both "win" → double effect.
+// Read-only inspection of the stored DDL + indexes; fail-closed if the guarantee is absent.
+async function tableEnforcesUnique(table, col) {
+  try {
+    const t = await dbQuery(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, [table])
+    const ddl = (t[0] && t[0].sql) || ''
+    if (new RegExp('\\b' + col + '\\b[^,]*\\bPRIMARY KEY\\b', 'i').test(ddl)) return true            // inline PK
+    if (new RegExp('\\bPRIMARY KEY\\s*\\([^)]*\\b' + col + '\\b', 'i').test(ddl)) return true          // table-level PK
+    if (new RegExp('\\bUNIQUE\\s*\\([^)]*\\b' + col + '\\b', 'i').test(ddl)) return true                // inline UNIQUE(col)
+    const idx = await dbQuery(`SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`, [table])
+    return idx.some(r => /\bUNIQUE\b/i.test(r.sql || '') && new RegExp('\\b' + col + '\\b').test(r.sql || ''))
+  } catch (_) { return false }
+}
 async function migrateSchema() {
   try {
     await dbQuery('SELECT burn_txid FROM consumed_burns LIMIT 1')
@@ -2178,15 +2200,23 @@ async function migrateSchema() {
     console.error('SCHEMA CHECK FAILED — burn registry missing; writes stay contained (SCHEMA_OK false). Apply migration (consumed_burns + operations + collateral_ledger.burn_txid). ' + (e.message || e))
     return // SCHEMA_OK stays false → containment holds even if STAMPY_MAINTENANCE=0
   }
+  // A08: the idempotency PRIMARY KEYs MUST be present, or the whole crash-safety story is void.
+  if (!(await tableEnforcesUnique('operations', 'op_key')) || !(await tableEnforcesUnique('consumed_burns', 'burn_txid'))) {
+    console.error('SCHEMA CONSTRAINT CHECK FAILED — operations.op_key and consumed_burns.burn_txid must be UNIQUE/PRIMARY KEY. Writes stay contained (SCHEMA_OK false) until the constraints are in place.')
+    return
+  }
   try {
     // old moves recorded the rep-burn hash only in collateral_ledger.btc_txid (direction='move-out')
     await dbExec(`INSERT OR IGNORE INTO consumed_burns (burn_txid, chain, canonical_id, purpose, created_at)
       SELECT CASE WHEN dest_chain='solana' THEN btc_txid ELSE lower(btc_txid) END, dest_chain, canonical_id, 'move', created_at
       FROM collateral_ledger WHERE direction='move-out' AND btc_txid IS NOT NULL`)
-    // prior redemptions that recorded a burn_txid (new-schema rows)
+    // prior redemptions that recorded a burn_txid (new-schema rows). A04 (audit): EXCLUDE 'failed'
+    // rows — a failed redeem deliberately FREED its burn (GATED pre-send), so re-consuming it on
+    // startup would permanently block the holder's legitimate retry. Only truly-consumed dispositions
+    // (released / reconcile-uncertain) keep the burn reserved.
     await dbExec(`INSERT OR IGNORE INTO consumed_burns (burn_txid, chain, canonical_id, purpose, created_at)
       SELECT CASE WHEN dest_chain='solana' THEN burn_txid ELSE lower(burn_txid) END, dest_chain, canonical_id, 'redeem', created_at
-      FROM collateral_ledger WHERE direction='redeem' AND burn_txid IS NOT NULL`)
+      FROM collateral_ledger WHERE direction='redeem' AND burn_txid IS NOT NULL AND status != 'failed'`)
   } catch (e) {
     // audit R03: a FAILED backfill must NOT grant readiness — keep writes contained until it succeeds.
     console.error('SCHEMA BACKFILL FAILED — writes stay contained (SCHEMA_OK false) until migration completes: ' + (e.message || e))
