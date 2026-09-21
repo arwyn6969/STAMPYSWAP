@@ -991,10 +991,21 @@ app.post('/api/mint', async (req, res) => {
 // backs both, so total circulating is unchanged and the solvency invariant is preserved.
 // The user first burns their rep on the source chain and passes the burn txid; we verify it,
 // decrement the source (reflecting the real on-chain burn), and mint on the destination.
+// Per-chain burn FINALITY policy (audit R06) — a burn must be this deep before it can authorize a
+// real Bitcoin release; a shallow burn could be reorged out after the asset is gone. Env-overridable.
+const BURN_FINALITY = { base: 3, ethereum: 12, 'base-mainnet': parseInt(process.env.BASE_MAINNET_BURN_CONFIRMATIONS || '20', 10) }
 async function verifyRepBurn(chain, txid, repAddress, amount) {
-  if (chain === 'solana') return solMint.verifyBurn(txid, repAddress, toBaseUnits(floorToDecimals(amount, DEST_DECIMALS.solana), DEST_DECIMALS.solana))
-  if (evmMint.isSupported(chain)) return evmMint.verifyBurn(chain, txid, repAddress, floorToDecimals(amount, DEST_DECIMALS[chain]))
-  return { valid: false, reason: 'unsupported source chain' }
+  let r
+  if (chain === 'solana') r = await solMint.verifyBurn(txid, repAddress, toBaseUnits(floorToDecimals(amount, DEST_DECIMALS.solana), DEST_DECIMALS.solana))
+  else if (chain in DEST_DECIMALS) r = await evmMint.verifyBurn(chain, txid, repAddress, floorToDecimals(amount, DEST_DECIMALS[chain]))
+  else return { valid: false, reason: 'unsupported source chain' }
+  if (!r || !r.valid) return r || { valid: false, reason: 'burn verification failed' }
+  // Solana finality is enforced in the verifier (queried at 'finalized'); EVM needs depth.
+  if (chain !== 'solana') {
+    const min = BURN_FINALITY[chain] != null ? BURN_FINALITY[chain] : 12
+    if ((r.confirmations || 0) < min) return { valid: false, reason: `burn not final yet — ${r.confirmations || 0}/${min} confirmations required`, confirmations: r.confirmations || 0, final: false }
+  }
+  return r
 }
 // ---- PR3 (audit): shared consume-once burn registry + owner→recipient authorization ----
 // Normalize a burn txid: EVM hashes are hex (case-insensitive) → lowercase; Solana sigs are
@@ -1166,7 +1177,12 @@ app.get('/api/prices', async (req, res) => {
 
 // Custody status — the Emblem-managed vault BTC address + whether deposits are live.
 app.get('/api/custody/status', async (_req, res) => {
-  try { res.json(await custody.status()) } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  try {
+    const s = await custody.status()
+    // R07: don't claim deposits are live while the service is paused — reflect maintenance truthfully.
+    if (MAINTENANCE) { s.deposits_live = false; s.service = 'maintenance'; s.note = 'Deposits/mints/redemptions are PAUSED for security remediation. Custody holds real assets; nothing new is accepted right now.' }
+    res.json(s)
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
 })
 
 // READ-ONLY deposit DETECTION (ACME Phase 1). Proves the app SEES + ATTRIBUTES + CONFIRMS a
@@ -1323,8 +1339,9 @@ app.get('/api/wrap/route', async (req, res) => {
       protocol: proto, protocol_label: protoLabel,
       asset: asset.exact_ticker, display: displayTicker(asset.exact_ticker),
       decimals: asset.decimals == null ? 8 : Number(asset.decimals),
-      whitelisted: wl, enabled: wl,
-      reason: wl ? null : 'recognized but not yet enabled for wrapping',
+      whitelisted: wl, enabled: wl && !MAINTENANCE, // R07: don't advertise "enabled" while paused
+      reason: MAINTENANCE ? 'wrapping paused — service in maintenance (security remediation)' : (wl ? null : 'recognized but not yet enabled for wrapping'),
+      service: MAINTENANCE ? 'maintenance' : 'live',
       vault_address: VAULT_ADDR,
       min_confirmations: minConf,
       fees, target_chains, reserves, market,

@@ -88,8 +88,10 @@ async function mintTokens({ existingMint, amountBase, amountBase9, decimals = DE
 // burn/burnChecked of the mint for ≥ amountBase9 base units. Read-only, deterministic.
 async function verifyBurn(txid, mintAddr, amountBase9) {
   try {
-    const tx = await connection.getParsedTransaction(txid, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
-    if (!tx) return { valid: false, reason: 'tx not found' }
+    // audit R06: query at FINALIZED (irreversible) — a burn must be final before it authorizes a
+    // real Bitcoin release; 'confirmed' can still be rolled back.
+    const tx = await connection.getParsedTransaction(txid, { maxSupportedTransactionVersion: 0, commitment: 'finalized' })
+    if (!tx) return { valid: false, reason: 'tx not found or not yet FINALIZED' }
     if (tx.meta && tx.meta.err) return { valid: false, reason: 'tx failed' }
     const ixs = [...(tx.transaction.message.instructions || []), ...((tx.meta && tx.meta.innerInstructions) || []).flatMap(i => i.instructions)]
     for (const ix of ixs) {

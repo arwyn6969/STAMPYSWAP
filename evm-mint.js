@@ -61,16 +61,20 @@ const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)')
 const ZERO_TOPIC = '0x' + '0'.repeat(64)
 async function verifyBurn(chain, txid, contractAddr, amountToken) {
   try {
-    const rcpt = await evmSigner.provider(chain).getTransactionReceipt(txid)
+    const provider = evmSigner.provider(chain)
+    const rcpt = await provider.getTransactionReceipt(txid)
     if (!rcpt) return { valid: false, reason: 'tx not found' }
     if (rcpt.status !== 1) return { valid: false, reason: 'tx failed' }
+    // audit R06: confirmation depth — the release-finality policy is enforced by the caller.
+    const head = await provider.getBlockNumber().catch(() => null)
+    const confirmations = (head != null && rcpt.blockNumber != null) ? Math.max(0, head - rcpt.blockNumber + 1) : 0
     const want = ethers.parseUnits(String(amountToken), 18)
     for (const log of rcpt.logs) {
       if (log.address.toLowerCase() === contractAddr.toLowerCase() && log.topics[0] === TRANSFER_TOPIC && log.topics[2] === ZERO_TOPIC) {
         const value = BigInt(log.data)
         // owner = the BURNER (Transfer.from, topics[1]) — audit: authorization must bind to who
         // actually burned, not merely that a transfer-to-zero happened.
-        if (value >= want) return { valid: true, burned: value.toString(), owner: ethers.getAddress('0x' + log.topics[1].slice(-40)), chain }
+        if (value >= want) return { valid: true, burned: value.toString(), owner: ethers.getAddress('0x' + log.topics[1].slice(-40)), chain, confirmations, blockNumber: rcpt.blockNumber }
       }
     }
     return { valid: false, reason: 'no matching burn (Transfer→0x0) of that contract/amount' }
