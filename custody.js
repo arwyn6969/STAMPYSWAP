@@ -122,13 +122,13 @@ async function mempoolUtxos(addr) {
   return u.filter(x => x.status && x.status.confirmed).sort((a, b) => b.value - a.value)
 }
 
-async function redeemAcme({ asset, amountWhole, qtyBase, toAddress, feeRate = 3 }) {
+async function redeemAcme({ asset, amountWhole, qtyBase, toAddress, feeRate = 3, dec = 8 }) {
   if (!isLive()) { const e = new Error('custody redemption is gated (STAMPY_CUSTODY_LIVE off) — audited go-ahead required'); e.code = 'GATED'; throw e }
   if (!acme) throw new Error('ACME adapter unavailable')
   const from = await depositAddress()
-  const dec = qtyBase != null ? null : null // qtyBase is authoritative
-  // 1) compose → envelope + assert the composed message matches what we asked for (pre-sign safety)
-  const built = await acme.composeSend({ from, toAddress, asset, qtyWhole: amountWhole, dec: 8 })
+  // 1) compose → envelope + assert the composed message matches what we asked for (pre-sign safety).
+  // dec = the asset's real source decimals (audit: was hardcoded 8 → wrong for indivisible ACME).
+  const built = await acme.composeSend({ from, toAddress, asset, qtyWhole: amountWhole, dec })
   const rawEnv = built && built.envelope && built.envelope.hex
   if (!rawEnv) throw new Error('acme compose returned no envelope')
   // swap the compose's v1 header for the v2 header the indexer credits (zlib payload untouched)
@@ -171,9 +171,9 @@ async function redeemAcme({ asset, amountWhole, qtyBase, toAddress, feeRate = 3 
   return { released: true, protocol: 'acme', asset, amount: String(amountWhole), to: toAddress, txid, fee_sats: minerFee, acme_fee_sats: ACME_FEE_SATS, explorer: `https://mempool.space/tx/${txid}` }
 }
 
-async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20', qtyBase }) {
+async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20', qtyBase, dec = 8 }) {
   if (!isLive()) { const e = new Error('custody redemption is gated (STAMPY_CUSTODY_LIVE off) — audited go-ahead required'); e.code = 'GATED'; throw e }
-  if (protocol === 'acme') return redeemAcme({ asset: tick, amountWhole: amount, qtyBase, toAddress })
+  if (protocol === 'acme') return redeemAcme({ asset: tick, amountWhole: amount, qtyBase, toAddress, dec })
   if (protocol === 'counterparty') return redeemCounterparty({ asset: tick, amountWhole: amount, qtyBase, toAddress })
   const from = await depositAddress()
   const r = await fetch('https://stampchain.io/api/v2/src20/create', {

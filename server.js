@@ -1309,6 +1309,17 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
     const asset = await resolveAsset(tick) // P1 (audit): honor "acme:TICKER" so collided names (ACME/SOAP) resolve to the right protocol
     if (!asset) return res.status(404).json({ error: 'asset not in registry' })
     if (!asset.whitelisted) return res.status(403).json({ error: 'asset not whitelisted' })
+    // F09 (audit): the credited/minted amount must not carry MORE precision than the SOURCE asset
+    // supports. Otherwise the deposit-match check (which truncates to source decimals) passes for a
+    // small deposit while the larger fractional request is credited (e.g. 1 indivisible ACME → 1.9).
+    const srcDec = asset.decimals == null ? 8 : Number(asset.decimals)
+    if (toBaseUnits(floorToDecimals(amt, srcDec)) !== toBaseUnits(amt))
+      return res.status(400).json({ error: `amount has more precision than ${displayTicker(asset.exact_ticker)} supports (${srcDec} decimals) — reduce precision` })
+    // F08 (audit): only consume a claim for a chain we can actually MINT on. base-mainnet is
+    // advertised in wrap routes but not yet wired into the mint path → fail CLOSED here rather than
+    // recording a confirmed deposit that mintCritical would then reject ('unsupported destination').
+    if (!(chain === 'solana' || evmMint.isSupported(chain)))
+      return res.status(400).json({ error: `destination chain '${chain}' is not a supported mint target yet — deposit not consumed` })
     // AUTHENTICATION — bind the mint to whoever controls the on-chain deposit SOURCE. Without this,
     // anyone who observes a deposit (or front-runs it) could claim the mint to their own address.
     // Operator override (x-operator-token) exists only for back-office credits in the current phase.
@@ -1430,8 +1441,11 @@ app.post('/api/custody/redeem', async (req, res) => {
       // reserve a pending row BEFORE the external release (idempotency + crash-safety)
       const pend = await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, burn_txid, status, created_at) VALUES (?, 'redeem', ?, ?, ?, 'pending', ?)`, [asset.id, amt, chain, burn_txid || null, now()])
       let release
-      const redeemArgs = { tick: asset.exact_ticker, amount: amt, toAddress: to, protocol: asset.source_protocol }
-      if (asset.source_protocol === 'counterparty') redeemArgs.qtyBase = counterparty.toBase(amt, asset.decimals == null ? 8 : Number(asset.decimals))
+      const redeemDec = asset.decimals == null ? 8 : Number(asset.decimals)
+      const redeemArgs = { tick: asset.exact_ticker, amount: amt, toAddress: to, protocol: asset.source_protocol, dec: redeemDec }
+      // pass authoritative base units so custody asserts the composed quantity for BOTH protocols (audit)
+      if (asset.source_protocol === 'counterparty') redeemArgs.qtyBase = counterparty.toBase(amt, redeemDec)
+      if (asset.source_protocol === 'acme' && acme) redeemArgs.qtyBase = acme.toBase(amt, redeemDec)
       try { release = await custody.redeem(redeemArgs) }
       catch (e) {
         await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
