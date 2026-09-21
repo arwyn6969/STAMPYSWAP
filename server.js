@@ -446,10 +446,17 @@ function operatorToken() {
   try { const f = path.join(__dirname, '.operator-token'); if (_fs.existsSync(f)) return _fs.readFileSync(f, 'utf8').trim() } catch (_) {}
   return process.env.OPERATOR_TOKEN || null
 }
+// Constant-time string compare (audit: operator-token check must not leak length/prefix via early-exit
+// `===`). Returns false on any length mismatch (timingSafeEqual throws on unequal-length buffers).
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a == null ? '' : a)), bb = Buffer.from(String(b == null ? '' : b))
+  if (ba.length !== bb.length) return false
+  try { return crypto.timingSafeEqual(ba, bb) } catch (_) { return false }
+}
 // A request is "operator" if it carries the matching token. Used to gate PROTOCOL-FUNDED actions
 // (direct mint, pool seeding) that spend protocol gas / mint against protocol collateral — those
 // must never be publicly callable (an attacker could mint themselves free backed reps, or drain gas).
-function isOperator(req) { const t = operatorToken(); return !!(t && req.headers['x-operator-token'] === t) }
+function isOperator(req) { const t = operatorToken(); const h = req.headers['x-operator-token']; return !!(t && h && safeEqual(h, t)) }
 // Solana mint authority mode: 'emblem' (single managed signer, default) or 'squads' (M-of-N
 // multisig). Togglable via env SOLANA_AUTHORITY or a .solana-authority file (server-side, 404 web).
 function solanaAuthorityMode() {
@@ -1591,6 +1598,82 @@ app.post('/api/custody/redeem', async (req, res) => {
       await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(circ - toBaseUnits(amt), 18), now(), rep.id])
       await dbExec(`UPDATE collateral_ledger SET btc_txid=?, status='released' WHERE id=?`, [release.txid, pend.lastInsertRowid])
       return { status: 200, body: { redeemed: true, release, circulating: fromBaseUnits(circ - toBaseUnits(amt)) } }
+    })
+    res.status(out.status).json(out.body)
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+})
+
+// ============================================================================
+// OPERATOR RECONCILE TOOL (audit: "redeemedBase reconcile concern")
+// ----------------------------------------------------------------------------
+// redeemedBase() counts every redeem ledger row except status='failed' — so a redeem that
+// broadcast with an UNCERTAIN outcome (status='reconcile') or a crashed-mid-flight reservation
+// (status='pending') keeps that collateral subtracted from available backing FOREVER, which can
+// permanently block further mints. That fail-closed behaviour is deliberate (never free a
+// possibly-released reservation automatically), but it needs an operator escape hatch: after the
+// operator verifies the on-chain outcome by hand, they resolve the row to a terminal state here.
+// Operator-only; back-office. Reconciling mint OPS (operations table) is the R05 durable-recovery
+// batch — this tool only lists them for visibility.
+// ----------------------------------------------------------------------------
+app.get('/api/reconcile', async (req, res) => {
+  if (requireOperator(req, res)) return
+  try {
+    const redeems = await dbQuery(
+      `SELECT cl.id, cl.canonical_id, ca.exact_ticker, cl.amount, cl.dest_chain, cl.burn_txid, cl.btc_txid, cl.status, cl.created_at
+       FROM collateral_ledger cl LEFT JOIN canonical_assets ca ON ca.id=cl.canonical_id
+       WHERE cl.direction='redeem' AND cl.status IN ('pending','reconcile') ORDER BY cl.id`)
+    const ops = await dbQuery(
+      `SELECT op_key, action, canonical_id, amount, chain, recipient, state, tx_id, updated_at
+       FROM operations WHERE state IN ('reserved','reconcile') ORDER BY updated_at DESC`).catch(() => [])
+    res.json({
+      stuck_redeems: redeems,
+      stuck_ops: ops,
+      note: 'Resolve a redeem row via POST /api/reconcile {kind:"redeem", id, resolution:"released"|"failed", release_txid?}. '
+          + 'Verify the on-chain outcome FIRST. released=BTC actually left the vault (finalizes: decrements circulating, keeps burn consumed). '
+          + 'failed=nothing left the vault (restores collateral, frees the burn so the holder can retry). '
+          + 'Mint-op (operations) reconciliation is handled by the durable-recovery batch, not here.',
+    })
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+})
+
+app.post('/api/reconcile', async (req, res) => {
+  if (requireOperator(req, res)) return
+  try {
+    const { kind, id, resolution, release_txid } = req.body || {}
+    if (kind !== 'redeem') return res.status(400).json({ error: 'only kind:"redeem" is reconcilable here (mint-op recovery is the R05 batch)' })
+    if (resolution !== 'released' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "released" or "failed"' })
+    const row = (await dbQuery(`SELECT * FROM collateral_ledger WHERE id=? AND direction='redeem'`, [id]))[0]
+    if (!row) return res.status(404).json({ error: 'redeem ledger row not found' })
+    if (row.status !== 'pending' && row.status !== 'reconcile')
+      return res.status(409).json({ error: `row is already terminal (status=${row.status}); nothing to reconcile` })
+
+    const out = await withAssetLock(row.canonical_id, async () => {
+      // re-read under the lock (a concurrent redeem for the same asset may have just resolved it)
+      const cur = (await dbQuery('SELECT * FROM collateral_ledger WHERE id=?', [id]))[0]
+      if (!cur || (cur.status !== 'pending' && cur.status !== 'reconcile'))
+        return { status: 409, body: { error: `row no longer reconcilable (status=${cur ? cur.status : 'gone'})` } }
+      const chain = cur.dest_chain
+      if (resolution === 'released') {
+        // BTC left the vault → finalize exactly like the success path: decrement circulating + mark
+        // released. Circulating was NOT decremented for a pending/reconcile row (that only happens on
+        // the 200 path), so decrement now. Burn stays consumed (it authorised a real release).
+        const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [cur.canonical_id, chain]))[0]
+        if (rep) {
+          const circ = toBaseUnits(rep.circulating_supply || '0'); const amt = toBaseUnits(cur.amount)
+          if (circ < amt) return { status: 409, body: { error: `circulating (${fromBaseUnits(circ)}) < redeem amount (${cur.amount}) — inconsistent; resolve manually` } }
+          await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(circ - amt, 18), now(), rep.id])
+        }
+        await dbExec(`UPDATE collateral_ledger SET status='released', btc_txid=COALESCE(?, btc_txid) WHERE id=?`, [release_txid || null, id])
+        return { status: 200, body: { reconciled: true, id, resolution, decremented_circulating: !!rep } }
+      } else {
+        // resolution === 'failed': nothing left the vault → restore collateral (redeemedBase excludes
+        // 'failed') and FREE the consumed burn so the holder can retry. Circulating stays (rep still
+        // exists — it was never actually removed). No release, no decrement.
+        await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [id])
+        let freed_burn = false
+        if (cur.burn_txid) { await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, cur.burn_txid)]).catch(() => {}); freed_burn = true }
+        return { status: 200, body: { reconciled: true, id, resolution, freed_burn } }
+      }
     })
     res.status(out.status).json(out.body)
   } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
