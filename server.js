@@ -942,21 +942,34 @@ async function mintCritical(asset, amount, receive_address, chain, opKey = null)
   const totalCirculating = allReps.reduce((a, r) => a + toBaseUnits(r.circulating_supply || '0'), 0n)
   const maxSupply = toBaseUnits(asset.max_supply || '0')
 
-  // ---- SOLVENCY INVARIANT (cross-chain): total circulating ≤ collateral ≤ source supply ----
-  if (totalCirculating + mintBase > availableCollateral)
-    return { status: 409, body: { error: 'insufficient collateral', reason: 'mint would exceed confirmed backing across all chains',
-      total_circulating: fromBaseUnits(totalCirculating), minting: mintAmt, collateral: fromBaseUnits(availableCollateral) } }
-  if (maxSupply > 0n && totalCirculating + mintBase > maxSupply)
-    return { status: 409, body: { error: 'exceeds source max supply', max_supply: asset.max_supply } }
-
-  // ---- R05 durable op guard (F07): reserve BEFORE the external mint; a retry of the same op_key
-  // resumes idempotently and never re-mints a completed effect (nor auto-retries an uncertain one).
+  // ---- R05 durable op guard (F07) — A03 (audit): the op MUST be consulted BEFORE the solvency check.
+  // Otherwise a RESUME of a mint another worker already completed would fail the (now headroom-consumed)
+  // collateral check and be misread by the caller as a definite failure → it would delete backing that
+  // is now backing the peer's mint = insolvency. Reserve first; a completed op returns the cached result
+  // without re-checking collateral; a reserved/uncertain op reconciles; a legacy-format op fails closed.
   if (opKey) {
+    // A02: absence of the EXACT key must not be read as "no prior mint" — older builds keyed the op with a
+    // trailing :chain:recipient. Detect any legacy-format op for this identity and fail closed (reconcile).
+    const legacy = await dbQuery(`SELECT state FROM operations WHERE op_key LIKE ? LIMIT 1`, [opKey + ':%'])
+    if (legacy.length) return { status: 409, body: { error: 'a legacy operation record exists for this mint identity — reconciliation required (not auto-retried)', reconcile: true, op: opKey } }
     const g = await opReserve(opKey, { action: 'mint', canonical_id: asset.id, amount: mintAmt, chain, recipient: receive_address })
     if (!g.fresh) {
       if (g.row && g.row.state === 'completed') return { status: 200, body: { ...JSON.parse(g.row.result_json || '{}'), idempotent: true } }
       return { status: 409, body: { error: 'a prior attempt for this mint did not complete — reconciliation required (not auto-retried)', reconcile: true, op: opKey } }
     }
+  }
+
+  // ---- SOLVENCY INVARIANT (cross-chain): total circulating ≤ collateral ≤ source supply ----
+  // A fresh reservation now exists (if opKey); a definite pre-send rejection here must RELEASE it so a
+  // legitimate later retry (e.g. after more collateral is confirmed) is not permanently blocked.
+  if (totalCirculating + mintBase > availableCollateral) {
+    if (opKey) await opFail(opKey)
+    return { status: 409, body: { error: 'insufficient collateral', reason: 'mint would exceed confirmed backing across all chains',
+      total_circulating: fromBaseUnits(totalCirculating), minting: mintAmt, collateral: fromBaseUnits(availableCollateral) } }
+  }
+  if (maxSupply > 0n && totalCirculating + mintBase > maxSupply) {
+    if (opKey) await opFail(opKey)
+    return { status: 409, body: { error: 'exceeds source max supply', max_supply: asset.max_supply } }
   }
 
   // ---- execute on-chain FIRST, then record ----
@@ -1102,6 +1115,26 @@ async function opComplete(op_key, tx_id, result) {
 }
 async function opFail(op_key) { await dbExec('DELETE FROM operations WHERE op_key=?', [op_key]).catch(() => {}) } // proven pre-send failure → retryable
 async function opReconcile(op_key) { await dbExec(`UPDATE operations SET state='reconcile', updated_at=? WHERE op_key=?`, [now(), op_key]).catch(() => {}) }
+
+// A01 (audit): EXACTLY-ONCE release finalization, shared by normal redemption AND operator reconcile.
+// The circulation decrement and the terminal-status write are separate rows (no cross-row transaction),
+// so a crash between them could let a retry decrement circulation TWICE → understated circulation →
+// over-mint headroom → insolvency. Fix: make the TERMINAL STATUS TRANSITION the compare-and-set gate.
+// Only the caller that flips the reserved row (pending|reconcile → released, changes===1) performs the
+// decrement; any repeat finds it already released (changes 0) and does nothing. Ordering is fail-CLOSED:
+// if the process dies after the flip but before the decrement, circulation stays too HIGH (never
+// over-mints) and the terminal row won't be decremented again. dbExec returns {changes} (Dashboard API).
+async function finalizeReleaseOnce({ ledgerId, canonicalId, chain, amountBase, releaseTxid }) {
+  const upd = await dbExec(`UPDATE collateral_ledger SET status='released', btc_txid=COALESCE(?, btc_txid) WHERE id=? AND status IN ('pending','reconcile')`, [releaseTxid || null, ledgerId])
+  if (!upd || (upd.changes || 0) < 1) return { alreadyFinalized: true } // a prior finalize already claimed the decrement
+  const rep = (await dbQuery('SELECT id, circulating_supply FROM representations WHERE canonical_id=? AND dest_chain=?', [canonicalId, chain]))[0]
+  if (rep) {
+    const circ = toBaseUnits(rep.circulating_supply || '0')
+    const newCirc = circ >= amountBase ? circ - amountBase : 0n
+    await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(newCirc, 18), now(), rep.id])
+  }
+  return { finalized: true }
+}
 app.post('/api/move', async (req, res) => {
   // P2 (audit 2345961): move mints dest tokens but does NOT bind the burn to the receiver, so a
   // caller could front-run someone's burn and claim the minted output (+ it's a gas drain). Like
@@ -1135,11 +1168,21 @@ app.post('/api/move', async (req, res) => {
       const mv = recovery.resolveMoveBurn(existing, asset.id)
       if (mv.action === 'reject')
         return { status: 409, body: { error: 'burn already consumed by a redeem or another action' } }
+      // The move-out ledger row carries an explicit PHASE: 'pending' (decrement NOT yet confirmed) →
+      // 'decremented' (source debit committed). A05 (audit): the mere existence of the consumed-burn
+      // marker does NOT prove the source was debited — so we gate the destination mint on the move-out
+      // row being 'decremented', never on the burn marker alone. This makes over-issuance impossible.
+      const moveOut = (await dbQuery(`SELECT * FROM collateral_ledger WHERE direction='move-out' AND btc_txid=? AND canonical_id=?`, [burn_txid, asset.id]))[0]
       if (mv.action === 'resume') {
-        // source already decremented + move-out recorded on the first attempt → re-drive only the
-        // destination mint. Op-guarded: completed → idempotent; reserved/reconcile → reconcile.
+        // burn was claimed by a prior attempt. Only proceed to the dest mint if the source debit is
+        // CONFIRMED ('decremented'). Otherwise the debit outcome is unknown → fail-closed reconcile
+        // (never re-debit, never mint against an un-reduced source).
+        if (!moveOut || moveOut.status !== 'decremented')
+          return { status: 409, body: { error: 'move source-debit state is uncertain — awaiting reconciliation (not auto-retried)', reconcile: true } }
       } else {
-        // mv.action === 'start' — FIRST attempt: claim the burn (atomic PK), then decrement source + move-out.
+        // mv.action === 'start' — FIRST attempt: claim burn → record move-out 'pending' → debit source →
+        // mark 'decremented'. Debit BEFORE the 'decremented' mark so a crash between leaves the row
+        // 'pending' → a later resume reconciles instead of blindly re-debiting or over-issuing.
         const claim = await consumeBurn({ chain: from_chain, txid: burn_txid, canonical_id: asset.id, purpose: 'move', owner: burn.owner, amount })
         if (!claim.ok) return { status: 409, body: { error: 'burn already consumed (race)' } }
         const fresh = (await dbQuery('SELECT circulating_supply FROM representations WHERE id=?', [fromRep.id]))[0]
@@ -1149,8 +1192,10 @@ app.post('/api/move', async (req, res) => {
           await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(from_chain, burn_txid)]).catch(() => {})
           return { status: 409, body: { error: 'move exceeds source circulating', circulating: fromBaseUnits(circ) } }
         }
+        await dbExec(`INSERT OR IGNORE INTO collateral_ledger (canonical_id, direction, amount, dest_chain, btc_txid, status, created_at) VALUES (?, 'move-out', ?, ?, ?, 'pending', ?)`, [asset.id, amount, from_chain, burn_txid, now()])
         await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(circ - toBaseUnits(amount), 18), now(), fromRep.id])
-        await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, btc_txid, status, created_at) VALUES (?, 'move-out', ?, ?, ?, 'burned', ?)`, [asset.id, amount, from_chain, burn_txid, now()])
+        // CAS mark: only flips 'pending'→'decremented' (a re-run after the debit can't double-debit)
+        await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE direction='move-out' AND btc_txid=? AND canonical_id=? AND status='pending'`, [burn_txid, asset.id])
       }
       // mint on destination (unlocked core; total circulating now back to original → solvent)
       const m = await mintCritical(asset, amount, to_address, to_chain, moveKey)
@@ -1560,7 +1605,9 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
       // deliberately NOT per-recipient, so one credit can never mint to two addresses — is the source
       // of truth for "did this deposit's mint finish".
       const opKey = recovery.depositOpKey(ledgerKey)
-      const priorOp = (await dbQuery('SELECT * FROM operations WHERE op_key=?', [opKey]))[0]
+      // A02: match the exact identity key OR any legacy-format key (older builds appended :chain:recipient).
+      // Prefer a 'completed' record so a finished mint is always resolved as done, never re-driven.
+      const priorOp = (await dbQuery(`SELECT * FROM operations WHERE op_key = ? OR op_key LIKE ? ORDER BY CASE state WHEN 'completed' THEN 0 ELSE 1 END LIMIT 1`, [opKey, opKey + ':%']))[0]
       const decision = recovery.resolveDepositOp(priorOp, receive_address)
       if (decision.action === 'done') // truly done → idempotent
         return { status: 409, body: { error: 'deposit already credited and minted', minted: JSON.parse((priorOp && priorOp.result_json) || '{}') } }
@@ -1592,8 +1639,16 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
         // credit so the deposit can be retried clean. UNCERTAIN (reconcile) → KEEP credit + op stays for
         // reconciliation. Only delete a credit WE inserted this call (never a pre-existing resume credit).
         const uncertain = !!(m.body && m.body.reconcile)
-        if (!uncertain && !priorCredit && creditId != null) await dbExec('DELETE FROM collateral_ledger WHERE id=?', [creditId]).catch(() => {})
-        return { status: m.status, body: { deposit_reverted: !uncertain && !priorCredit, reconcile: uncertain, mint: m.body } }
+        // A03: NEVER delete a credit merely because THIS request inserted it — a peer worker may have
+        // minted against it in the interim. Delete only on a definite pre-send failure AND when no
+        // completed op exists for this deposit (re-checked here to catch a concurrent completion).
+        let safeToDelete = !uncertain && !priorCredit && creditId != null
+        if (safeToDelete) {
+          const opNow = (await dbQuery(`SELECT state FROM operations WHERE op_key = ? OR op_key LIKE ?`, [opKey, opKey + ':%']))[0]
+          if (opNow && opNow.state === 'completed') safeToDelete = false // a mint landed → the credit now backs it
+        }
+        if (safeToDelete) await dbExec('DELETE FROM collateral_ledger WHERE id=?', [creditId]).catch(() => {})
+        return { status: m.status, body: { deposit_reverted: safeToDelete, reconcile: uncertain, mint: m.body } }
       }
       return { status: 200, body: { deposit: { key: ledgerKey, confirmations, protocol: asset.source_protocol }, mint: m.body } }
     })
@@ -1663,9 +1718,8 @@ app.post('/api/custody/redeem', async (req, res) => {
         await dbExec(`UPDATE collateral_ledger SET status='reconcile' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
         return { status: 502, body: { error: 'release outcome UNCERTAIN — burn kept consumed, flagged for manual reconciliation (no automatic retry): ' + String(e.message || e), reconcile: true } }
       }
-      // release landed → finalize: decrement circulating + mark the reserved row released
-      await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(circ - toBaseUnits(amt), 18), now(), rep.id])
-      await dbExec(`UPDATE collateral_ledger SET btc_txid=?, status='released' WHERE id=?`, [release.txid, pend.lastInsertRowid])
+      // release landed → finalize EXACTLY ONCE (A01): the CAS terminal transition gates the decrement.
+      await finalizeReleaseOnce({ ledgerId: pend.lastInsertRowid, canonicalId: asset.id, chain, amountBase: toBaseUnits(amt), releaseTxid: release.txid })
       return { status: 200, body: { redeemed: true, release, circulating: fromBaseUnits(circ - toBaseUnits(amt)) } }
     })
     res.status(out.status).json(out.body)
@@ -1723,24 +1777,24 @@ app.post('/api/reconcile', async (req, res) => {
         return { status: 409, body: { error: `row no longer reconcilable (status=${cur ? cur.status : 'gone'})` } }
       const chain = cur.dest_chain
       if (resolution === 'released') {
-        // BTC left the vault → finalize exactly like the success path: decrement circulating + mark
-        // released. Circulating was NOT decremented for a pending/reconcile row (that only happens on
-        // the 200 path), so decrement now. Burn stays consumed (it authorised a real release).
-        const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [cur.canonical_id, chain]))[0]
-        if (rep) {
-          const circ = toBaseUnits(rep.circulating_supply || '0'); const amt = toBaseUnits(cur.amount)
-          if (circ < amt) return { status: 409, body: { error: `circulating (${fromBaseUnits(circ)}) < redeem amount (${cur.amount}) — inconsistent; resolve manually` } }
-          await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(circ - amt, 18), now(), rep.id])
-        }
-        await dbExec(`UPDATE collateral_ledger SET status='released', btc_txid=COALESCE(?, btc_txid) WHERE id=?`, [release_txid || null, id])
-        return { status: 200, body: { reconciled: true, id, resolution, decremented_circulating: !!rep } }
+        // BTC left the vault → finalize through the SAME exactly-once finalizer as the success path
+        // (A01): the CAS terminal transition gates the decrement, so reconciling twice (or racing the
+        // success path) can never decrement circulation more than once.
+        const r = await finalizeReleaseOnce({ ledgerId: id, canonicalId: cur.canonical_id, chain, amountBase: toBaseUnits(cur.amount), releaseTxid: release_txid })
+        return { status: 200, body: { reconciled: true, id, resolution, finalized: !!r.finalized, already_finalized: !!r.alreadyFinalized } }
       } else {
         // resolution === 'failed': nothing left the vault → restore collateral (redeemedBase excludes
-        // 'failed') and FREE the consumed burn so the holder can retry. Circulating stays (rep still
-        // exists — it was never actually removed). No release, no decrement.
+        // 'failed') and FREE the consumed burn so the holder can retry. A04.1 (audit): free the burn
+        // FIRST and CONFIRM it is gone; only then mark the row terminal-failed. If the free fails, leave
+        // the row reconcilable and report truthfully — never claim freed_burn while the burn is stuck,
+        // which would strand the holder's entitlement behind a terminal row.
+        let freed_burn = true
+        if (cur.burn_txid) {
+          await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, cur.burn_txid)]).catch(() => {})
+          freed_burn = !(await burnConsumed(chain, cur.burn_txid)) // confirm it is actually gone
+          if (!freed_burn) return { status: 500, body: { error: 'could not free the consumed burn — row left reconcilable (not marked failed); retry', reconciled: false } }
+        }
         await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [id])
-        let freed_burn = false
-        if (cur.burn_txid) { await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, cur.burn_txid)]).catch(() => {}); freed_burn = true }
         return { status: 200, body: { reconciled: true, id, resolution, freed_burn } }
       }
     })
@@ -1829,16 +1883,31 @@ app.post('/api/stampbridge/execute', express.json(), async (req, res) => {
       // defensive: confirm the vault actually holds enough of the stamp before releasing
       const held = BigInt(counterparty.toBase(counterparty.fromBase(await counterparty.addressBalanceBase(VAULT_ADDR, b.stamp_asset), 0), 0))
       if (held < BigInt(rel)) return { status: 409, body: { error: `vault holds ${held} ${b.stamp_asset}, cannot release ${rel}`, stamp_in_vault: held.toString() } }
+      // A07 (audit): RESERVE the bridge op BEFORE broadcasting. The burn_txid UNIQUE constraint makes
+      // this atomic — a concurrent or retried call cannot get past it, so an uncertain broadcast can
+      // never be re-released. (The dup-check above already 409s any existing row; this closes the
+      // crash-window between broadcast and record.)
+      try {
+        await dbExec(`INSERT INTO bridge_ops (src20_tick, stamp_asset, amount, burn_txid, user_address, status, created_at)
+          VALUES (?,?,?,?,?,'reserving',?)`, [b.src20_tick, b.stamp_asset, rel, String(burn_txid), user_address, now()])
+      } catch (_) {
+        return { status: 409, body: { error: 'this burn is already being bridged — do not resubmit', burn_txid } }
+      }
       let release
       try {
         // R05: shared-vault UTXO serialization — same global BTC lock as redeem.
         release = await withBtcVaultLock(() => custody.redeem({ tick: b.stamp_asset, amount: rel, toAddress: check.source, protocol: b.stamp_protocol, qtyBase: counterparty.toBase(rel, 0) }))
       } catch (e) {
-        if (e.code === 'GATED') return { status: 403, body: { error: e.message, gated: true } }
-        return { status: 502, body: { error: 'stamp release failed (burn is already permanent on-chain; retry release): ' + String(e.message || e) } }
+        if (e.code === 'GATED') {
+          // proven pre-send (nothing broadcast) → free the reservation so it stays retryable
+          await dbExec(`DELETE FROM bridge_ops WHERE burn_txid=? AND status='reserving'`, [String(burn_txid)]).catch(() => {})
+          return { status: 403, body: { error: e.message, gated: true } }
+        }
+        // UNKNOWN outcome → KEEP the reservation (never re-release), mark for reconciliation
+        await dbExec(`UPDATE bridge_ops SET status='reconcile' WHERE burn_txid=?`, [String(burn_txid)]).catch(() => {})
+        return { status: 502, body: { error: 'stamp release outcome UNCERTAIN — reserved, flagged for reconciliation (no auto-retry): ' + String(e.message || e), reconcile: true } }
       }
-      await dbExec(`INSERT INTO bridge_ops (src20_tick, stamp_asset, amount, burn_txid, user_address, release_txid, status, created_at)
-        VALUES (?,?,?,?,?,?,'released',?)`, [b.src20_tick, b.stamp_asset, rel, String(burn_txid), user_address, release.txid, now()])
+      await dbExec(`UPDATE bridge_ops SET status='released', release_txid=? WHERE burn_txid=?`, [release.txid, String(burn_txid)])
       return { status: 200, body: { bridged: true, burned: `${amt} ${displayTicker(b.src20_tick)}`, released: `${rel} ${b.stamp_asset}`, release, burn_txid } }
     })
     res.status(out.status).json(out.body)
