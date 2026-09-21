@@ -922,6 +922,16 @@ async function mintCritical(asset, amount, receive_address, chain) {
   if (maxSupply > 0n && totalCirculating + mintBase > maxSupply)
     return { status: 409, body: { error: 'exceeds source max supply', max_supply: asset.max_supply } }
 
+  // ---- R05 durable op guard (F07): reserve BEFORE the external mint; a retry of the same op_key
+  // resumes idempotently and never re-mints a completed effect (nor auto-retries an uncertain one).
+  if (opKey) {
+    const g = await opReserve(opKey, { action: 'mint', canonical_id: asset.id, amount: mintAmt, chain, recipient: receive_address })
+    if (!g.fresh) {
+      if (g.row && g.row.state === 'completed') return { status: 200, body: { ...JSON.parse(g.row.result_json || '{}'), idempotent: true } }
+      return { status: 409, body: { error: 'a prior attempt for this mint did not complete — reconciliation required (not auto-retried)', reconcile: true, op: opKey } }
+    }
+  }
+
   // ---- execute on-chain FIRST, then record ----
   let mintAddr, signature, explorer = null, real = false
   if (chain === 'solana') {
@@ -935,8 +945,10 @@ async function mintCritical(asset, amount, receive_address, chain) {
         : await solMint.mintTokens({ existingMint: rep && rep.dest_address, amountBase, decimals: destDec, recipient: receive_address })
       mintAddr = r.mint; signature = r.signature; explorer = r.explorer; real = true
     } catch (e) {
+      // UNFUNDED = nothing was signed/sent (pre-send) → retryable; anything else is uncertain → reconcile.
+      if (opKey) await (e.code === 'UNFUNDED' ? opFail(opKey) : opReconcile(opKey))
       if (e.code === 'UNFUNDED') return { status: 503, body: { error: e.message, needs_funding: e.authority, chain } }
-      return { status: 502, body: { error: 'solana mint failed: ' + String(e.message || e) } }
+      return { status: 502, body: { error: 'solana mint failed (outcome uncertain — reconcile before retry): ' + String(e.message || e) } }
     }
   } else if (evmMint.isSupported(chain)) {
     try {
@@ -956,11 +968,18 @@ async function mintCritical(asset, amount, receive_address, chain) {
         mintAddr = r.contract; signature = r.txHash; explorer = r.explorer; real = true
       }
     } catch (e) {
+      // UNFUNDED/BADADDR = pre-send (nothing minted) → retryable; anything else is uncertain → reconcile.
+      if (opKey) await ((e.code === 'UNFUNDED' || e.code === 'BADADDR') ? opFail(opKey) : opReconcile(opKey))
       if (e.code === 'UNFUNDED') return { status: 503, body: { error: e.message, needs_funding: e.authority, chain } }
       if (e.code === 'BADADDR') return { status: 400, body: { error: e.message } }
-      return { status: 502, body: { error: `${chain} mint failed: ` + String(e.message || e) } }
+      return { status: 502, body: { error: `${chain} mint failed (outcome uncertain — reconcile before retry): ` + String(e.message || e) } }
     }
   } else return { status: 400, body: { error: 'unsupported destination chain' } }
+
+  // mint landed on-chain → mark the operation COMPLETED (with its txid) BEFORE the accounting writes,
+  // so a failure in the DB updates below can never cause a re-mint on retry (F07). The stored result
+  // is what an idempotent retry returns.
+  if (opKey) await opComplete(opKey, signature, { minted: true, real, chain, tick: asset.exact_ticker, amount_minted: mintAmt, mint_address: mintAddr, receive_address, signature, explorer })
 
   const newCirc = circulating + mintBase
   if (rep) await dbExec('UPDATE representations SET circulating_supply=?, status=?, dest_address=?, updated_at=? WHERE id=?',
@@ -1029,6 +1048,21 @@ function verifyBurnOwnerSig(chain, owner, msg, sig) {
 }
 function moveBindingMsg({ burn_txid, to_chain, to_address, amount }) { return `StampySwap move: burn ${burn_txid} → mint ${amount} on ${to_chain} to ${to_address}` }
 function redeemBindingMsg({ burn_txid, to, amount }) { return `StampySwap redeem: burn ${burn_txid} → release ${amount} to ${to}` }
+
+// ---- Durable operation records (audit R05 / F06-F07) — make on-chain effects crash-safe. An op is
+// RESERVED (unique op_key) before the external effect, COMPLETED with its txid after, or marked for
+// reconciliation on an uncertain outcome. A retry of the same op_key resumes idempotently and NEVER
+// re-executes a completed/uncertain effect. Uses the DB PRIMARY KEY for cross-process atomicity. ----
+async function opReserve(op_key, meta) {
+  try {
+    await dbExec(`INSERT INTO operations (op_key, action, canonical_id, amount, chain, recipient, state, created_at, updated_at) VALUES (?,?,?,?,?,?,'reserved',?,?)`,
+      [op_key, meta.action, meta.canonical_id, String(meta.amount), meta.chain, meta.recipient || null, now(), now()])
+    return { fresh: true }
+  } catch (_) { return { fresh: false, row: (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0] || null } }
+}
+async function opComplete(op_key, tx_id, result) { await dbExec(`UPDATE operations SET state='completed', tx_id=?, result_json=?, updated_at=? WHERE op_key=?`, [tx_id || null, JSON.stringify(result || {}), now(), op_key]).catch(() => {}) }
+async function opFail(op_key) { await dbExec('DELETE FROM operations WHERE op_key=?', [op_key]).catch(() => {}) } // proven pre-send failure → retryable
+async function opReconcile(op_key) { await dbExec(`UPDATE operations SET state='reconcile', updated_at=? WHERE op_key=?`, [now(), op_key]).catch(() => {}) }
 app.post('/api/move', async (req, res) => {
   // P2 (audit 2345961): move mints dest tokens but does NOT bind the burn to the receiver, so a
   // caller could front-run someone's burn and claim the minted output (+ it's a gas drain). Like
@@ -1063,7 +1097,7 @@ app.post('/api/move', async (req, res) => {
       await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(circ - toBaseUnits(amount), 18), now(), fromRep.id])
       await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, btc_txid, status, created_at) VALUES (?, 'move-out', ?, ?, ?, 'burned', ?)`, [asset.id, amount, from_chain, burn_txid, now()])
       // mint on destination (unlocked core; total circulating now back to original → solvent)
-      const m = await mintCritical(asset, amount, to_address, to_chain)
+      const m = await mintCritical(asset, amount, to_address, to_chain, `move-mint:${normTxid(from_chain, burn_txid)}:${to_chain}:${to_address}`)
       if (m.status !== 200) return { status: m.status, body: { error: 'source burned but destination mint failed (retryable): ' + (m.body.error || ''), source_decremented: true } }
       return { status: 200, body: { moved: true, tick: asset.exact_ticker, amount, from: from_chain, to: to_chain, burn_txid, destination: m.body } }
     })
@@ -1459,10 +1493,17 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
       // idempotency: a given deposit credits collateral once (checked inside the lock)
       const dup = await dbQuery('SELECT id FROM collateral_ledger WHERE btc_txid=?', [ledgerKey])
       if (dup.length) return { status: 409, body: { error: 'deposit already credited', ledger_id: dup[0].id } }
-      await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, btc_txid, vault_address, confirmations, status, created_at)
+      const ins = await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, btc_txid, vault_address, confirmations, status, created_at)
         VALUES (?, 'deposit', ?, ?, ?, ?, 'confirmed', ?)`, [asset.id, amt, ledgerKey, VAULT_ADDR, confirmations, now()])
-      const m = await mintCritical(asset, amt, receive_address, chain) // unlocked core — we already hold the lock
-      return { status: m.status, body: { deposit: { key: ledgerKey, confirmations, protocol: asset.source_protocol }, mint: m.body } }
+      const m = await mintCritical(asset, amt, receive_address, chain, `deposit-mint:${ledgerKey}:${chain}:${receive_address}`) // op-guarded (F07)
+      if (m.status !== 200) {
+        // F06: if the mint definitely did NOT happen (pre-send failure) undo the credit so the deposit
+        // can be retried. If the outcome is UNCERTAIN (reconcile) keep the credit for reconciliation.
+        const uncertain = !!(m.body && m.body.reconcile)
+        if (!uncertain) await dbExec('DELETE FROM collateral_ledger WHERE id=?', [ins.lastInsertRowid]).catch(() => {})
+        return { status: m.status, body: { deposit_reverted: !uncertain, reconcile: uncertain, mint: m.body } }
+      }
+      return { status: 200, body: { deposit: { key: ledgerKey, confirmations, protocol: asset.source_protocol }, mint: m.body } }
     })
     res.status(out.status).json(out.body)
   } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
@@ -1968,6 +2009,7 @@ async function migrateSchema() {
   try {
     await dbQuery('SELECT burn_txid FROM consumed_burns LIMIT 1')
     await dbQuery('SELECT burn_txid FROM collateral_ledger LIMIT 1')
+    await dbQuery('SELECT op_key FROM operations LIMIT 1') // R05 durable operation records
     SCHEMA_OK = true
   } catch (e) {
     console.error('SCHEMA CHECK FAILED — burn registry missing; writes stay contained. Apply migration (consumed_burns + collateral_ledger.burn_txid). ' + (e.message || e))
