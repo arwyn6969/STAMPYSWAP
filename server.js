@@ -1061,11 +1061,21 @@ app.post('/api/mint', async (req, res) => {
 // real Bitcoin release; a shallow burn could be reorged out after the asset is gone. Env-overridable.
 const BURN_FINALITY = { base: 3, ethereum: 12, 'base-mainnet': parseInt(process.env.BASE_MAINNET_BURN_CONFIRMATIONS || '20', 10) }
 async function verifyRepBurn(chain, txid, repAddress, amount) {
-  let r
-  if (chain === 'solana') r = await solMint.verifyBurn(txid, repAddress, toBaseUnits(floorToDecimals(amount, DEST_DECIMALS.solana), DEST_DECIMALS.solana))
-  else if (chain in DEST_DECIMALS) r = await evmMint.verifyBurn(chain, txid, repAddress, floorToDecimals(amount, DEST_DECIMALS[chain]))
-  else return { valid: false, reason: 'unsupported source chain' }
+  let r, wantBase
+  if (chain === 'solana') {
+    wantBase = BigInt(toBaseUnits(floorToDecimals(amount, DEST_DECIMALS.solana), DEST_DECIMALS.solana))
+    r = await solMint.verifyBurn(txid, repAddress, wantBase.toString())
+  } else if (chain in DEST_DECIMALS) {
+    const tok = floorToDecimals(amount, DEST_DECIMALS[chain])
+    wantBase = BigInt(_ethers.parseUnits(String(tok), 18).toString()) // the evm verifier compares at 18dp
+    r = await evmMint.verifyBurn(chain, txid, repAddress, tok)
+  } else return { valid: false, reason: 'unsupported source chain' }
   if (!r || !r.valid) return r || { valid: false, reason: 'burn verification failed' }
+  // R04/F10 (audit): EXACT-amount entitlement. The on-chain burn must EQUAL the requested amount, not
+  // merely be ≥ it — otherwise a partial redeem/move consumes the whole (larger) one-shot burn and
+  // strands the remainder. Burn EXACTLY what you redeem/move.
+  if (r.burned != null && BigInt(r.burned) !== wantBase)
+    return { valid: false, reason: `on-chain burn is ${r.burned} base units, but you requested ${wantBase} — burn EXACTLY the amount you redeem/move`, exact: false, burned: String(r.burned) }
   // Solana finality is enforced in the verifier (queried at 'finalized'); EVM needs depth.
   if (chain !== 'solana') {
     const min = BURN_FINALITY[chain] != null ? BURN_FINALITY[chain] : 12
@@ -1868,6 +1878,12 @@ app.post('/api/stampbridge/execute', express.json(), async (req, res) => {
       const check = await verifyDepositTxid(String(burn_txid), b.src20_tick, amt, b.burn_address)
       if (!check.found) return { status: 404, body: { error: 'burn txid not found in the SRC-20 index', check } }
       if (!check.valid) return { status: 409, body: { error: 'not a valid burn (must be a TRANSFER of the exact asset to the burn address)', reason: check.reason, check } }
+      // R04/F10 (audit): EXACT entitlement — the on-chain burn to the burn address must EQUAL the claim
+      // amount. verifyDepositTxid accepts on-chain ≥ requested (fine for deposits), but for the one-shot
+      // irreversible bridge a partial claim would consume the victim's whole (larger) burn and strand the
+      // rest. Require equality here so one burn bridges exactly its own amount.
+      if (toBaseUnits(check.amt) !== toBaseUnits(amt))
+        return { status: 409, body: { error: `the on-chain burn is ${check.amt} ${displayTicker(b.src20_tick)} but you are claiming ${amt} — bridge EXACTLY the amount you burned`, burn_amount: check.amt } }
       if (!check.confirmed) return { status: 409, body: { error: `awaiting confirmations (${check.confirmations}/${CONFIRMS})`, check } }
       // SECURITY: the burn address is PUBLIC — anyone could send the SRC-20 there, or front-run a
       // burn. So the stamp is released ONLY to the on-chain SOURCE that actually burned (check.source),
