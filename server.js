@@ -503,7 +503,7 @@ const CONFIRMS = parseInt(process.env.DEPOSIT_CONFIRMATIONS || '2', 10)
 const STAMP_BRIDGE_CONFIRMS = parseInt(process.env.STAMP_BRIDGE_CONFIRMATIONS || '3', 10)
 // ACME (acme.pics) deposit finality — acme.pics surfaces confirmed sends only, but we still gate
 // on N confirmations to be reorg-safe (CORTEX reorgs undo affected ops). Configurable.
-const ACME_CONFIRMS = parseInt(process.env.ACME_CONFIRMATIONS || '1', 10)
+const ACME_CONFIRMS = parseInt(process.env.ACME_CONFIRMATIONS || '3', 10) // P1 (audit): ≥3 on mainnet wraps
 // Custody deposit address = the Emblem vault's managed BTC address (resolved at startup).
 // Real, managed, no raw key. Deposit SOLICITATION stays gated (custody.CUSTODY_LIVE) until audit.
 let VAULT_ADDR = process.env.VAULT_DEPOSIT_ADDRESS || null
@@ -732,7 +732,9 @@ async function collateralBase(canonicalId) {
   return rows.reduce((a, r) => a + toBaseUnits(r.amount), 0n)
 }
 async function redeemedBase(canonicalId) {
-  const rows = await dbQuery(`SELECT amount FROM collateral_ledger WHERE canonical_id=? AND direction='redeem'`, [canonicalId])
+  // count released + in-flight (pending) redeems; EXCLUDE 'failed' (a reserved-then-aborted release
+  // must not permanently reduce collateral). NULL status = legacy released rows → counted.
+  const rows = await dbQuery(`SELECT amount FROM collateral_ledger WHERE canonical_id=? AND direction='redeem' AND (status IS NULL OR status != 'failed')`, [canonicalId])
   return rows.reduce((a, r) => a + toBaseUnits(r.amount), 0n)
 }
 // Is a broadcast BTC tx confirmed? true=confirmed, false=in mempool (unconfirmed), null=unknown/dropped.
@@ -990,6 +992,10 @@ app.post('/api/redeem', async (req, res) => {
     if (!(chain in DEST_DECIMALS)) return res.status(400).json({ error: 'unsupported chain' })
     const asset = await getAssetByTick(tick || '')
     if (!asset) return res.status(404).json({ error: 'asset not in registry' })
+    // P0-2 (audit 2345961): this legacy endpoint only decrements SQL circulating with NO on-chain
+    // burn and NO vault release — it lies to proof-of-reserves and desyncs the solvency oracle.
+    // Real redemptions go through POST /api/custody/redeem (burn-proof). Preview/operator only.
+    if (!PREVIEW && !isOperator(req)) return res.status(403).json({ error: 'legacy accounting-only redeem is disabled — use POST /api/custody/redeem (on-chain burn proof required). Operator/preview override only.' })
     const out = await withAssetLock(asset.id, async () => {
       const burnBase = toBaseUnits(amount)
       const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
@@ -1245,8 +1251,10 @@ app.get('/api/wrap/route', async (req, res) => {
       vault_address: VAULT_ADDR,
       min_confirmations: minConf,
       fees, target_chains, reserves, market,
-      preview: true,
-      network_note: 'Representations + AMM are on testnet (Base Sepolia / Solana devnet) in this preview. Bitcoin custody is mainnet.',
+      preview: !repByChain['base-mainnet'], // LIVE once a Base-mainnet rep exists for this asset
+      network_note: repByChain['base-mainnet']
+        ? 'LIVE on Base mainnet — representation tradeable on Uniswap V2. Bitcoin custody is mainnet. (Other testnet reps may also exist.)'
+        : 'Representations + AMM are on testnet (Base Sepolia / Solana devnet). Bitcoin custody is mainnet.',
       steps,
       detect_url: `api/custody/detect?protocol=${encodeURIComponent(proto)}&tick=${encodeURIComponent(asset.exact_ticker)}`,
       app_url: `/pub/${GROUP}/stampyswap/`,
@@ -1264,7 +1272,7 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
     if (!tick || !receive_address) return res.status(400).json({ error: 'tick, receive_address required' })
     const amt = parseAmount(amount); if (!amt) return res.status(400).json({ error: 'amount must be a positive number' })
     if (!VAULT_ADDR) return res.status(503).json({ error: 'custody address not provisioned' })
-    const asset = await getAssetByTick(tick)
+    const asset = await resolveAsset(tick) // P1 (audit): honor "acme:TICKER" so collided names (ACME/SOAP) resolve to the right protocol
     if (!asset) return res.status(404).json({ error: 'asset not in registry' })
     if (!asset.whitelisted) return res.status(403).json({ error: 'asset not whitelisted' })
     // AUTHENTICATION — bind the mint to whoever controls the on-chain deposit SOURCE. Without this,
@@ -1289,6 +1297,10 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
     const out = await withAssetLock(asset.id, async () => {
       let confirmations = CONFIRMS, ledgerKey = txid ? String(txid) : null
       if (asset.source_protocol === 'counterparty') {
+        // FREEZE (P1 audit 2345961): XCP credit is a vault-balance DELTA, not per-tx attribution —
+        // a past sender of this asset could claim leftover uncredited vault balance. Operator-only
+        // until rewritten to true per-tx attribution.
+        if (!operatorMode) return { status: 403, body: { error: 'XCP deposit→mint is temporarily operator-only pending per-tx attribution (audit) — contact the operator to credit a Counterparty deposit' } }
         // Counterparty "enhanced sends" encode the destination in OP_RETURN data (no BTC output
         // to the vault, no per-deposit txid), and balances are confirmed-only. So we credit only
         // the DELTA between the vault's confirmed balance and what we've already credited (net of
@@ -1361,20 +1373,40 @@ app.post('/api/custody/redeem', async (req, res) => {
     const asset = await getAssetByTick(tick || '')
     if (!asset) return res.status(404).json({ error: 'asset not in registry' })
     if (!custody.isLive()) return res.status(403).json({ error: 'custody redemption is gated — audited go-ahead required', gated: true })
-    // RELEASE-THEN-BURN, serialized per asset: check we have the rep, release on-chain
-    // (the risky external step), and only decrement the accounting once the release txid lands.
+    const operatorMode = isOperator(req)
+    // PROOF-OF-BURN + crash-safe release, serialized per asset (P0-1, audit 2345961). A PUBLIC caller
+    // MUST prove they burned the representation on-chain — binding the vault release to a real burn.
+    // Without it, anyone (with CUSTODY_LIVE on) could trigger releases up to `circulating` WITHOUT
+    // holding tokens = vault drain. We reserve a PENDING ledger row (keyed by burn_txid) BEFORE
+    // broadcasting, so a crash between broadcast and finalize can't double-release on retry.
+    // The operator header is an audited back-office override (no burn required).
     const out = await withAssetLock(asset.id, async () => {
       const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
       const circ = rep ? toBaseUnits(rep.circulating_supply || '0') : 0n
       if (toBaseUnits(amt) > circ) return { status: 409, body: { error: 'cannot redeem more than circulating', circulating: fromBaseUnits(circ) } }
+      const { burn_txid } = req.body || {}
+      if (!operatorMode) {
+        if (!burn_txid) return { status: 401, body: { error: 'burn_txid required — burn your representation on-chain (transfer it to the zero address), then pass the burn txid so the release is bound to a real burn' } }
+        const dup = await dbQuery('SELECT id, status FROM collateral_ledger WHERE burn_txid=?', [burn_txid])
+        if (dup.length) return { status: 409, body: { error: 'burn txid already redeemed', ledger_id: dup[0].id, ledger_status: dup[0].status } }
+        if (!rep || !rep.dest_address) return { status: 404, body: { error: `no ${chain} representation to burn against` } }
+        const burn = await verifyRepBurn(chain, burn_txid, rep.dest_address, amt)
+        if (!burn.valid) return { status: 409, body: { error: 'representation burn not verified on-chain', reason: burn.reason } }
+      }
+      // reserve a pending row BEFORE the external release (idempotency + crash-safety)
+      const pend = await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, burn_txid, status, created_at) VALUES (?, 'redeem', ?, ?, ?, 'pending', ?)`, [asset.id, amt, chain, burn_txid || null, now()])
       let release
       const redeemArgs = { tick: asset.exact_ticker, amount: amt, toAddress: to, protocol: asset.source_protocol }
       if (asset.source_protocol === 'counterparty') redeemArgs.qtyBase = counterparty.toBase(amt, asset.decimals == null ? 8 : Number(asset.decimals))
       try { release = await custody.redeem(redeemArgs) }
-      catch (e) { if (e.code === 'GATED') return { status: 403, body: { error: e.message, gated: true } }; return { status: 502, body: { error: 'release failed (nothing burned): ' + String(e.message || e) } } }
-      // release succeeded → burn the representation + record
+      catch (e) {
+        await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
+        if (e.code === 'GATED') return { status: 403, body: { error: e.message, gated: true } }
+        return { status: 502, body: { error: 'release failed (nothing decremented): ' + String(e.message || e) } }
+      }
+      // release landed → finalize: decrement circulating + mark the reserved row released
       await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(circ - toBaseUnits(amt), 18), now(), rep.id])
-      await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, btc_txid, status, created_at) VALUES (?, 'redeem', ?, ?, ?, 'released', ?)`, [asset.id, amt, chain, release.txid, now()])
+      await dbExec(`UPDATE collateral_ledger SET btc_txid=?, status='released' WHERE id=?`, [release.txid, pend.lastInsertRowid])
       return { status: 200, body: { redeemed: true, release, circulating: fromBaseUnits(circ - toBaseUnits(amt)) } }
     })
     res.status(out.status).json(out.body)
@@ -1631,6 +1663,10 @@ app.get('/api/amm/quote', async (req, res) => {
 
 // Execute a swap (protocol-signed for demo; a real router lets users sign their own).
 app.post('/api/amm/swap', async (req, res) => {
+  // P0-3 (audit 2345961): this is a PROTOCOL-SIGNED demo swap that mints reps against unused
+  // collateral for the caller — a gas drain + a way to shove pool price with protocol inventory.
+  // Operator-only. Real users trade with their OWN wallet via the Uniswap deep-link in the UI.
+  if (requireOperator(req, res)) return
   try {
     const { pool_id, token_in, amount_in, to } = req.body || {}
     const pool = (await dbQuery('SELECT * FROM pools WHERE id=?', [pool_id]))[0]

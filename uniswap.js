@@ -58,7 +58,10 @@ async function addLiquidity(chain, tokenA, tokenB, amountAWhole, amountBWhole, {
       await router.addLiquidity.staticCall(tokenA, tokenB, amtA, amtB, 0, 0, lp, deadline())
       return { preflight: true, ok: true, lp }
     }
-    const tx = await router.addLiquidity(tokenA, tokenB, amtA, amtB, 0, 0, lp, deadline(), { gasLimit: GAS.addLiquidity })
+    // slippage floor (P1 audit): min amounts = 99% of desired (protects when adding to an existing
+    // pool; harmless for the first add to a fresh pair, where the router uses the exact amounts).
+    const minA = amtA - amtA / 100n, minB = amtB - amtB / 100n
+    const tx = await router.addLiquidity(tokenA, tokenB, amtA, amtB, minA, minB, lp, deadline(), { gasLimit: GAS.addLiquidity })
     const r = await tx.wait()
     const pair = await getPair(chain, tokenA, tokenB)
     return { txHash: r.hash, pair, lp, explorer: `${c.explorer}/tx/${r.hash}` }
@@ -94,8 +97,11 @@ async function swap(chain, amountInWhole, tokenIn, tokenOut, { preflight = false
       const erc = new ethers.Contract(tokenIn, ERC20_ABI, signer)
       if ((await erc.allowance(to, c.router)) < amtIn) await (await erc.approve(c.router, amtIn, { gasLimit: GAS.approve })).wait()
     }
-    if (preflight) { await router.swapExactTokensForTokens.staticCall(amtIn, 0, [tokenIn, tokenOut], to, deadline()); return { preflight: true, ok: true } }
-    const tx = await router.swapExactTokensForTokens(amtIn, 0, [tokenIn, tokenOut], to, deadline(), { gasLimit: GAS.swap })
+    // slippage floor (P1 audit): minOut = quote − 50 bps, instead of 0 (which would accept any output)
+    const outs = await router.getAmountsOut(amtIn, [tokenIn, tokenOut])
+    const minOut = outs[1] - outs[1] * 50n / 10000n
+    if (preflight) { await router.swapExactTokensForTokens.staticCall(amtIn, minOut, [tokenIn, tokenOut], to, deadline()); return { preflight: true, ok: true } }
+    const tx = await router.swapExactTokensForTokens(amtIn, minOut, [tokenIn, tokenOut], to, deadline(), { gasLimit: GAS.swap })
     const r = await tx.wait()
     return { txHash: r.hash, explorer: `${c.explorer}/tx/${r.hash}` }
   })
