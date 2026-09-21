@@ -19,6 +19,10 @@ const ROUTER_ABI = ['function addLiquidity(address,address,uint256,uint256,uint2
 const PAIR_ABI = ['function getReserves() view returns (uint112,uint112,uint32)', 'function token0() view returns (address)', 'function token1() view returns (address)', 'function totalSupply() view returns (uint256)']
 const ERC20_ABI = ['function approve(address,uint256) returns (bool)', 'function allowance(address,address) view returns (uint256)', 'function balanceOf(address) view returns (uint256)', 'function decimals() view returns (uint8)', 'function symbol() view returns (string)']
 
+// The Emblem-managed signer does NOT auto-estimate gas — it defaults to 21000 (plain-transfer
+// gas), which reverts contract calls as "intrinsic gas too low". So we set explicit generous
+// limits on every contract call. Base gas is pennies, so headroom is free.
+const GAS = { approve: 80000n, addLiquidity: 600000n, swap: 400000n }
 function cfg(chain) { const c = UNI[chain]; if (!c) throw new Error('uniswap V2 not configured for ' + chain); return c }
 function isSupported(chain) { return chain in UNI }
 function deadline() { return Math.floor(Date.now() / 1000) + 1200 } // 20 min
@@ -46,7 +50,7 @@ async function addLiquidity(chain, tokenA, tokenB, amountAWhole, amountBWhole, {
     if (!preflight) {
       for (const [t, amt] of [[tokenA, amtA], [tokenB, amtB]]) {
         const erc = new ethers.Contract(t, ERC20_ABI, signer)
-        if ((await erc.allowance(lp, c.router)) < amt) await (await erc.approve(c.router, amt)).wait()
+        if ((await erc.allowance(lp, c.router)) < amt) await (await erc.approve(c.router, amt, { gasLimit: GAS.approve })).wait()
       }
     }
     if (preflight) {
@@ -54,7 +58,7 @@ async function addLiquidity(chain, tokenA, tokenB, amountAWhole, amountBWhole, {
       await router.addLiquidity.staticCall(tokenA, tokenB, amtA, amtB, 0, 0, lp, deadline())
       return { preflight: true, ok: true, lp }
     }
-    const tx = await router.addLiquidity(tokenA, tokenB, amtA, amtB, 0, 0, lp, deadline())
+    const tx = await router.addLiquidity(tokenA, tokenB, amtA, amtB, 0, 0, lp, deadline(), { gasLimit: GAS.addLiquidity })
     const r = await tx.wait()
     const pair = await getPair(chain, tokenA, tokenB)
     return { txHash: r.hash, pair, lp, explorer: `${c.explorer}/tx/${r.hash}` }
@@ -88,10 +92,10 @@ async function swap(chain, amountInWhole, tokenIn, tokenOut, { preflight = false
     const router = new ethers.Contract(c.router, ROUTER_ABI, signer)
     if (!preflight) {
       const erc = new ethers.Contract(tokenIn, ERC20_ABI, signer)
-      if ((await erc.allowance(to, c.router)) < amtIn) await (await erc.approve(c.router, amtIn)).wait()
+      if ((await erc.allowance(to, c.router)) < amtIn) await (await erc.approve(c.router, amtIn, { gasLimit: GAS.approve })).wait()
     }
     if (preflight) { await router.swapExactTokensForTokens.staticCall(amtIn, 0, [tokenIn, tokenOut], to, deadline()); return { preflight: true, ok: true } }
-    const tx = await router.swapExactTokensForTokens(amtIn, 0, [tokenIn, tokenOut], to, deadline())
+    const tx = await router.swapExactTokensForTokens(amtIn, 0, [tokenIn, tokenOut], to, deadline(), { gasLimit: GAS.swap })
     const r = await tx.wait()
     return { txHash: r.hash, explorer: `${c.explorer}/tx/${r.hash}` }
   })

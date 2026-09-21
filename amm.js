@@ -6,7 +6,7 @@ const evmSigner = require('./evm-signer')
 
 const ammArtifact = require('./amm-artifact.json')
 const erc20Artifact = require('./erc20-artifact.json')
-const EXPLORER = { base: 'https://sepolia.basescan.org', ethereum: 'https://sepolia.etherscan.io' }
+const EXPLORER = { base: 'https://sepolia.basescan.org', ethereum: 'https://sepolia.etherscan.io', 'base-mainnet': 'https://basescan.org' }
 
 async function deployPair(chain, token0, token1) {
   return evmSigner.serialize(chain, async () => {

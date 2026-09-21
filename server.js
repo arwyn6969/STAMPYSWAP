@@ -699,7 +699,7 @@ setInterval(relayerSweep, 60000).unref?.()
 //        circulating(representation)  ≤  confirmed collateral  ≤  source max supply
 // Every mint rounds the amount DOWN to the destination chain's precision, so a
 // representation can never exceed its backing. Nothing here can over-issue.
-const DEST_DECIMALS = { solana: 9, base: 18, ethereum: 18 } // SPL conventionally ≤9; EVM 18
+const DEST_DECIMALS = { solana: 9, base: 18, ethereum: 18, 'base-mainnet': 18 } // SPL conventionally ≤9; EVM 18
 // SPL token amounts are u64. Large-supply SRC-20 tokens overflow at 9 dp, so pick the
 // largest decimals ≤9 where the WHOLE max supply still fits in u64 (e.g. BOSHI 540B → 7dp).
 const U64_MAX = (1n << 64n) - 1n
@@ -1150,6 +1150,7 @@ const WRAP_CHAIN_META = {
   solana:   { chain_label: 'Solana Devnet',   is_testnet: true, explorer: 'https://explorer.solana.com/address/%s?cluster=devnet' },
   base:     { chain_label: 'Base Sepolia',     is_testnet: true, explorer: 'https://sepolia.basescan.org/token/%s' },
   ethereum: { chain_label: 'Ethereum Sepolia', is_testnet: true, explorer: 'https://sepolia.etherscan.io/token/%s' },
+  'base-mainnet': { chain_label: 'Base', is_testnet: false, explorer: 'https://basescan.org/token/%s' },
 }
 app.get('/api/wrap/route', async (req, res) => {
   try {

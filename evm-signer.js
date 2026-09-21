@@ -10,6 +10,7 @@ const KEYPATH = path.join(__dirname, '.evm-deployer.json')
 const RPC = {
   base: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
   ethereum: process.env.ETH_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com',
+  'base-mainnet': process.env.BASE_MAINNET_RPC || 'https://mainnet.base.org',
 }
 
 function loadWallet() {
