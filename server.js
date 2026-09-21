@@ -947,6 +947,11 @@ async function verifyRepBurn(chain, txid, repAddress, amount) {
   return { valid: false, reason: 'unsupported source chain' }
 }
 app.post('/api/move', async (req, res) => {
+  // P2 (audit 2345961): move mints dest tokens but does NOT bind the burn to the receiver, so a
+  // caller could front-run someone's burn and claim the minted output (+ it's a gas drain). Like
+  // the other mint paths, operator-only for now. A bound, user-signed cross-chain move is the
+  // production feature (burner signs burn_txid→receive_address, like deposit binding).
+  if (requireOperator(req, res)) return
   try {
     const { tick, from_chain, to_chain, burn_txid, to_address } = req.body || {}
     const amount = parseAmount((req.body || {}).amount)

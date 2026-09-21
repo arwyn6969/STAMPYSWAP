@@ -18,6 +18,8 @@ const N_OWNERS = parseInt(process.env.SAFE_OWNERS || '3', 10)
 function deployerKey() { const k = JSON.parse(fs.readFileSync(DEPLOYER_PATH, 'utf8')); return k.privateKey || k }
 function loadOwners() {
   if (fs.existsSync(OWNERS_PATH)) return JSON.parse(fs.readFileSync(OWNERS_PATH, 'utf8'))
+  // FAIL LOUD (audit): never silently generate new Safe owners — that would change the vault.
+  if (process.env.STAMPY_ALLOW_KEYGEN !== '1') throw new Error(`FATAL: Safe owners ${OWNERS_PATH} missing — refusing to auto-generate new owners. Restore it, or set STAMPY_ALLOW_KEYGEN=1.`)
   const owners = Array.from({ length: N_OWNERS }, () => ethers.Wallet.createRandom().privateKey)
   fs.writeFileSync(OWNERS_PATH, JSON.stringify(owners), { mode: 0o600 })
   return owners

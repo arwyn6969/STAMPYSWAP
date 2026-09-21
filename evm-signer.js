@@ -15,6 +15,9 @@ const RPC = {
 
 function loadWallet() {
   try { if (fs.existsSync(KEYPATH)) return new ethers.Wallet(JSON.parse(fs.readFileSync(KEYPATH, 'utf8')).privateKey) } catch (_) {}
+  // FAIL LOUD (audit): never silently generate a NEW deployer key — a lost/unrestored key file
+  // would strand funds at the old address. Set STAMPY_ALLOW_KEYGEN=1 only to intentionally init.
+  if (process.env.STAMPY_ALLOW_KEYGEN !== '1') throw new Error(`FATAL: EVM deployer key ${KEYPATH} missing/unreadable — refusing to auto-generate a new key. Restore it, or set STAMPY_ALLOW_KEYGEN=1 to initialize a fresh one.`)
   const w = ethers.Wallet.createRandom()
   try { fs.writeFileSync(KEYPATH, JSON.stringify({ privateKey: w.privateKey, address: w.address }), { mode: 0o600 }) } catch (_) {}
   return new ethers.Wallet(w.privateKey)

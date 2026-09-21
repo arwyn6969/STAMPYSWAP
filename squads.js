@@ -21,6 +21,8 @@ const N_MEMBERS = parseInt(process.env.SQUADS_MEMBERS || '3', 10)
 function loadFeePayer() { return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(FEEPATH, 'utf8')))) }
 function loadMembers() {
   if (fs.existsSync(MEMBERS_PATH)) return JSON.parse(fs.readFileSync(MEMBERS_PATH, 'utf8')).map(s => Keypair.fromSecretKey(Uint8Array.from(s)))
+  // FAIL LOUD (audit): never silently generate new multisig members — that would change the vault.
+  if (process.env.STAMPY_ALLOW_KEYGEN !== '1') throw new Error(`FATAL: Squads members ${MEMBERS_PATH} missing — refusing to auto-generate new signers. Restore it, or set STAMPY_ALLOW_KEYGEN=1.`)
   const members = Array.from({ length: N_MEMBERS }, () => Keypair.generate())
   fs.writeFileSync(MEMBERS_PATH, JSON.stringify(members.map(k => Array.from(k.secretKey))), { mode: 0o600 })
   return members

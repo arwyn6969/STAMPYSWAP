@@ -14,6 +14,8 @@ const DECIMALS = 9
 
 function loadFeePayer() {
   try { if (fs.existsSync(KEYPATH)) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(KEYPATH, 'utf8')))) } catch (_) {}
+  // FAIL LOUD (audit): never silently generate a new fee-payer key. Restore the file, or opt in.
+  if (process.env.STAMPY_ALLOW_KEYGEN !== '1') throw new Error(`FATAL: Solana fee-payer key ${KEYPATH} missing/unreadable — refusing to auto-generate. Restore it, or set STAMPY_ALLOW_KEYGEN=1.`)
   const kp = Keypair.generate()
   try { fs.writeFileSync(KEYPATH, JSON.stringify(Array.from(kp.secretKey)), { mode: 0o600 }) } catch (_) {}
   return kp
