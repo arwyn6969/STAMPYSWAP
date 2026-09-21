@@ -13,6 +13,7 @@ const custody = require('./custody') // Emblem Vault BTC custody (managed vault 
 const counterparty = require('./counterparty') // Counterparty (XCP) asset support
 const acme = (() => { try { return require('./acme') } catch (_) { return null } })() // ACME adapter (Phase 0: discovery only, read-only)
 const prices = require('./prices') // indicative USD/BTC pricing (SRC-20 market + XCP dispensers)
+const recovery = require('./recovery') // durable-recovery decision logic (audit R05/F06) — pure, unit-tested
 const squads = (() => { try { return require('./squads') } catch (_) { return null } })() // Squads v4 multisig (Solana authority upgrade)
 const safe = (() => { try { return require('./safe') } catch (_) { return null } })() // Safe multisig (EVM authority upgrade)
 const { Verifier: Bip322Verifier } = require('bip322-js') // Phase 5: real BIP-322 proof verification
@@ -188,6 +189,17 @@ function withAssetLock(id, fn) {
   const prev = _assetLocks.get(id) || Promise.resolve()
   const next = prev.catch(() => {}).then(fn)
   _assetLocks.set(id, next.catch(() => {}))
+  return next
+}
+// GLOBAL Bitcoin-vault lock (audit R05): every custody RELEASE (redeem / stamp-bridge / ACME) spends
+// the SAME vault's BTC UTXOs. Per-asset locks don't help — the UTXO pool is shared ACROSS assets, so
+// two different assets releasing at once could select the SAME UTXO → a double-spend (one tx dropped,
+// funds mis-accounted). Serialize ALL vault broadcasts through this single lock. Nesting order is
+// always asset-lock (outer) → btc-lock (inner) around the broadcast, so there is no deadlock.
+let _btcVaultLock = Promise.resolve()
+function withBtcVaultLock(fn) {
+  const next = _btcVaultLock.catch(() => {}).then(fn)
+  _btcVaultLock = next.catch(() => {})
   return next
 }
 
@@ -1105,19 +1117,44 @@ app.post('/api/move', async (req, res) => {
     if (!burn.valid) return res.status(409).json({ error: 'burn not verified', reason: burn.reason })
 
     const out = await withAssetLock(asset.id, async () => {
-      // PR3 shared consume-once: atomic claim across redeem AND move — a single burn can authorize
-      // only ONE action, ever (records the verified burner). Fail-closed on partial failure.
-      const claim = await consumeBurn({ chain: from_chain, txid: burn_txid, canonical_id: asset.id, purpose: 'move', owner: burn.owner, amount })
-      if (!claim.ok) return { status: 409, body: { error: 'burn already consumed by a redeem or move' } }
-      const fresh = (await dbQuery('SELECT circulating_supply FROM representations WHERE id=?', [fromRep.id]))[0]
-      const circ = toBaseUnits((fresh && fresh.circulating_supply) || '0')
-      if (toBaseUnits(amount) > circ) return { status: 409, body: { error: 'move exceeds source circulating', circulating: fromBaseUnits(circ) } }
-      // decrement source (reflects the on-chain burn) + record the move-out
-      await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(circ - toBaseUnits(amount), 18), now(), fromRep.id])
-      await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, btc_txid, status, created_at) VALUES (?, 'move-out', ?, ?, ?, 'burned', ?)`, [asset.id, amount, from_chain, burn_txid, now()])
+      // F06 (audit) — a move is: [1] verified on-chain burn (done, external) → [2] source decrement (DB)
+      // → [3] destination mint (external). A crash between 2 and 3 must be RESUMABLE without either
+      // re-decrementing the source or re-consuming the burn. The consumed_burns row is the durable
+      // marker of "step 2 done"; the dest-mint op (keyed on the BURN identity, NOT the target address,
+      // so one burn can never mint to two addresses) is the marker of "step 3 done".
+      const moveKey = recovery.moveOpKey(normTxid(from_chain, burn_txid))
+      const existing = await burnConsumed(from_chain, burn_txid)
+      const mv = recovery.resolveMoveBurn(existing, asset.id)
+      if (mv.action === 'reject')
+        return { status: 409, body: { error: 'burn already consumed by a redeem or another action' } }
+      if (mv.action === 'resume') {
+        // source already decremented + move-out recorded on the first attempt → re-drive only the
+        // destination mint. Op-guarded: completed → idempotent; reserved/reconcile → reconcile.
+      } else {
+        // mv.action === 'start' — FIRST attempt: claim the burn (atomic PK), then decrement source + move-out.
+        const claim = await consumeBurn({ chain: from_chain, txid: burn_txid, canonical_id: asset.id, purpose: 'move', owner: burn.owner, amount })
+        if (!claim.ok) return { status: 409, body: { error: 'burn already consumed (race)' } }
+        const fresh = (await dbQuery('SELECT circulating_supply FROM representations WHERE id=?', [fromRep.id]))[0]
+        const circ = toBaseUnits((fresh && fresh.circulating_supply) || '0')
+        if (toBaseUnits(amount) > circ) {
+          // the move never started → free the burn so it stays retryable (nothing was decremented yet)
+          await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(from_chain, burn_txid)]).catch(() => {})
+          return { status: 409, body: { error: 'move exceeds source circulating', circulating: fromBaseUnits(circ) } }
+        }
+        await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(circ - toBaseUnits(amount), 18), now(), fromRep.id])
+        await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, btc_txid, status, created_at) VALUES (?, 'move-out', ?, ?, ?, 'burned', ?)`, [asset.id, amount, from_chain, burn_txid, now()])
+      }
       // mint on destination (unlocked core; total circulating now back to original → solvent)
-      const m = await mintCritical(asset, amount, to_address, to_chain, `move-mint:${normTxid(from_chain, burn_txid)}:${to_chain}:${to_address}`)
-      if (m.status !== 200) return { status: m.status, body: { error: 'source burned but destination mint failed (retryable): ' + (m.body.error || ''), source_decremented: true } }
+      const m = await mintCritical(asset, amount, to_address, to_chain, moveKey)
+      if (m.status !== 200) {
+        // The source is CORRECTLY decremented (the burn really happened on-chain) — we do NOT roll that
+        // back. The retryable unit is JUST the destination mint: resubmit the SAME burn_txid and the
+        // RESUME path above re-drives step 3. Uncertain outcome → reconcile (no auto-retry).
+        const uncertain = !!(m.body && m.body.reconcile)
+        return { status: m.status, body: {
+          error: 'source burned' + (uncertain ? ' — destination mint outcome UNCERTAIN, flagged for reconciliation' : ' — destination mint failed; resubmit the SAME burn_txid to complete the move') + ': ' + (m.body.error || ''),
+          reconcile: uncertain, resumable: !uncertain, source_decremented: true } }
+      }
       return { status: 200, body: { moved: true, tick: asset.exact_ticker, amount, from: from_chain, to: to_chain, burn_txid, destination: m.body } }
     })
     res.status(out.status).json(out.body)
@@ -1509,24 +1546,46 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
         if (boundSource && String(check.source) !== boundSource) return { status: 403, body: { error: `this deposit was made by ${check.source}, not the address you signed with (${boundSource}) — only the depositor can claim the mint` } }
         confirmations = check.confirmations
       }
-      // idempotency: a given deposit credits collateral once (checked inside the lock)
-      const dup = await dbQuery('SELECT id FROM collateral_ledger WHERE btc_txid=?', [ledgerKey])
-      if (dup.length) return { status: 409, body: { error: 'deposit already credited', ledger_id: dup[0].id } }
-      const ins = await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, btc_txid, vault_address, confirmations, status, created_at)
-        VALUES (?, 'deposit', ?, ?, ?, ?, 'confirmed', ?)`, [asset.id, amt, ledgerKey, VAULT_ADDR, confirmations, now()])
+      // ---- F06 (audit): idempotency keyed on the durable OP, not just the credit row ----
+      // The credit (collateral_ledger) and the mint (op) are two writes; a crash between them must be
+      // RESUMABLE, not permanently blocked. The op — deterministic per DEPOSIT identity (ledgerKey),
+      // deliberately NOT per-recipient, so one credit can never mint to two addresses — is the source
+      // of truth for "did this deposit's mint finish".
+      const opKey = recovery.depositOpKey(ledgerKey)
+      const priorOp = (await dbQuery('SELECT * FROM operations WHERE op_key=?', [opKey]))[0]
+      const decision = recovery.resolveDepositOp(priorOp, receive_address)
+      if (decision.action === 'done') // truly done → idempotent
+        return { status: 409, body: { error: 'deposit already credited and minted', minted: JSON.parse((priorOp && priorOp.result_json) || '{}') } }
+      if (decision.action === 'retarget') // in-flight, claimed for a different address → deposit spoken for
+        return { status: 409, body: { error: `deposit already claimed for ${priorOp.chain}/${priorOp.recipient} — cannot re-target`, reconcile: true, op: opKey } }
+      if (decision.action === 'reconcile') // reserved/reconcile → outcome unknown, never auto-retry
+        return { status: 409, body: { error: 'a prior mint for this deposit did not complete — awaiting reconciliation (not auto-retried)', reconcile: true, op: opKey } }
+      // decision.action === 'proceed'
+      // No op yet → either the first attempt, or a crash AFTER the credit but BEFORE the mint reserved
+      // (nothing was minted). Both are safe to (re)drive: ensure the credit exists (unique index makes a
+      // re-insert a harmless no-op), then mint. The BIP-322 binding already proved the depositor chose
+      // THIS receive_address, so resuming to it is authorized.
+      const priorCredit = (await dbQuery('SELECT id FROM collateral_ledger WHERE btc_txid=?', [ledgerKey]))[0]
+      let creditId = priorCredit ? priorCredit.id : null
+      if (!priorCredit) {
+        const ins = await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, btc_txid, vault_address, confirmations, status, created_at)
+          VALUES (?, 'deposit', ?, ?, ?, ?, 'confirmed', ?)`, [asset.id, amt, ledgerKey, VAULT_ADDR, confirmations, now()])
+        creditId = ins.lastInsertRowid
+      }
       let m
-      try { m = await mintCritical(asset, amt, receive_address, chain, `deposit-mint:${ledgerKey}:${chain}:${receive_address}`) } // op-guarded (F07)
+      try { m = await mintCritical(asset, amt, receive_address, chain, opKey) } // op-guarded (F07): reserve→mint→complete
       catch (e) {
         // audit: an UNEXPECTED throw after the credit is an UNKNOWN outcome. KEEP the credit (never
         // revert a possibly-successful mint → no circulating>collateral) and flag for reconciliation.
         return { status: 502, body: { error: 'mint threw — deposit credit kept (backing preserved), outcome uncertain, flagged for reconciliation: ' + String(e.message || e), reconcile: true } }
       }
       if (m.status !== 200) {
-        // F06: definite pre-send failure (no reconcile flag) → revert the credit so the deposit can be
-        // retried. UNCERTAIN outcome (reconcile) → KEEP the credit (the mint may have landed).
+        // F06: definite pre-send failure (no reconcile flag → opFail already freed the op) → revert the
+        // credit so the deposit can be retried clean. UNCERTAIN (reconcile) → KEEP credit + op stays for
+        // reconciliation. Only delete a credit WE inserted this call (never a pre-existing resume credit).
         const uncertain = !!(m.body && m.body.reconcile)
-        if (!uncertain) await dbExec('DELETE FROM collateral_ledger WHERE id=?', [ins.lastInsertRowid]).catch(() => {})
-        return { status: m.status, body: { deposit_reverted: !uncertain, reconcile: uncertain, mint: m.body } }
+        if (!uncertain && !priorCredit && creditId != null) await dbExec('DELETE FROM collateral_ledger WHERE id=?', [creditId]).catch(() => {})
+        return { status: m.status, body: { deposit_reverted: !uncertain && !priorCredit, reconcile: uncertain, mint: m.body } }
       }
       return { status: 200, body: { deposit: { key: ledgerKey, confirmations, protocol: asset.source_protocol }, mint: m.body } }
     })
@@ -1580,7 +1639,9 @@ app.post('/api/custody/redeem', async (req, res) => {
       // pass authoritative base units so custody asserts the composed quantity for BOTH protocols (audit)
       if (asset.source_protocol === 'counterparty') redeemArgs.qtyBase = counterparty.toBase(amt, redeemDec)
       if (asset.source_protocol === 'acme' && acme) redeemArgs.qtyBase = acme.toBase(amt, redeemDec)
-      try { release = await custody.redeem(redeemArgs) }
+      // R05: serialize the actual vault broadcast through the GLOBAL BTC lock — all assets share the
+      // vault's UTXO set, so concurrent releases must not race for the same UTXO (double-spend).
+      try { release = await withBtcVaultLock(() => custody.redeem(redeemArgs)) }
       catch (e) {
         // R02 (audit): ONLY a proven pre-send failure is retryable. `GATED` means custody is off →
         // nothing was composed/signed/broadcast → safe to free the reservation. ANY OTHER throw is an
@@ -1762,7 +1823,8 @@ app.post('/api/stampbridge/execute', express.json(), async (req, res) => {
       if (held < BigInt(rel)) return { status: 409, body: { error: `vault holds ${held} ${b.stamp_asset}, cannot release ${rel}`, stamp_in_vault: held.toString() } }
       let release
       try {
-        release = await custody.redeem({ tick: b.stamp_asset, amount: rel, toAddress: check.source, protocol: b.stamp_protocol, qtyBase: counterparty.toBase(rel, 0) })
+        // R05: shared-vault UTXO serialization — same global BTC lock as redeem.
+        release = await withBtcVaultLock(() => custody.redeem({ tick: b.stamp_asset, amount: rel, toAddress: check.source, protocol: b.stamp_protocol, qtyBase: counterparty.toBase(rel, 0) }))
       } catch (e) {
         if (e.code === 'GATED') return { status: 403, body: { error: e.message, gated: true } }
         return { status: 502, body: { error: 'stamp release failed (burn is already permanent on-chain; retry release): ' + String(e.message || e) } }

@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "lint": "eslint server.js custody.js acme.js counterparty.js evm-mint.js sol-mint.js uniswap.js amm.js evm-signer.js squads.js safe.js prices.js"
+    "test": "node --test",
+    "lint": "eslint server.js custody.js acme.js counterparty.js evm-mint.js sol-mint.js uniswap.js amm.js evm-signer.js squads.js safe.js prices.js recovery.js"
   },
   "dependencies": {
     "@emblemvault/auth-sdk": "^2.3.18",
