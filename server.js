@@ -899,7 +899,7 @@ async function performMint(tick, amount, receive_address, chain = 'solana', asse
   // other mints of the same asset (they share one collateral pool across all chains).
   return withAssetLock(asset.id, () => mintCritical(asset, amount, receive_address, chain))
 }
-async function mintCritical(asset, amount, receive_address, chain) {
+async function mintCritical(asset, amount, receive_address, chain, opKey = null) {
   // Effective on-chain decimals: EVM = 18; Solana sized so max_supply fits u64 (≤9, e.g. BOSHI→7).
   // Round the mint DOWN to THIS precision so DB accounting == on-chain supply exactly (no drift),
   // and so the representation can never exceed its backing.
@@ -948,7 +948,7 @@ async function mintCritical(asset, amount, receive_address, chain) {
       // UNFUNDED = nothing was signed/sent (pre-send) → retryable; anything else is uncertain → reconcile.
       if (opKey) await (e.code === 'UNFUNDED' ? opFail(opKey) : opReconcile(opKey))
       if (e.code === 'UNFUNDED') return { status: 503, body: { error: e.message, needs_funding: e.authority, chain } }
-      return { status: 502, body: { error: 'solana mint failed (outcome uncertain — reconcile before retry): ' + String(e.message || e) } }
+      return { status: 502, body: { error: 'solana mint failed (outcome uncertain — reconcile before retry): ' + String(e.message || e), reconcile: true } }
     }
   } else if (evmMint.isSupported(chain)) {
     try {
@@ -972,7 +972,7 @@ async function mintCritical(asset, amount, receive_address, chain) {
       if (opKey) await ((e.code === 'UNFUNDED' || e.code === 'BADADDR') ? opFail(opKey) : opReconcile(opKey))
       if (e.code === 'UNFUNDED') return { status: 503, body: { error: e.message, needs_funding: e.authority, chain } }
       if (e.code === 'BADADDR') return { status: 400, body: { error: e.message } }
-      return { status: 502, body: { error: `${chain} mint failed (outcome uncertain — reconcile before retry): ` + String(e.message || e) } }
+      return { status: 502, body: { error: `${chain} mint failed (outcome uncertain — reconcile before retry): ` + String(e.message || e), reconcile: true } }
     }
   } else return { status: 400, body: { error: 'unsupported destination chain' } }
 
@@ -1495,10 +1495,16 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
       if (dup.length) return { status: 409, body: { error: 'deposit already credited', ledger_id: dup[0].id } }
       const ins = await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, btc_txid, vault_address, confirmations, status, created_at)
         VALUES (?, 'deposit', ?, ?, ?, ?, 'confirmed', ?)`, [asset.id, amt, ledgerKey, VAULT_ADDR, confirmations, now()])
-      const m = await mintCritical(asset, amt, receive_address, chain, `deposit-mint:${ledgerKey}:${chain}:${receive_address}`) // op-guarded (F07)
+      let m
+      try { m = await mintCritical(asset, amt, receive_address, chain, `deposit-mint:${ledgerKey}:${chain}:${receive_address}`) } // op-guarded (F07)
+      catch (e) {
+        // audit: an UNEXPECTED throw after the credit is an UNKNOWN outcome. KEEP the credit (never
+        // revert a possibly-successful mint → no circulating>collateral) and flag for reconciliation.
+        return { status: 502, body: { error: 'mint threw — deposit credit kept (backing preserved), outcome uncertain, flagged for reconciliation: ' + String(e.message || e), reconcile: true } }
+      }
       if (m.status !== 200) {
-        // F06: if the mint definitely did NOT happen (pre-send failure) undo the credit so the deposit
-        // can be retried. If the outcome is UNCERTAIN (reconcile) keep the credit for reconciliation.
+        // F06: definite pre-send failure (no reconcile flag) → revert the credit so the deposit can be
+        // retried. UNCERTAIN outcome (reconcile) → KEEP the credit (the mint may have landed).
         const uncertain = !!(m.body && m.body.reconcile)
         if (!uncertain) await dbExec('DELETE FROM collateral_ledger WHERE id=?', [ins.lastInsertRowid]).catch(() => {})
         return { status: m.status, body: { deposit_reverted: !uncertain, reconcile: uncertain, mint: m.body } }
