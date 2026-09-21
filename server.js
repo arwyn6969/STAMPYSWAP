@@ -20,6 +20,30 @@ const { Verifier: Bip322Verifier } = require('bip322-js') // Phase 5: real BIP-3
 const app = express()
 app.use(express.json({ limit: '64kb' })) // bound request bodies
 
+// ============================================================================
+// MAINTENANCE CONTAINMENT — audit 2345961 (repair plan PR1). ONE enforcement point,
+// before any DB write or signer call, that disables EVERY value-moving / accounting-
+// changing route while the audit remediation is completed. A single choke-point so no
+// vulnerable route (incl. legacy intent paths F03) can be forgotten. The operator header
+// bypasses for reviewed back-office/repair work. Reads + discovery stay available; the
+// already-deployed Uniswap pool keeps trading independently. Toggle: STAMPY_MAINTENANCE=0.
+// ============================================================================
+const MAINTENANCE = process.env.STAMPY_MAINTENANCE !== '0' // default ON (contained)
+const CONTAINED_PATTERNS = [
+  /^\/api\/redeem$/, /^\/api\/custody\/redeem$/, /^\/api\/custody\/verify-deposit$/,
+  /^\/api\/mint$/, /^\/api\/mint\/migrate-authority$/, /^\/api\/move$/,
+  /^\/api\/amm\/(create|swap|deploy-mock)$/, /^\/api\/preview\/confirm-deposit$/,
+  /^\/api\/bridge\/intent(\/.*)?$/,          // create + :id (poll) + :id/txid (F03) — a GET here is NOT safe
+  /^\/api\/stampbridge\/execute$/,
+]
+app.use((req, res, next) => {
+  if (!MAINTENANCE) return next()
+  if (isOperator(req)) return next() // reviewed back-office override (hoisted fn)
+  if (CONTAINED_PATTERNS.some(r => r.test(req.path)))
+    return res.status(503).json({ maintenance: true, error: 'StampySwap is in maintenance while a security audit is remediated — deposits, mints, moves, redemptions, pool ops and legacy intent paths are temporarily disabled. Existing on-chain balances and Uniswap trading are unaffected.' })
+  next()
+})
+
 // ---- Rate limiting for state-changing / gas-spending endpoints ----
 // LESSON (devnet): the mint/pool/swap endpoints trigger REAL on-chain txs paid by our
 // keys. Public + unauthenticated = drainable. Sliding-window limits (global, since all
@@ -56,6 +80,10 @@ app.use((req, res, next) => {
     return res.status(429).json({ error: 'global on-chain op ceiling reached (120/hr) — protects the gas budget' })
   next()
 })
+
+// Read-only service status — lets the UI show a maintenance banner + hide unsafe actions.
+app.get('/api/status', (_req, res) => res.json({ service: MAINTENANCE ? 'maintenance' : 'live', maintenance: MAINTENANCE,
+  message: MAINTENANCE ? 'Security hardening in progress — deposits, mints, moves, redemptions and pool operations are temporarily disabled. Existing balances + Uniswap trading are unaffected.' : 'live' }))
 
 const PORT = process.env.PORT || 3000
 const STAMP = 'https://stampchain.io/api/v2'
@@ -673,6 +701,7 @@ app.post('/api/bridge/intent/:id/txid', async (req, res) => {
 // Lightweight background sweep — only touches PENDING/DETECTED intents; no-op when idle.
 let sweeping = false
 async function relayerSweep() {
+  if (MAINTENANCE) return // audit PR1: legacy intent sweep disabled during containment
   if (sweeping) return
   sweeping = true
   try {

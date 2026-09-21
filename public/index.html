@@ -277,6 +277,10 @@
   </div>
 </div></div>
 
+<div id="maint-banner" style="display:none;position:sticky;top:0;z-index:60;background:#7a1f1f;color:#ffe3e3;padding:10px 16px;text-align:center;font-size:13px;line-height:1.5;border-bottom:1px solid #a33">
+  <b>⚠️ Service in maintenance</b> — a security audit is being remediated. Deposits, mints, cross-chain moves, redemptions and pool operations are <b>temporarily disabled</b>. Your custodied assets are safe and the deployed Uniswap market keeps trading.
+</div>
+
 <div class="wrap">
   <section class="hero">
     <div class="kick">🔒 Emblem-Vault custody · proven on-chain</div>
@@ -1020,6 +1024,21 @@ async function loadHero(){
   }catch(e){}
 }
 loadHero()
+// Maintenance mode (audit containment): show banner + disable value-action controls. The server
+// enforces this regardless; the UI must reflect it so nothing looks operable when it isn't.
+async function loadStatus(){
+  try{
+    const s = await fetch('api/status').then(r=>r.json())
+    if(!s || !s.maintenance) return
+    const b=document.getElementById('maint-banner'); if(b) b.style.display='block'
+    const RISK=/verifyAndMint|doRealRedeem|doRedeem|createPool|doSwap|Swap\(|doMove|Move\(|Mint\(|Intent|confirmDeposit|execStampBridge|quoteStampBridge|deployMock|Simulate/i
+    document.querySelectorAll('button, a.btn2').forEach(el=>{
+      const h=(el.getAttribute('onclick')||'')+' '+(el.id||'')+' '+(el.textContent||'')
+      if(RISK.test(h)){ el.setAttribute('disabled','true'); el.style.opacity='.4'; el.style.pointerEvents='none'; el.title='Disabled during maintenance' }
+    })
+  }catch(e){}
+}
+loadStatus()
 
 // ---------- Auto-fill address fields from the connected wallet ----------
 // Ties wallet login to the workflow: a connected BTC wallet fills BTC destinations (redeem,
