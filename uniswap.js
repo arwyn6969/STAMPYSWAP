@@ -82,7 +82,7 @@ async function quoteOut(chain, amountInWhole, tokenIn, tokenOut) {
   return ethers.formatUnits(outs[1], decOut)
 }
 
-async function swap(chain, amountInWhole, tokenIn, tokenOut, { preflight = false } = {}) {
+async function swap(chain, amountInWhole, tokenIn, tokenOut, { preflight = false, slippageBps = 50 } = {}) {
   return evmSigner.serialize(chain, async () => {
     const c = cfg(chain)
     const signer = await evmSigner.emblemSigner(chain)
@@ -90,12 +90,14 @@ async function swap(chain, amountInWhole, tokenIn, tokenOut, { preflight = false
     const decIn = await _dec(chain, tokenIn)
     const amtIn = ethers.parseUnits(String(amountInWhole), decIn)
     const router = new ethers.Contract(c.router, ROUTER_ABI, signer)
+    const quoted = await router.getAmountsOut(amtIn, [tokenIn, tokenOut])
+    const minOut = quoted[1] * BigInt(10000 - slippageBps) / 10000n
     if (!preflight) {
       const erc = new ethers.Contract(tokenIn, ERC20_ABI, signer)
       if ((await erc.allowance(to, c.router)) < amtIn) await (await erc.approve(c.router, amtIn, { gasLimit: GAS.approve })).wait()
     }
-    if (preflight) { await router.swapExactTokensForTokens.staticCall(amtIn, 0, [tokenIn, tokenOut], to, deadline()); return { preflight: true, ok: true } }
-    const tx = await router.swapExactTokensForTokens(amtIn, 0, [tokenIn, tokenOut], to, deadline(), { gasLimit: GAS.swap })
+    if (preflight) { await router.swapExactTokensForTokens.staticCall(amtIn, minOut, [tokenIn, tokenOut], to, deadline()); return { preflight: true, ok: true, minOut: minOut.toString() } }
+    const tx = await router.swapExactTokensForTokens(amtIn, minOut, [tokenIn, tokenOut], to, deadline(), { gasLimit: GAS.swap })
     const r = await tx.wait()
     return { txHash: r.hash, explorer: `${c.explorer}/tx/${r.hash}` }
   })

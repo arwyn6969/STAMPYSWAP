@@ -1,0 +1,120 @@
+--- a/server.js
++++ b/server.js
+@@ -391,10 +391,17 @@
+   try { const f = path.join(__dirname, '.operator-token'); if (_fs.existsSync(f)) return _fs.readFileSync(f, 'utf8').trim() } catch (_) {}
+   return process.env.OPERATOR_TOKEN || null
+ }
++function tokensEqual(a, b) {
++  if (!a || !b) return false
++  const aa = Buffer.from(String(a))
++  const bb = Buffer.from(String(b))
++  if (aa.length !== bb.length) return false
++  try { return crypto.timingSafeEqual(aa, bb) } catch (_) { return false }
++}
+ // A request is "operator" if it carries the matching token. Used to gate PROTOCOL-FUNDED actions
+ // (direct mint, pool seeding) that spend protocol gas / mint against protocol collateral — those
+ // must never be publicly callable (an attacker could mint themselves free backed reps, or drain gas).
+-function isOperator(req) { const t = operatorToken(); return !!(t && req.headers['x-operator-token'] === t) }
++function isOperator(req) { const t = operatorToken(); return !!(t && tokensEqual(req.headers['x-operator-token'], t)) }
+ // Solana mint authority mode: 'emblem' (single managed signer, default) or 'squads' (M-of-N
+ // multisig). Togglable via env SOLANA_AUTHORITY or a .solana-authority file (server-side, 404 web).
+ function solanaAuthorityMode() {
+@@ -890,7 +897,7 @@
+     try {
+       const disp = displayTicker(asset.exact_ticker)
+       const symbol = /^[!-~]+$/.test(disp) ? disp.replace(/[^A-Za-z0-9$_-]/g, '').slice(0, 11) || ('SRC' + asset.id) : ('SRC' + asset.id)
+-      const srcOrigin = `bitcoin:src-20:${asset.exact_ticker}:${asset.deploy_tx || ''}`
++      const srcOrigin = `bitcoin:${asset.source_protocol || 'src-20'}:${asset.exact_ticker}:${asset.deploy_tx || ''}`
+       const useSafe = evmAuthorityMode() === 'safe' && safe
+       if (useSafe) {
+         // Authority = Safe M-of-N. Ensure a Safe-owned rep exists, then mint via the Safe (owners sign).
+@@ -919,12 +926,13 @@
+   await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, dest_tx, status, created_at)
+     VALUES (?, 'mint', ?, ?, ?, ?, ?)`, [asset.id, mintAmt, chain, signature, real ? 'minted' : 'simulated', now()])
+ 
+-  return { status: 200, body: { minted: true, real, chain, network: chain === 'solana' ? 'devnet' : 'testnet',
++  const networkLabel = chain === 'solana' ? 'devnet' : (chain === 'base-mainnet' ? 'mainnet' : 'testnet')
++  return { status: 200, body: { minted: true, real, chain, network: networkLabel,
+     tick: asset.exact_ticker, amount_requested: String(amount), amount_minted: mintAmt, rounded: mintAmt !== String(amount),
+     dest_decimals: destDec, mint_address: mintAddr, receive_address, signature, explorer,
+     circulating: fromBaseUnits(newCirc), total_circulating: fromBaseUnits(totalCirculating + mintBase),
+     collateral: fromBaseUnits(availableCollateral),
+-    note: real ? (chain === 'solana' ? 'Real SPL token minted on Solana devnet; solvency-checked.' : `Real ERC-20 minted on ${chain} testnet; solvency-checked.`) : 'accounting real; on-chain step unavailable.' } }
++    note: real ? (chain === 'solana' ? 'Real SPL token minted on Solana devnet; solvency-checked.' : `Real ERC-20 minted on ${chain} ${networkLabel}; solvency-checked.`) : 'accounting real; on-chain step unavailable.' } }
+ }
+ app.post('/api/mint', async (req, res) => {
+   // Direct mint = minting a rep against the protocol's collateral to an ARBITRARY recipient. That
+@@ -983,6 +991,10 @@
+ 
+ // Redemption — burn representation, release collateral. Enforces circulating ≥ amount.
+ app.post('/api/redeem', async (req, res) => {
++  // Accounting-only burn. Does NOT verify an on-chain burn and does NOT release vault
++  // assets. Public callers can desync circulating vs real supply and brick custody
++  // redeem. Real user path is /api/custody/redeem (burn-verified + gated release).
++  if (!PREVIEW && requireOperator(req, res)) return
+   try {
+     const { tick, chain = 'solana' } = req.body || {}
+     const amount = parseAmount((req.body || {}).amount)
+@@ -1264,14 +1276,13 @@
+     if (!tick || !receive_address) return res.status(400).json({ error: 'tick, receive_address required' })
+     const amt = parseAmount(amount); if (!amt) return res.status(400).json({ error: 'amount must be a positive number' })
+     if (!VAULT_ADDR) return res.status(503).json({ error: 'custody address not provisioned' })
+-    const asset = await getAssetByTick(tick)
+-    if (!asset) return res.status(404).json({ error: 'asset not in registry' })
++    const asset = await resolveAsset(tick)
++    if (!asset) return res.status(404).json({ error: 'asset not in registry — use proto:TICKER for collided names (e.g. acme:ACME)' })
+     if (!asset.whitelisted) return res.status(403).json({ error: 'asset not whitelisted' })
+     // AUTHENTICATION — bind the mint to whoever controls the on-chain deposit SOURCE. Without this,
+     // anyone who observes a deposit (or front-runs it) could claim the mint to their own address.
+     // Operator override (x-operator-token) exists only for back-office credits in the current phase.
+-    const _opTok = operatorToken()
+-    const operatorMode = !!(_opTok && req.headers['x-operator-token'] === _opTok)
++    const operatorMode = isOperator(req)
+     let boundSource = null
+     if (!operatorMode) {
+       const { source_address, binding_sig } = req.body || {}
+@@ -1355,18 +1366,30 @@
+ // Emblem-managed vault signer. GATED (custody.CUSTODY_LIVE) — real-value action.
+ app.post('/api/custody/redeem', async (req, res) => {
+   try {
+-    const { tick, amount, to, chain = 'solana' } = req.body || {}
++    const { tick, amount, to, chain = 'solana', burn_txid } = req.body || {}
+     const amt = parseAmount(amount); if (!amt) return res.status(400).json({ error: 'amount must be a positive number' })
+     if (!to) return res.status(400).json({ error: 'destination BTC address required' })
+-    const asset = await getAssetByTick(tick || '')
+-    if (!asset) return res.status(404).json({ error: 'asset not in registry' })
++    const asset = await resolveAsset(tick || '')
++    if (!asset) return res.status(404).json({ error: 'asset not in registry — use proto:TICKER for collided names' })
+     if (!custody.isLive()) return res.status(403).json({ error: 'custody redemption is gated — audited go-ahead required', gated: true })
++    // SECURITY: releasing vault BTC assets MUST be preceded by a verified on-chain burn of
++    // the representation. Operator override is only for back-office recoveries.
++    if (!isOperator(req)) {
++      if (!burn_txid) return res.status(401).json({ error: 'burn_txid required — burn the representation on-chain first, then redeem' })
++    }
+     // RELEASE-THEN-BURN, serialized per asset: check we have the rep, release on-chain
+     // (the risky external step), and only decrement the accounting once the release txid lands.
+     const out = await withAssetLock(asset.id, async () => {
+       const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
+       const circ = rep ? toBaseUnits(rep.circulating_supply || '0') : 0n
+       if (toBaseUnits(amt) > circ) return { status: 409, body: { error: 'cannot redeem more than circulating', circulating: fromBaseUnits(circ) } }
++      if (!isOperator(req)) {
++        if (!rep || !rep.dest_address) return { status: 404, body: { error: `no ${chain} representation for this asset` } }
++        const dupBurn = await dbQuery('SELECT id FROM collateral_ledger WHERE btc_txid=?', [String(burn_txid)])
++        if (dupBurn.length) return { status: 409, body: { error: 'burn txid already processed', ledger_id: dupBurn[0].id } }
++        const burn = await verifyRepBurn(chain, String(burn_txid), rep.dest_address, amt)
++        if (!burn.valid) return { status: 409, body: { error: 'burn not verified', reason: burn.reason } }
++      }
+       let release
+       const redeemArgs = { tick: asset.exact_ticker, amount: amt, toAddress: to, protocol: asset.source_protocol }
+       if (asset.source_protocol === 'counterparty') redeemArgs.qtyBase = counterparty.toBase(amt, asset.decimals == null ? 8 : Number(asset.decimals))
+@@ -1631,6 +1654,10 @@
+ 
+ // Execute a swap (protocol-signed for demo; a real router lets users sign their own).
+ app.post('/api/amm/swap', async (req, res) => {
++  // Protocol-signed demo swap: mints input from protocol collateral into the LP then swaps.
++  // Public callers could inflate circulating / spend gas whenever unused collateral exists.
++  // User-signed swaps belong on Uniswap (mainnet deep-link) or a future user-funded router.
++  if (requireOperator(req, res)) return
+   try {
+     const { pool_id, token_in, amount_in, to } = req.body || {}
+     const pool = (await dbQuery('SELECT * FROM pools WHERE id=?', [pool_id]))[0]
