@@ -249,3 +249,16 @@ Continued the 4th-audit remediation. R04 (owner-authorized partial redeem consum
 - VALIDATION (auditor router harness vs fixed server): now 21/26, the 5 failures = OPEN F07/R04/F10/R05-stamp/R03-schema ALL flipped to fixed (defect no longer reproduces). ZERO regression — default amount-10 redeem/move happy paths still pass. Only remaining OPEN = #15 UI redeem form (client+wallet burn+sign — deferred, custody closed).
 - CAVEAT noted: exact-match uses the same scale the verifier compared at; Solana SPL-decimals-vs-9dp scale is still the separate open "correct Solana mint-decimal verification" item (EVM path is exact-correct). lint clean, 12/12 unit, boot solvent, contained.
 NOW FIXED across the 4th audit: A01/A02/A03/A04/A05/A06/A07/A08/A09 + R04/F10. REMAINING: UI redeem burn+sign (client); F04 XCP per-tx attribution; F05 move holder-auth (moveBindingMsg); dedicated checked-in handler prevention tests for A01/A03/A05; Solana mint-decimal exact-scale. Custody CLOSED.
+
+## StampySwap — CHECKED-IN handler prevention tests for A01/A03/A05 (+A06) 2026-09-21
+Built the auditor's requested handler/DB fault-injection tests as a permanent regression suite (their focused harness is source-line-pinned → can't run against my changed server; this is my own, pointed at THIS repo).
+- test/handler.test.cjs: adapted the auditor's WHOLE-SERVER fixture (vm-load real server.js + real Express + real EIP-191/BIP-322 + in-memory node:sqlite + mocked chain/indexer/custody). NO source-hash pin; ROOT=repo. Asserts INTENDED behavior (green only if the fix holds; red on pre-fix code). 6 tests, all green:
+  - A01a: reconcile a reserved redeem 'released' twice → circulation decrements EXACTLY once (was →80, now →90 + 2nd call 409 terminal).
+  - A01b: fixture failDb throws the circulation UPDATE after the terminal flip → 500 surfaced, retry 409, circ stays 100 (fail-closed, NEVER doubled).
+  - A03: a 'completed' deposit-mint op → verify-deposit returns 409 done + the credit is NOT deleted (backing preserved).
+  - A05a: burn-consumed + move-out 'pending' (debit unconfirmed) → move resume 409 reconcile, NO dest mint (no over-issue).
+  - A05b: move-out 'decremented' → move resume drives dest mint exactly once (no re-debit).
+  - A06: operator /api/mint without op_key → 400, no mint.
+- Wired: npm test = `node --experimental-sqlite --test test/*.test.js test/*.test.cjs` → 18/18 (8 recovery + 4 labels + 6 handler). lint clean. No server.js change this batch (tests only).
+- Key fixture insight: server.js startup migrateSchema() runs at load with the real (disconnected) dbQuery → fails → SCHEMA_OK false; fixture then injects in-mem dbQuery/dbExec + re-runs migrateSchema() → SCHEMA_OK true. node:sqlite run() returns {changes} so the A01 CAS is exercised for real.
+REMAINING (4th audit): UI redeem burn+sign (harness #15, client — awkward to sandbox-test, custody closed so inert); F04 XCP per-tx attribution; F05 move holder-auth (moveBindingMsg); Solana mint-decimal exact-scale. Custody CLOSED.
