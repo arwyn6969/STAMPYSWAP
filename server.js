@@ -575,7 +575,7 @@ const PREVIEW = String(process.env.STAMPY_PREVIEW || process.env.STAMPY_DEVNET |
 const CONFIRMS = parseInt(process.env.DEPOSIT_CONFIRMATIONS || '2', 10)
 // The stamp bridge burns SRC-20 IRREVERSIBLY and releases a stamp — a reorg that un-burns after
 // release would be a double-spend, so it requires deeper burial than a normal (reversible) deposit.
-const STAMP_BRIDGE_CONFIRMS = parseInt(process.env.STAMP_BRIDGE_CONFIRMATIONS || '3', 10)
+const STAMP_BRIDGE_CONFIRMS = parseInt(process.env.STAMP_BRIDGE_CONFIRMATIONS || '6', 10) // grok: irreversible one-way bridge needs deep burial vs a BTC reorg (was 3)
 // ACME (acme.pics) deposit finality — acme.pics surfaces confirmed sends only, but we still gate
 // on N confirmations to be reorg-safe (CORTEX reorgs undo affected ops). Configurable.
 const ACME_CONFIRMS = parseInt(process.env.ACME_CONFIRMATIONS || '3', 10) // P1 (audit): ≥3 on mainnet wraps
@@ -1014,14 +1014,25 @@ async function mintCritical(asset, amount, receive_address, chain, opKey = null)
       if (e.code === 'BADADDR') return { status: 400, body: { error: e.message } }
       return { status: 502, body: { error: `${chain} mint failed (outcome uncertain — reconcile before retry): ` + String(e.message || e), reconcile: true } }
     }
-  } else return { status: 400, body: { error: 'unsupported destination chain' } }
+  } else { if (opKey) await opFail(opKey); return { status: 400, body: { error: 'unsupported destination chain' } } } // grok: release the reservation, don't strand it
 
   const newCirc = circulating + mintBase
-  if (rep) await dbExec('UPDATE representations SET circulating_supply=?, status=?, dest_address=?, updated_at=? WHERE id=?',
-    [fromBaseUnits(newCirc, 18), 'CANONICAL', mintAddr, now(), rep.id])
-  else await dbExec(`INSERT INTO representations (canonical_id, dest_chain, dest_address, dest_symbol, status, authority_model, circulating_supply, updated_at)
-    VALUES (?, ?, ?, ?, 'CANONICAL', 'interim single-key (audited multisig in prod)', ?, ?)`,
-    [asset.id, chain, mintAddr, displayTicker(asset.exact_ticker), fromBaseUnits(newCirc, 18), now()])
+  if (rep) {
+    // P0: atomic CAS increment (not read-modify-write) so a concurrent writer can't lose our delta.
+    const b = await bumpCirculating(rep.id, mintBase)
+    if (!b.ok) { if (opKey) await opReconcile(opKey); return { status: 500, body: { error: 'mint accounting write contention — on-chain mint done, op kept for reconciliation: ' + b.reason, reconcile: true } } }
+    await dbExec('UPDATE representations SET status=?, dest_address=?, updated_at=? WHERE id=?', ['CANONICAL', mintAddr, now(), rep.id]).catch(() => {})
+  } else {
+    try {
+      await dbExec(`INSERT INTO representations (canonical_id, dest_chain, dest_address, dest_symbol, status, authority_model, circulating_supply, updated_at)
+        VALUES (?, ?, ?, ?, 'CANONICAL', 'interim single-key (audited multisig in prod)', ?, ?)`,
+        [asset.id, chain, mintAddr, displayTicker(asset.exact_ticker), fromBaseUnits(newCirc, 18), now()])
+    } catch (_) {
+      // lost the create race (UNIQUE(canonical_id,dest_chain)) → the row exists; apply our delta atomically
+      const ex = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
+      if (ex) { await bumpCirculating(ex.id, mintBase); await dbExec('UPDATE representations SET status=?, dest_address=?, updated_at=? WHERE id=?', ['CANONICAL', mintAddr, now(), ex.id]).catch(() => {}) }
+    }
+  }
   await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, dest_tx, status, created_at)
     VALUES (?, 'mint', ?, ?, ?, ?, ?)`, [asset.id, mintAmt, chain, signature, real ? 'minted' : 'simulated', now()])
 
@@ -1138,15 +1149,33 @@ async function opReconcile(op_key) { await dbExec(`UPDATE operations SET state='
 // decrement; any repeat finds it already released (changes 0) and does nothing. Ordering is fail-CLOSED:
 // if the process dies after the flip but before the decrement, circulation stays too HIGH (never
 // over-mints) and the terminal row won't be decremented again. dbExec returns {changes} (Dashboard API).
+// P0 (grok audit): the circulating_supply write must be atomic across PROCESSES, not just the
+// in-process withAssetLock. A plain read-modify-write loses an update when two Node workers share one
+// Dashboard DB (last-write-wins → understated circulating → the solvency check under-counts → unbounded
+// over-mint). This does a COMPARE-AND-SET retry keyed on the exact prior string, so concurrent writers
+// each apply their delta and the DB stays HONEST (== on-chain). If two workers both pass the solvency
+// check and both mint, the DB then reflects the true (over-)supply and the NEXT mint is blocked — i.e.
+// this BOUNDS and self-detects the damage. It does NOT by itself serialize the check across processes;
+// a cross-process per-asset lock (or a single-writer deployment) is STILL required before maintenance
+// is disabled — tracked as the reopen gate. dbExec returns {changes}. delta may be negative.
+async function bumpCirculating(repId, deltaBase) {
+  for (let i = 0; i < 16; i++) {
+    const row = (await dbQuery('SELECT circulating_supply FROM representations WHERE id=?', [repId]))[0]
+    if (!row) return { ok: false, reason: 'representation row not found' }
+    const curStr = row.circulating_supply == null ? '0' : String(row.circulating_supply)
+    let next = toBaseUnits(curStr) + deltaBase; if (next < 0n) next = 0n
+    const u = await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=? AND circulating_supply=?',
+      [fromBaseUnits(next, 18), now(), repId, curStr]).catch(() => ({ changes: 0 }))
+    if (u && (u.changes || 0) >= 1) return { ok: true, newCirc: fromBaseUnits(next, 18) }
+    // lost the CAS race (another writer changed it) → re-read and retry with the fresh value
+  }
+  return { ok: false, reason: 'circulating CAS contention (too many concurrent writers)' }
+}
 async function finalizeReleaseOnce({ ledgerId, canonicalId, chain, amountBase, releaseTxid }) {
   const upd = await dbExec(`UPDATE collateral_ledger SET status='released', btc_txid=COALESCE(?, btc_txid) WHERE id=? AND status IN ('pending','reconcile')`, [releaseTxid || null, ledgerId])
   if (!upd || (upd.changes || 0) < 1) return { alreadyFinalized: true } // a prior finalize already claimed the decrement
-  const rep = (await dbQuery('SELECT id, circulating_supply FROM representations WHERE canonical_id=? AND dest_chain=?', [canonicalId, chain]))[0]
-  if (rep) {
-    const circ = toBaseUnits(rep.circulating_supply || '0')
-    const newCirc = circ >= amountBase ? circ - amountBase : 0n
-    await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(newCirc, 18), now(), rep.id])
-  }
+  const rep = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [canonicalId, chain]))[0]
+  if (rep) await bumpCirculating(rep.id, -amountBase) // P0: atomic CAS decrement
   return { finalized: true }
 }
 app.post('/api/move', async (req, res) => {
@@ -1214,7 +1243,7 @@ app.post('/api/move', async (req, res) => {
           return { status: 409, body: { error: 'move exceeds source circulating', circulating: fromBaseUnits(circ) } }
         }
         await dbExec(`INSERT OR IGNORE INTO collateral_ledger (canonical_id, direction, amount, dest_chain, btc_txid, status, created_at) VALUES (?, 'move-out', ?, ?, ?, 'pending', ?)`, [asset.id, amount, from_chain, burn_txid, now()])
-        await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [fromBaseUnits(circ - toBaseUnits(amount), 18), now(), fromRep.id])
+        await bumpCirculating(fromRep.id, -toBaseUnits(amount)) // P0: atomic CAS debit
         // CAS mark: only flips 'pending'→'decremented' (a re-run after the debit can't double-debit)
         await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE direction='move-out' AND btc_txid=? AND canonical_id=? AND status='pending'`, [burn_txid, asset.id])
       }
@@ -1547,8 +1576,7 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
     // AUTHENTICATION — bind the mint to whoever controls the on-chain deposit SOURCE. Without this,
     // anyone who observes a deposit (or front-runs it) could claim the mint to their own address.
     // Operator override (x-operator-token) exists only for back-office credits in the current phase.
-    const _opTok = operatorToken()
-    const operatorMode = !!(_opTok && req.headers['x-operator-token'] === _opTok)
+    const operatorMode = isOperator(req) // grok: use the constant-time comparison, not raw ===
     let boundSource = null
     if (!operatorMode) {
       const { source_address, binding_sig } = req.body || {}
@@ -1597,6 +1625,9 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
         const dep = deposits.find(d => String(d.tx_hash) === String(txid))
         if (!dep) return { status: 404, body: { error: 'no matching confirmed ACME send to the vault (by txid + source + amount≥)' } }
         if (boundSource && String(dep.source) !== boundSource) return { status: 403, body: { error: `this ACME deposit was sent by ${dep.source}, not the address you signed with (${boundSource})` } }
+        // grok/R04 class: credit EXACTLY the send quantity — a partial claim would strand the remainder
+        // behind txid idempotency (same as XCP).
+        if (BigInt(String(dep.quantity)) !== BigInt(acme.toBase(amt, dec))) return { status: 409, body: { error: `the ACME send is ${acme.fromBase(dep.quantity, dec)} ${displayTicker(asset.exact_ticker)} but you are claiming ${amt} — claim EXACTLY the sent amount`, sent: acme.fromBase(dep.quantity, dec) } }
         const confs = await acme.confirmations(dep.block_index).catch(() => 0)
         if (confs < ACME_CONFIRMS) return { status: 409, body: { error: `awaiting confirmations (${confs}/${ACME_CONFIRMS})`, confirmations: confs } }
         confirmations = confs
@@ -1609,6 +1640,9 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
         if (!check.confirmed) return { status: 409, body: { error: `awaiting confirmations (${check.confirmations}/${CONFIRMS})`, check } }
         // the deposit must have been made BY the address the caller proved control of
         if (boundSource && String(check.source) !== boundSource) return { status: 403, body: { error: `this deposit was made by ${check.source}, not the address you signed with (${boundSource}) — only the depositor can claim the mint` } }
+        // grok/R04 class: credit EXACTLY the on-chain transfer amount — a partial claim of a larger
+        // SRC-20 transfer would strand the remainder behind the txid-keyed idempotency.
+        if (toBaseUnits(check.amt) !== toBaseUnits(amt)) return { status: 409, body: { error: `the SRC-20 transfer is ${check.amt} ${displayTicker(asset.exact_ticker)} but you are claiming ${amt} — claim EXACTLY the transferred amount`, sent: check.amt } }
         confirmations = check.confirmations
       }
       // ---- F06 (audit): idempotency keyed on the durable OP, not just the credit row ----
@@ -1656,8 +1690,11 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
         // completed op exists for this deposit (re-checked here to catch a concurrent completion).
         let safeToDelete = !uncertain && !priorCredit && creditId != null
         if (safeToDelete) {
-          const opNow = (await dbQuery(`SELECT state FROM operations WHERE op_key = ? OR op_key LIKE ?`, [opKey, opKey + ':%']))[0]
-          if (opNow && opNow.state === 'completed') safeToDelete = false // a mint landed → the credit now backs it
+          // A03 (grok): refuse to delete if ANY operation row exists for this deposit — not just a
+          // 'completed' one. A peer worker may have a 'reserved'/'reconcile' op mid-flight against this
+          // exact credit; deleting it would remove backing for a mint that may be in progress or landed.
+          const opNow = (await dbQuery(`SELECT op_key FROM operations WHERE op_key = ? OR op_key LIKE ?`, [opKey, opKey + ':%']))[0]
+          if (opNow) safeToDelete = false
         }
         if (safeToDelete) await dbExec('DELETE FROM collateral_ledger WHERE id=?', [creditId]).catch(() => {})
         return { status: m.status, body: { deposit_reverted: safeToDelete, reconcile: uncertain, mint: m.body } }
@@ -2267,15 +2304,29 @@ app.get('/api/arbitrage', async (_req, res) => {
 // — not merely that columns exist. A same-column table WITHOUT the PRIMARY KEY on operations.op_key /
 // consumed_burns.burn_txid would let two reservations of the same operation both "win" → double effect.
 // Read-only inspection of the stored DDL + indexes; fail-closed if the guarantee is absent.
+// A08 + grok: uniqueness must be on the column ALONE. A composite UNIQUE(a,col) does NOT prevent two
+// rows with the same `col`, so it must NOT satisfy this check. Parse the actual column lists.
+function _colsInParen(s) { return String(s || '').split(',').map(x => x.trim().replace(/["'`[\]]/g, '').split(/\s+/)[0]).filter(Boolean) }
 async function tableEnforcesUnique(table, col) {
   try {
     const t = await dbQuery(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, [table])
     const ddl = (t[0] && t[0].sql) || ''
-    if (new RegExp('\\b' + col + '\\b[^,]*\\bPRIMARY KEY\\b', 'i').test(ddl)) return true            // inline PK
-    if (new RegExp('\\bPRIMARY KEY\\s*\\([^)]*\\b' + col + '\\b', 'i').test(ddl)) return true          // table-level PK
-    if (new RegExp('\\bUNIQUE\\s*\\([^)]*\\b' + col + '\\b', 'i').test(ddl)) return true                // inline UNIQUE(col)
+    // inline single-column PK/UNIQUE: "col TYPE ... PRIMARY KEY|UNIQUE" with no comma/paren before the keyword
+    if (new RegExp('\\b' + col + '\\b[^,()]*\\b(?:PRIMARY KEY|UNIQUE)\\b', 'i').test(ddl)) return true
+    // table-level UNIQUE(...) / PRIMARY KEY(...) — require `col` to be the SOLE column
+    for (const m of ddl.matchAll(/\b(?:UNIQUE|PRIMARY KEY)\s*\(([^)]*)\)/ig)) {
+      const cols = _colsInParen(m[1]); if (cols.length === 1 && cols[0] === col) return true
+    }
+    // a UNIQUE INDEX whose indexed columns are EXACTLY [col] (partial indexes: the WHERE clause is after
+    // the column paren, so we only capture the indexed columns).
     const idx = await dbQuery(`SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`, [table])
-    return idx.some(r => /\bUNIQUE\b/i.test(r.sql || '') && new RegExp('\\b' + col + '\\b').test(r.sql || ''))
+    for (const r of idx) {
+      const s = r.sql || ''
+      if (!/\bUNIQUE\b/i.test(s)) continue
+      const on = s.match(/\bON\b[^(]*\(([^)]*)\)/i); if (!on) continue
+      const cols = _colsInParen(on[1]); if (cols.length === 1 && cols[0] === col) return true
+    }
+    return false
   } catch (_) { return false }
 }
 async function migrateSchema() {
@@ -2287,10 +2338,16 @@ async function migrateSchema() {
     console.error('SCHEMA CHECK FAILED — burn registry missing; writes stay contained (SCHEMA_OK false). Apply migration (consumed_burns + operations + collateral_ledger.burn_txid). ' + (e.message || e))
     return // SCHEMA_OK stays false → containment holds even if STAMPY_MAINTENANCE=0
   }
-  // A08: the idempotency PRIMARY KEYs MUST be present, or the whole crash-safety story is void.
-  if (!(await tableEnforcesUnique('operations', 'op_key')) || !(await tableEnforcesUnique('consumed_burns', 'burn_txid'))) {
-    console.error('SCHEMA CONSTRAINT CHECK FAILED — operations.op_key and consumed_burns.burn_txid must be UNIQUE/PRIMARY KEY. Writes stay contained (SCHEMA_OK false) until the constraints are in place.')
-    return
+  // A08 + grok: ALL single-column idempotency gates must be present, or the crash-safety story is void.
+  // - operations.op_key / consumed_burns.burn_txid: one op / one burn = one effect.
+  // - collateral_ledger.btc_txid: stops two workers double-crediting the SAME deposit (phantom backing).
+  // - bridge_ops.burn_txid: stops two workers double-releasing the SAME stamp burn.
+  const uniqGates = [['operations', 'op_key'], ['consumed_burns', 'burn_txid'], ['collateral_ledger', 'btc_txid'], ['bridge_ops', 'burn_txid']]
+  for (const [tbl, c] of uniqGates) {
+    if (!(await tableEnforcesUnique(tbl, c))) {
+      console.error(`SCHEMA CONSTRAINT CHECK FAILED — ${tbl}.${c} must be UNIQUE on that column ALONE. Writes stay contained (SCHEMA_OK false) until the constraint is in place.`)
+      return
+    }
   }
   try {
     // old moves recorded the rep-burn hash only in collateral_ledger.btc_txid (direction='move-out')

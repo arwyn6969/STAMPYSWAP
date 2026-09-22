@@ -139,15 +139,16 @@ test('A01: repeated release reconciliation decrements circulation at most once',
   assert.equal(f.circ(), '90')      // decremented exactly ONCE (the bug decremented to 80)
 })
 
-test('A01: a lost decrement write leaves circulation too HIGH (fail-closed), never doubled', async t => {
+test('A01: a transient DB failure during the release decrement is retried, never doubled', async t => {
   const f = await fixture(t, { circulating: '100', collateral: '100' })
   f.db.prepare("INSERT INTO collateral_ledger(id,canonical_id,direction,amount,dest_chain,burn_txid,status) VALUES(51,1,'redeem','10','base','rb','reconcile')").run()
-  f.state.failDb = true // the circulation UPDATE throws AFTER the terminal status flip
+  f.state.failDb = true // the FIRST 'UPDATE representations' throws; the CAS bumpCirculating retries
   const r1 = await f.call('/api/reconcile', { kind: 'redeem', id: 51, resolution: 'released', release_txid: 'rt' }, op)
-  assert.equal(r1.code, 500)                     // surfaced, not swallowed
+  assert.equal(r1.code, 200)
+  assert.equal(f.circ(), '90')                   // decremented EXACTLY once despite the transient failure
   const r2 = await f.call('/api/reconcile', { kind: 'redeem', id: 51, resolution: 'released', release_txid: 'rt' }, op)
   assert.equal(r2.code, 409)                     // row already terminal
-  assert.equal(f.circ(), '100')                  // NEVER decremented twice; stays high = never over-mints
+  assert.equal(f.circ(), '90')                   // NEVER doubled to 80
 })
 
 test('A03: a completed deposit-mint op resolves as done and never deletes the backing', async t => {

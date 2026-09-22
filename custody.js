@@ -184,6 +184,25 @@ async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20
   const built = await r.json()
   const psbtHex = built.hex
   if (!psbtHex) throw new Error('no PSBT (hex) returned by stampchain')
+  // grok: DECODE the stampchain-composed PSBT and refuse to sign if it would sweep vault BTC to an
+  // unexpected address. We can't assert full SRC-20 semantics (tick/amt) without a live sample, but a
+  // legit SRC-20 TRANSFER spends the vault's UTXOs into small dust/data outputs + change BACK to the
+  // vault — so a compromised/buggy compose that redirected real value is caught here. A parse failure
+  // is logged (can't happen for a well-formed PSBT) but not blocked, to avoid false-rejecting a legit
+  // redeem against a format quirk. Full semantic decode-and-assert awaits a real SRC-20 sample.
+  const SRC20_OUT_CAP = parseInt(process.env.SRC20_MAX_NONVAULT_SATS || '2000', 10)
+  try {
+    const psbt = bitcoinjs.Psbt.fromHex(psbtHex)
+    for (const o of psbt.txOutputs) {
+      let addr = null
+      try { addr = bitcoinjs.address.fromOutputScript(o.script, bitcoinjs.networks.bitcoin) } catch (_) { addr = null } // OP_RETURN/bare data → null (fine)
+      if (addr && addr !== from && addr !== toAddress && Number(o.value) > SRC20_OUT_CAP)
+        throw new Error(`refusing to sign SRC-20 redeem: output of ${o.value} sats to ${addr} is neither the vault (change) nor the recipient — possible malformed or hostile compose`)
+    }
+  } catch (e) {
+    if (/refusing to sign/.test(String(e && e.message))) throw e
+    console.error('SRC-20 PSBT decode warning (signing proceeds; could not fully parse to assert outputs): ' + String((e && e.message) || e))
+  }
   const toSignInputs = (built.inputsToSign || []).map(i => ({ index: i.index, address: from, sighashType: i.sighashType }))
   const signer = await btcSigner()
   const signedResp = await signer.signPsbt(psbtHex, { transactionType: 'p2wpkh', toSignInputs })
