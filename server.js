@@ -1060,10 +1060,14 @@ app.post('/api/mint', async (req, res) => {
 // Per-chain burn FINALITY policy (audit R06) — a burn must be this deep before it can authorize a
 // real Bitcoin release; a shallow burn could be reorged out after the asset is gone. Env-overridable.
 const BURN_FINALITY = { base: 3, ethereum: 12, 'base-mainnet': parseInt(process.env.BASE_MAINNET_BURN_CONFIRMATIONS || '20', 10) }
-async function verifyRepBurn(chain, txid, repAddress, amount) {
+async function verifyRepBurn(chain, txid, repAddress, amount, asset = null) {
   let r, wantBase
   if (chain === 'solana') {
-    wantBase = BigInt(toBaseUnits(floorToDecimals(amount, DEST_DECIMALS.solana), DEST_DECIMALS.solana))
+    // Solana burns are denominated at the SPL mint's ACTUAL decimals — solanaDecimalsFor(max_supply),
+    // which is ≤9 and can be smaller for large-supply assets (e.g. BOSHI→7). Comparing at a hardcoded
+    // 9dp would mis-scale the exact-amount check. Use the asset's real dp when we know the asset.
+    const solDec = asset ? solanaDecimalsFor(asset.max_supply) : DEST_DECIMALS.solana
+    wantBase = BigInt(toBaseUnits(floorToDecimals(amount, solDec), solDec))
     r = await solMint.verifyBurn(txid, repAddress, wantBase.toString())
   } else if (chain in DEST_DECIMALS) {
     const tok = floorToDecimals(amount, DEST_DECIMALS[chain])
@@ -1164,7 +1168,7 @@ app.post('/api/move', async (req, res) => {
     const fromRep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, from_chain]))[0]
     if (!fromRep || !fromRep.dest_address) return res.status(404).json({ error: `no ${from_chain} representation for this asset` })
     // verify the real on-chain burn (read-only — safe to run before the lock). Returns the burner.
-    const burn = await verifyRepBurn(from_chain, burn_txid, fromRep.dest_address, amount)
+    const burn = await verifyRepBurn(from_chain, burn_txid, fromRep.dest_address, amount, asset)
     if (!burn.valid) return res.status(409).json({ error: 'burn not verified', reason: burn.reason })
     // F05 BIND: the BURNER must authorize THIS move to THIS destination — else anyone could claim
     // another holder's burn to their own address. Signed by the burn owner (EVM EIP-191 / Solana ed25519).
@@ -1691,7 +1695,7 @@ app.post('/api/custody/redeem', async (req, res) => {
         if (!burn_txid) return { status: 401, body: { error: 'burn_txid required — burn your representation on-chain (transfer it to the zero address), then pass the burn txid so the release is bound to a real burn' } }
         if (await burnConsumed(chain, burn_txid)) return { status: 409, body: { error: 'burn already consumed by a redeem or move' } }
         if (!rep || !rep.dest_address) return { status: 404, body: { error: `no ${chain} representation to burn against` } }
-        burnInfo = await verifyRepBurn(chain, burn_txid, rep.dest_address, amt)
+        burnInfo = await verifyRepBurn(chain, burn_txid, rep.dest_address, amt, asset)
         if (!burnInfo.valid) return { status: 409, body: { error: 'representation burn not verified on-chain', reason: burnInfo.reason } }
         // PR3/F05 BIND: the BURNER must authorize THIS release to THIS BTC address — otherwise
         // anyone could redeem another holder's burn to their own address. Signed by the burn owner.
