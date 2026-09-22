@@ -1146,13 +1146,13 @@ async function finalizeReleaseOnce({ ledgerId, canonicalId, chain, amountBase, r
   return { finalized: true }
 }
 app.post('/api/move', async (req, res) => {
-  // P2 (audit 2345961): move mints dest tokens but does NOT bind the burn to the receiver, so a
-  // caller could front-run someone's burn and claim the minted output (+ it's a gas drain). Like
-  // the other mint paths, operator-only for now. A bound, user-signed cross-chain move is the
-  // production feature (burner signs burn_txid→receive_address, like deposit binding).
-  if (requireOperator(req, res)) return
+  // F05 (audit): a move mints dest tokens against a source burn. Without binding the burn to the
+  // receiver, a caller could front-run someone's public burn and claim the minted output. So a
+  // NON-operator must prove they are the burner by signing the move binding (burn_txid → to_chain/
+  // to_address/amount) with the key that burned. Operator header remains a back-office bypass.
+  const operatorMode = isOperator(req)
   try {
-    const { tick, from_chain, to_chain, burn_txid, to_address } = req.body || {}
+    const { tick, from_chain, to_chain, burn_txid, to_address, auth_sig } = req.body || {}
     const amount = parseAmount((req.body || {}).amount)
     if (!amount) return res.status(400).json({ error: 'amount must be a positive number' })
     if (!burn_txid || !to_address) return res.status(400).json({ error: 'burn_txid and to_address required' })
@@ -1163,9 +1163,16 @@ app.post('/api/move', async (req, res) => {
     if (!asset.whitelisted) return res.status(403).json({ error: 'asset not whitelisted' })
     const fromRep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, from_chain]))[0]
     if (!fromRep || !fromRep.dest_address) return res.status(404).json({ error: `no ${from_chain} representation for this asset` })
-    // verify the real on-chain burn (read-only — safe to run before the lock)
+    // verify the real on-chain burn (read-only — safe to run before the lock). Returns the burner.
     const burn = await verifyRepBurn(from_chain, burn_txid, fromRep.dest_address, amount)
     if (!burn.valid) return res.status(409).json({ error: 'burn not verified', reason: burn.reason })
+    // F05 BIND: the BURNER must authorize THIS move to THIS destination — else anyone could claim
+    // another holder's burn to their own address. Signed by the burn owner (EVM EIP-191 / Solana ed25519).
+    if (!operatorMode) {
+      const bmsg = moveBindingMsg({ burn_txid, to_chain, to_address, amount })
+      if (!verifyBurnOwnerSig(from_chain, burn.owner, bmsg, auth_sig))
+        return res.status(401).json({ error: 'authorization required — sign the move binding with the key that burned the source tokens', binding_message: bmsg, burn_owner: burn.owner })
+    }
 
     const out = await withAssetLock(asset.id, async () => {
       // F06 (audit) — a move is: [1] verified on-chain burn (done, external) → [2] source decrement (DB)

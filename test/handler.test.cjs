@@ -186,3 +186,21 @@ test('A06: operator mint without an op_key is rejected before any effect', async
   assert.equal(r.code, 400)
   assert.equal(f.state.mints.length, 0)
 })
+
+test('F05: a non-operator move requires the burn-owner signature (front-run resistant)', async t => {
+  const f = await fixture(t, { circulating: '100', collateral: '100' })
+  const sig = signer => signer.signMessage(`StampySwap move: burn ${burnId} → mint 10 on ethereum to ${owner.address}`)
+  // no signature → 401 with the exact binding message, nothing consumed/minted
+  const noSig = await f.call('/api/move', f.move())
+  assert.equal(noSig.code, 401)
+  assert.ok(noSig.body.binding_message)
+  assert.equal(f.state.mints.length, 0)
+  // wrong signer (attacker) → 401, still nothing consumed
+  const bad = f.move(); bad.auth_sig = await sig(attacker)
+  assert.equal((await f.call('/api/move', bad)).code, 401)
+  assert.equal(f.state.mints.length, 0)
+  // the real burner's signature → authorized → move completes
+  const good = f.move(); good.auth_sig = await sig(owner)
+  assert.equal((await f.call('/api/move', good)).code, 200)
+  assert.equal(f.state.mints.length, 1)
+})
