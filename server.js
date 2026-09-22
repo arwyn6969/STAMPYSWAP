@@ -1562,34 +1562,25 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
     const out = await withAssetLock(asset.id, async () => {
       let confirmations = CONFIRMS, ledgerKey = txid ? String(txid) : null
       if (asset.source_protocol === 'counterparty') {
-        // FREEZE (P1 audit 2345961): XCP credit is a vault-balance DELTA, not per-tx attribution —
-        // a past sender of this asset could claim leftover uncredited vault balance. Operator-only
-        // until rewritten to true per-tx attribution.
-        if (!operatorMode) return { status: 403, body: { error: 'XCP deposit→mint is temporarily operator-only pending per-tx attribution (audit) — contact the operator to credit a Counterparty deposit' } }
-        // Counterparty "enhanced sends" encode the destination in OP_RETURN data (no BTC output
-        // to the vault, no per-deposit txid), and balances are confirmed-only. So we credit only
-        // the DELTA between the vault's confirmed balance and what we've already credited (net of
-        // redemptions) — repeated calls can never double-credit past the real balance.
-        const dec = asset.decimals == null ? 8 : Number(asset.decimals) // 0 (indivisible) is valid — don't `|| 8` it away
-        // GUARD: while a redemption is still unconfirmed the vault's confirmed balance is stale-high
-        // (the redeem hasn't left yet) — crediting now could mint against collateral on its way out.
-        const recentRedeems = await dbQuery(`SELECT btc_txid FROM collateral_ledger WHERE canonical_id=? AND direction='redeem' AND btc_txid IS NOT NULL ORDER BY id DESC LIMIT 10`, [asset.id])
-        for (const rr of recentRedeems) {
-          if ((await btcTxConfirmed(rr.btc_txid)) === false) return { status: 409, body: { error: 'a redemption is in flight for this asset; retry once it confirms (vault balance is settling)', redeem_txid: rr.btc_txid } }
-        }
-        const balWhole = counterparty.fromBase(await counterparty.addressBalanceBase(VAULT_ADDR, asset.exact_ticker), dec)
-        const balBase = toBaseUnits(balWhole)
-        const netCredited = (await collateralBase(asset.id)) - (await redeemedBase(asset.id))
-        const availBase = balBase - netCredited
-        if (availBase <= 0n) return { status: 409, body: { error: 'no un-credited balance in the vault for this asset (already fully credited)', vault_balance: balWhole } }
-        if (toBaseUnits(amt) > availBase) return { status: 409, body: { error: `amount exceeds un-credited vault balance (${fromBaseUnits(availBase)} available)`, vault_balance: balWhole, available: fromBaseUnits(availBase) } }
-        // the caller must be a real depositor of this asset to the vault (best-effort attribution —
-        // XCP balance-delta can't yet split multiple senders of the same asset; tx-level is a TODO).
-        if (boundSource) {
-          const sent = await counterparty.sentToVault(asset.exact_ticker, boundSource, VAULT_ADDR).catch(() => false)
-          if (!sent) return { status: 403, body: { error: `no confirmed ${displayTicker(asset.exact_ticker)} send to the vault from ${boundSource} — only a depositor can claim the mint` } }
-        }
-        ledgerKey = `xcp:${asset.exact_ticker}:${fromBaseUnits(netCredited + toBaseUnits(amt))}`
+        // F04 (audit): PER-TX attribution — the old balance-delta let a past sender claim leftover
+        // uncredited vault balance, and couldn't split multiple senders. Counterparty exposes /sends
+        // (tx_hash/source/destination/quantity/block), so we now verify a SPECIFIC send by txid, bound
+        // to the depositor, EXACT amount, confirmations, and txid idempotency — exactly like ACME/SRC-20.
+        // This removes the operator-only freeze (the balance-delta flaw is gone).
+        if (!txid) return { status: 400, body: { error: 'txid (Counterparty send tx_hash) required for XCP deposits' } }
+        const dec = asset.decimals == null ? 8 : Number(asset.decimals) // 0 (indivisible) valid — don't `|| 8`
+        const wantBase = counterparty.toBase(amt, dec)
+        const deposits = await counterparty.findDeposits(asset.exact_ticker, VAULT_ADDR, { source: boundSource || null, minQtyBase: wantBase }).catch(() => [])
+        const dep = deposits.find(d => String(d.tx_hash) === String(txid))
+        if (!dep) return { status: 404, body: { error: 'no matching confirmed Counterparty send to the vault (by txid + source + amount≥)' } }
+        if (boundSource && String(dep.source) !== boundSource) return { status: 403, body: { error: `this Counterparty deposit was sent by ${dep.source}, not the address you signed with (${boundSource})` } }
+        // EXACT amount (R04/F09 class): credit exactly the send quantity, never a partial claim that
+        // would strand the rest behind txid idempotency.
+        if (BigInt(dep.quantity) !== BigInt(wantBase)) return { status: 409, body: { error: `the send is ${counterparty.fromBase(dep.quantity, dec)} ${displayTicker(asset.exact_ticker)} but you are claiming ${amt} — claim EXACTLY the sent amount`, sent: counterparty.fromBase(dep.quantity, dec) } }
+        const confs = await counterparty.confirmations(dep.block_index).catch(() => 0)
+        if (confs < CONFIRMS) return { status: 409, body: { error: `awaiting confirmations (${confs}/${CONFIRMS})`, confirmations: confs } }
+        confirmations = confs
+        ledgerKey = `xcp:${txid}` // per-tx idempotency (unique index prevents double-credit)
       } else if (asset.source_protocol === 'acme') {
         // ACME (acme.pics) — balance-per-address like XCP, BUT with per-tx attribution (/sends
         // returns tx_hash/source/quantity/block). So we verify the SPECIFIC send by txid (cleaner

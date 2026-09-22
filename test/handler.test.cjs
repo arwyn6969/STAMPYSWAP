@@ -68,6 +68,7 @@ async function fixture(t, options = {}) {
     if (u.pathname.endsWith('/balances')) return json({ result: ['COIN', 'STAMP'].map(asset => ({ asset, quantity: state.vaultBalance })) })
     if (u.pathname.endsWith('/sends')) return json({ result: state.sends })
     if (u.pathname.endsWith('/blocks/last')) return json({ result: { block_index: 30 } })
+    if (u.pathname.replace(/\/+$/, '').endsWith('/v2') || u.pathname === '/') return json({ result: { counterparty_height: 30 } }) // chainHeight
     throw Error('External request blocked: ' + url)
   }
   const pure = file => load(file, () => { throw Error('unexpected import') }, { fetch: fetchFixture }).exports
@@ -185,6 +186,21 @@ test('A06: operator mint without an op_key is rejected before any effect', async
   const r = await f.call('/api/mint', { tick: 'COIN', amount: '1', receive_address: owner.address, chain: 'base' }, op)
   assert.equal(r.code, 400)
   assert.equal(f.state.mints.length, 0)
+})
+
+test('F04: Counterparty deposit is credited by PER-TX attribution (txid-idempotent, exact, no operator)', async t => {
+  const f = await fixture(t, { protocol: 'counterparty', decimals: 0, collateral: '0', circulating: '0' })
+  f.state.sends = [{ source: btcSource, destination: 'vault', status: 'valid', quantity: '1', tx_hash: 'xcpdep', block_index: 10 }]
+  // non-operator, bound depositor, matching txid → credited + minted (no operator-only freeze anymore)
+  const ok = await f.call('/api/custody/verify-deposit', f.claim({ txid: 'xcpdep', amount: '1' }))
+  assert.equal(ok.code, 200)
+  assert.equal(f.state.mints.length, 1)
+  // replay the SAME txid → idempotent, no second mint
+  assert.equal((await f.call('/api/custody/verify-deposit', f.claim({ txid: 'xcpdep', amount: '1' }))).code, 409)
+  assert.equal(f.state.mints.length, 1)
+  // a txid with no matching send → 404, nothing minted
+  assert.equal((await f.call('/api/custody/verify-deposit', f.claim({ txid: 'nope', amount: '1' }))).code, 404)
+  assert.equal(f.state.mints.length, 1)
 })
 
 test('F05: a non-operator move requires the burn-owner signature (front-run resistant)', async t => {

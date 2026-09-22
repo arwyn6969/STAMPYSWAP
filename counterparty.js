@@ -61,6 +61,23 @@ async function sentToVault(asset, source, vault) {
 // Current chain height (for confirmation depth if needed).
 async function chainHeight() { try { const j = await cpGet('/'); return (j.result && (j.result.counterparty_height || j.result.backend_height)) || null } catch (_) { return null } }
 
+// F04 (audit): PER-TX deposit attribution — replaces the balance-delta heuristic. Scan confirmed
+// `valid` sends of `asset` to `vault`, optionally from a specific source and ≥ a minimum base
+// quantity, and return each with its tx_hash so a credit binds to ONE specific on-chain send
+// (idempotent by txid, front-run/replay resistant). Mirrors acme.findDeposits.
+async function findDeposits(asset, vault, { source = null, minQtyBase = null } = {}) {
+  let j; try { j = await cpGet(`/assets/${encodeURIComponent(asset)}/sends?limit=500`) } catch (_) { return [] }
+  const rows = (j && j.result) || []
+  return rows.filter(r =>
+    r.destination === vault &&
+    (r.status === 'valid' || r.status == null) &&
+    (!source || r.source === source) &&
+    (minQtyBase == null || BigInt(String(r.quantity || '0')) >= BigInt(minQtyBase)))
+    .map(r => ({ tx_hash: r.tx_hash, source: r.source, destination: r.destination, quantity: String(r.quantity || '0'), block_index: r.block_index, status: r.status || 'valid' }))
+}
+// Confirmation depth of a Counterparty send given its block_index.
+async function confirmations(blockIndex) { const h = await chainHeight(); return (h && blockIndex) ? Math.max(0, h - blockIndex + 1) : 0 }
+
 // Deposit check: does `vault` hold ≥ `qtyWhole` of `asset`? (Counterparty balances are
 // confirmed-only, so a present balance means the send settled.) txid attribution + full
 // tx verification will be refined against the first real PUDSEC deposit.
@@ -79,4 +96,4 @@ async function composeSend({ from, toAddress, asset, qtyWhole, dec }) {
   return j && j.result
 }
 
-module.exports = { lookupAsset, addressBalanceBase, checkDeposit, composeSend, chainHeight, sentToVault, fromBase, toBase, xcpDecimals }
+module.exports = { lookupAsset, addressBalanceBase, checkDeposit, composeSend, chainHeight, sentToVault, findDeposits, confirmations, fromBase, toBase, xcpDecimals }
