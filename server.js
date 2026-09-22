@@ -926,7 +926,16 @@ async function performMint(tick, amount, receive_address, chain = 'solana', asse
   // makes the on-chain mint crash-safe/idempotent for callers that pass one.
   return withAssetLock(asset.id, () => mintCritical(asset, amount, receive_address, chain, opKey))
 }
+// grok P0: serialize the ENTIRE solvency-check → reserve → on-chain mint → accounting across processes
+// via the DB-backed asset lock (the in-process withAssetLock only covers one worker). Fails closed (503)
+// if the cross-process lock can't be acquired — a mint NEVER proceeds without it.
 async function mintCritical(asset, amount, receive_address, chain, opKey = null) {
+  let holder
+  try { holder = await acquireAssetLock(asset.id) } catch (e) { return { status: 503, body: { error: e.message, retryable: true, locked: true } } }
+  try { return await mintCriticalCore(asset, amount, receive_address, chain, opKey) }
+  finally { await releaseAssetLock(asset.id, holder) }
+}
+async function mintCriticalCore(asset, amount, receive_address, chain, opKey = null) {
   // Effective on-chain decimals: EVM = 18; Solana sized so max_supply fits u64 (≤9, e.g. BOSHI→7).
   // Round the mint DOWN to THIS precision so DB accounting == on-chain supply exactly (no drift),
   // and so the representation can never exceed its backing.
@@ -1178,6 +1187,33 @@ async function finalizeReleaseOnce({ ledgerId, canonicalId, chain, amountBase, r
   if (rep) await bumpCirculating(rep.id, -amountBase) // P0: atomic CAS decrement
   return { finalized: true }
 }
+
+// grok P0 (the maintenance-off gate): a DB-BACKED per-asset lock that serializes the solvency
+// CHECK+mint across PROCESSES — the in-process withAssetLock only covers ONE Node worker, so two
+// workers could both pass "circulating+amt ≤ collateral" and both mint. This acquires an asset_locks
+// row (PK on asset_id) before the check; a crashed holder's stale lease is stealable via CAS on
+// expires_at. It FAILS CLOSED (503) if it can't acquire — a mint never proceeds without the lock.
+// asset_locks is applied out-of-band (the app can't DDL) and required by migrateSchema → SCHEMA_OK.
+const INSTANCE_ID = crypto.randomBytes(8).toString('hex')
+const ASSET_LOCK_LEASE_MS = parseInt(process.env.ASSET_LOCK_LEASE_MS || '30000', 10)
+const ASSET_LOCK_TIMEOUT_MS = parseInt(process.env.ASSET_LOCK_TIMEOUT_MS || '12000', 10)
+async function acquireAssetLock(assetId) {
+  const start = Date.now()
+  const holder = `${INSTANCE_ID}:${crypto.randomBytes(4).toString('hex')}`
+  while (Date.now() - start < ASSET_LOCK_TIMEOUT_MS) {
+    const nowS = Math.floor(Date.now() / 1000), expS = Math.floor((Date.now() + ASSET_LOCK_LEASE_MS) / 1000)
+    try { await dbExec('INSERT INTO asset_locks (asset_id, holder, acquired_at, expires_at) VALUES (?,?,?,?)', [assetId, holder, nowS, expS]); return holder } catch (_) { /* held → maybe steal */ }
+    const st = await dbExec('UPDATE asset_locks SET holder=?, acquired_at=?, expires_at=? WHERE asset_id=? AND expires_at < ?', [holder, nowS, expS, assetId, nowS]).catch(() => ({ changes: 0 }))
+    if (st && (st.changes || 0) >= 1) return holder
+    await new Promise(r => setTimeout(r, 100 + Math.floor(Math.random() * 150)))
+  }
+  const e = new Error('could not acquire the cross-process asset lock (another writer holds it) — retry'); e.code = 'LOCKED'; throw e
+}
+async function releaseAssetLock(assetId, holder) { await dbExec('DELETE FROM asset_locks WHERE asset_id=? AND holder=?', [assetId, holder]).catch(() => {}) }
+async function withDbAssetLock(assetId, fn) {
+  const holder = await acquireAssetLock(assetId)
+  try { return await fn() } finally { await releaseAssetLock(assetId, holder) }
+}
 app.post('/api/move', async (req, res) => {
   // F05 (audit): a move mints dest tokens against a source burn. Without binding the burn to the
   // receiver, a caller could front-run someone's public burn and claim the minted output. So a
@@ -1191,7 +1227,7 @@ app.post('/api/move', async (req, res) => {
     if (!burn_txid || !to_address) return res.status(400).json({ error: 'burn_txid and to_address required' })
     if (!(from_chain in DEST_DECIMALS) || !(to_chain in DEST_DECIMALS)) return res.status(400).json({ error: 'unsupported chain' })
     if (from_chain === to_chain) return res.status(400).json({ error: 'source and destination chains must differ' })
-    const asset = await getAssetByTick(tick || '')
+    const asset = await resolveAsset(tick || '') // grok: honor "proto:TICKER" so collided tickers pick the right protocol/rep
     if (!asset) return res.status(404).json({ error: 'asset not in registry' })
     if (!asset.whitelisted) return res.status(403).json({ error: 'asset not whitelisted' })
     const fromRep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, from_chain]))[0]
@@ -1626,8 +1662,8 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
         if (!dep) return { status: 404, body: { error: 'no matching confirmed ACME send to the vault (by txid + source + amount≥)' } }
         if (boundSource && String(dep.source) !== boundSource) return { status: 403, body: { error: `this ACME deposit was sent by ${dep.source}, not the address you signed with (${boundSource})` } }
         // grok/R04 class: credit EXACTLY the send quantity — a partial claim would strand the remainder
-        // behind txid idempotency (same as XCP).
-        if (BigInt(String(dep.quantity)) !== BigInt(acme.toBase(amt, dec))) return { status: 409, body: { error: `the ACME send is ${acme.fromBase(dep.quantity, dec)} ${displayTicker(asset.exact_ticker)} but you are claiming ${amt} — claim EXACTLY the sent amount`, sent: acme.fromBase(dep.quantity, dec) } }
+        // behind txid idempotency (same as XCP). acme.findDeposits maps the amount to `quantity_base`.
+        if (BigInt(String(dep.quantity_base)) !== BigInt(acme.toBase(amt, dec))) return { status: 409, body: { error: `the ACME send is ${acme.fromBase(dep.quantity_base, dec)} ${displayTicker(asset.exact_ticker)} but you are claiming ${amt} — claim EXACTLY the sent amount`, sent: acme.fromBase(dep.quantity_base, dec) } }
         const confs = await acme.confirmations(dep.block_index).catch(() => 0)
         if (confs < ACME_CONFIRMS) return { status: 409, body: { error: `awaiting confirmations (${confs}/${ACME_CONFIRMS})`, confirmations: confs } }
         confirmations = confs
@@ -1712,7 +1748,7 @@ app.post('/api/custody/redeem', async (req, res) => {
     const { tick, amount, to, chain = 'solana' } = req.body || {}
     const amt = parseAmount(amount); if (!amt) return res.status(400).json({ error: 'amount must be a positive number' })
     if (!to) return res.status(400).json({ error: 'destination BTC address required' })
-    const asset = await getAssetByTick(tick || '')
+    const asset = await resolveAsset(tick || '') // grok: honor "proto:TICKER" for collided tickers
     if (!asset) return res.status(404).json({ error: 'asset not in registry' })
     if (!custody.isLive()) return res.status(403).json({ error: 'custody redemption is gated — audited go-ahead required', gated: true })
     const operatorMode = isOperator(req)
@@ -1797,13 +1833,33 @@ app.get('/api/reconcile', async (req, res) => {
     const ops = await dbQuery(
       `SELECT op_key, action, canonical_id, amount, chain, recipient, state, tx_id, updated_at
        FROM operations WHERE state IN ('reserved','reconcile') ORDER BY updated_at DESC`).catch(() => [])
+    // grok: stuck cross-chain moves (source-debit uncertain) — the dest mint is gated on 'decremented'
+    const moves = await dbQuery(
+      `SELECT cl.id, cl.canonical_id, ca.exact_ticker, cl.amount, cl.dest_chain AS from_chain, cl.btc_txid AS burn_txid, cl.status, cl.created_at
+       FROM collateral_ledger cl LEFT JOIN canonical_assets ca ON ca.id=cl.canonical_id
+       WHERE cl.direction='move-out' AND cl.status='pending' ORDER BY cl.id`).catch(() => [])
+    // grok: stamp-bridge releases whose broadcast outcome is unknown (reserving/reconcile)
+    const stamps = await dbQuery(
+      `SELECT id, src20_tick, stamp_asset, amount, burn_txid, user_address, release_txid, status, created_at
+       FROM bridge_ops WHERE status IN ('reserving','reconcile') ORDER BY id`).catch(() => [])
+    // grok: orphan consumed-burns — a burn reserved but whose downstream row never landed (consume-then-crash)
+    const orphanBurns = await dbQuery(
+      `SELECT cb.burn_txid, cb.chain, cb.purpose, cb.canonical_id, cb.created_at FROM consumed_burns cb
+       WHERE (cb.purpose='redeem' AND NOT EXISTS (SELECT 1 FROM collateral_ledger cl WHERE cl.direction='redeem'   AND (cl.burn_txid=cb.burn_txid OR lower(cl.burn_txid)=cb.burn_txid)))
+          OR (cb.purpose='move'   AND NOT EXISTS (SELECT 1 FROM collateral_ledger cl WHERE cl.direction='move-out' AND (cl.btc_txid=cb.burn_txid  OR lower(cl.btc_txid)=cb.burn_txid)))
+       ORDER BY cb.created_at DESC`).catch(() => [])
     res.json({
       stuck_redeems: redeems,
+      stuck_moves: moves,
+      stuck_stamps: stamps,
+      orphan_burns: orphanBurns,
       stuck_ops: ops,
-      note: 'Resolve a redeem row via POST /api/reconcile {kind:"redeem", id, resolution:"released"|"failed", release_txid?}. '
-          + 'Verify the on-chain outcome FIRST. released=BTC actually left the vault (finalizes: decrements circulating, keeps burn consumed). '
-          + 'failed=nothing left the vault (restores collateral, frees the burn so the holder can retry). '
-          + 'Mint-op (operations) reconciliation is handled by the durable-recovery batch, not here.',
+      note: 'POST /api/reconcile after verifying the ON-CHAIN outcome. Kinds: '
+          + '{kind:"redeem", id, resolution:"released"|"failed", release_txid?} — released=BTC left the vault (decrement+keep burn); failed=nothing left (restore collateral+free burn). '
+          + '{kind:"move", burn_txid, resolution:"decremented"|"aborted"} — decremented=source debit CONFIRMED (lets the move resume its dest mint); aborted=debit did NOT happen (free the burn, mark aborted). '
+          + '{kind:"stamp", burn_txid, resolution:"released"|"failed", release_txid?} — released=stamp went out (mark released); failed=nothing broadcast (delete the reservation, retryable). '
+          + '{kind:"burn", burn_txid, chain, resolution:"free"} — free an ORPHAN consumed-burn with no downstream row. '
+          + 'Mint-op (operations) reconciliation is the durable-recovery batch, not here.',
     })
   } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
 })
@@ -1811,8 +1867,55 @@ app.get('/api/reconcile', async (req, res) => {
 app.post('/api/reconcile', async (req, res) => {
   if (requireOperator(req, res)) return
   try {
-    const { kind, id, resolution, release_txid } = req.body || {}
-    if (kind !== 'redeem') return res.status(400).json({ error: 'only kind:"redeem" is reconcilable here (mint-op recovery is the R05 batch)' })
+    const { kind, id, resolution, release_txid, burn_txid, chain } = req.body || {}
+
+    // ---- kind:"move" — resolve a stuck move-out 'pending' (source-debit outcome uncertain) ----
+    if (kind === 'move') {
+      if (!burn_txid) return res.status(400).json({ error: 'burn_txid required' })
+      if (resolution !== 'decremented' && resolution !== 'aborted') return res.status(400).json({ error: 'resolution must be "decremented" (source debit confirmed → move can resume) or "aborted" (debit did NOT happen → free burn)' })
+      const mrow = (await dbQuery(`SELECT * FROM collateral_ledger WHERE direction='move-out' AND btc_txid=?`, [burn_txid]))[0]
+      if (!mrow) return res.status(404).json({ error: 'move-out row not found for that burn_txid' })
+      if (mrow.status !== 'pending') return res.status(409).json({ error: `move-out is not pending (status=${mrow.status})` })
+      const out = await withAssetLock(mrow.canonical_id, async () => {
+        if (resolution === 'decremented') { await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE id=? AND status='pending'`, [mrow.id]); return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, note: 'resubmit the move with the same burn_txid to complete the destination mint' } } }
+        // aborted: operator confirmed the debit never happened → free the burn + mark aborted (retryable)
+        const cbChain = mrow.dest_chain
+        await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(cbChain, burn_txid)]).catch(() => {})
+        const freed = !(await burnConsumed(cbChain, burn_txid))
+        if (!freed) return { status: 500, body: { error: 'could not free the burn — left pending; retry', reconciled: false } }
+        await dbExec(`UPDATE collateral_ledger SET status='aborted' WHERE id=?`, [mrow.id])
+        return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, freed_burn: true } }
+      })
+      return res.status(out.status).json(out.body)
+    }
+
+    // ---- kind:"stamp" — resolve a stamp-bridge release whose broadcast outcome is unknown ----
+    if (kind === 'stamp') {
+      if (!burn_txid) return res.status(400).json({ error: 'burn_txid required' })
+      if (resolution !== 'released' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "released" (stamp went out) or "failed" (nothing broadcast → delete reservation)' })
+      const brow = (await dbQuery('SELECT * FROM bridge_ops WHERE burn_txid=?', [String(burn_txid)]))[0]
+      if (!brow) return res.status(404).json({ error: 'bridge_ops row not found for that burn_txid' })
+      if (brow.status !== 'reserving' && brow.status !== 'reconcile') return res.status(409).json({ error: `bridge op is terminal (status=${brow.status})` })
+      if (resolution === 'released') { await dbExec(`UPDATE bridge_ops SET status='released', release_txid=COALESCE(?, release_txid) WHERE burn_txid=?`, [release_txid || null, String(burn_txid)]); return res.status(200).json({ reconciled: true, kind, burn_txid, resolution }) }
+      await dbExec('DELETE FROM bridge_ops WHERE burn_txid=? AND status IN (?,?)', [String(burn_txid), 'reserving', 'reconcile']) // failed → retryable
+      return res.status(200).json({ reconciled: true, kind, burn_txid, resolution: 'failed', deleted: true })
+    }
+
+    // ---- kind:"burn" — free an ORPHAN consumed-burn (no downstream redeem/move row) ----
+    if (kind === 'burn') {
+      if (!burn_txid || !chain) return res.status(400).json({ error: 'burn_txid and chain required' })
+      if (resolution !== 'free') return res.status(400).json({ error: 'resolution must be "free"' })
+      const norm = normTxid(chain, burn_txid)
+      const cb = (await dbQuery('SELECT * FROM consumed_burns WHERE burn_txid=?', [norm]))[0]
+      if (!cb) return res.status(404).json({ error: 'consumed_burn not found' })
+      // safety: refuse to free a burn that still has a live downstream row (not actually an orphan)
+      const live = await dbQuery(`SELECT 1 FROM collateral_ledger WHERE (direction='redeem' AND (burn_txid=? OR lower(burn_txid)=?)) OR (direction='move-out' AND (btc_txid=? OR lower(btc_txid)=?) AND status!='aborted') LIMIT 1`, [burn_txid, norm, burn_txid, norm])
+      if (live.length) return res.status(409).json({ error: 'that burn still has a live redeem/move row — resolve THAT first (not an orphan)' })
+      await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [norm])
+      return res.status(200).json({ reconciled: true, kind, burn_txid, resolution: 'free' })
+    }
+
+    if (kind !== 'redeem') return res.status(400).json({ error: 'kind must be "redeem", "move", "stamp", or "burn"' })
     if (resolution !== 'released' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "released" or "failed"' })
     const row = (await dbQuery(`SELECT * FROM collateral_ledger WHERE id=? AND direction='redeem'`, [id]))[0]
     if (!row) return res.status(404).json({ error: 'redeem ledger row not found' })
@@ -2128,7 +2231,10 @@ app.post('/api/amm/swap', async (req, res) => {
   // Operator-only. Real users trade with their OWN wallet via the Uniswap deep-link in the UI.
   if (requireOperator(req, res)) return
   try {
-    const { pool_id, token_in, amount_in, to } = req.body || {}
+    const { pool_id, token_in, amount_in, to, op_key } = req.body || {}
+    // grok: the rep-side fund mint is value-changing → require a durable idempotency key so a crash-retry
+    // of the same swap can't double-mint protocol inventory (swaps legitimately repeat → key is per-call).
+    if (!op_key || typeof op_key !== 'string') return res.status(400).json({ error: 'op_key required — supply a unique idempotency key per swap so a retry cannot double-mint the input' })
     const pool = (await dbQuery('SELECT * FROM pools WHERE id=?', [pool_id]))[0]
     if (!pool) return res.status(404).json({ error: 'pool not found' })
     const inIsA = String(token_in) === pool.token_a || String(token_in).toLowerCase() === String(pool.symbol_a).toLowerCase()
@@ -2152,7 +2258,7 @@ app.post('/api/amm/swap', async (req, res) => {
       const feedTick = inIsA ? pool.symbol_a : pool.symbol_b
       const asset = await getAssetByTick(feedTick)
       if (!asset) return res.status(404).json({ error: `input token ${feedTick} is not a registered representation` })
-      const m = await performMint(asset.exact_ticker, amount_in, vaultLp, pool.chain)
+      const m = await performMint(asset.exact_ticker, amount_in, vaultLp, pool.chain, asset, `swap-fund:${op_key}`)
       if (m.status !== 200) return res.status(m.status).json({ stage: 'fund swapper', ...m.body })
       amtIn = m.body.amount_minted
     }
@@ -2334,6 +2440,7 @@ async function migrateSchema() {
     await dbQuery('SELECT burn_txid FROM consumed_burns LIMIT 1')
     await dbQuery('SELECT burn_txid FROM collateral_ledger LIMIT 1')
     await dbQuery('SELECT op_key FROM operations LIMIT 1') // R05 durable operation records
+    await dbQuery('SELECT asset_id FROM asset_locks LIMIT 1') // grok P0: cross-process asset lock table
   } catch (e) {
     console.error('SCHEMA CHECK FAILED — burn registry missing; writes stay contained (SCHEMA_OK false). Apply migration (consumed_burns + operations + collateral_ledger.burn_txid). ' + (e.message || e))
     return // SCHEMA_OK stays false → containment holds even if STAMPY_MAINTENANCE=0

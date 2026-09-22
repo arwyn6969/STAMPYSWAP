@@ -50,6 +50,7 @@ async function fixture(t, options = {}) {
     CREATE TABLE stamp_bridges(id INTEGER PRIMARY KEY, src20_tick TEXT, stamp_asset TEXT, stamp_protocol TEXT, ratio INTEGER, burn_address TEXT, enabled INTEGER);
     CREATE TABLE bridge_ops(id INTEGER PRIMARY KEY, src20_tick TEXT, stamp_asset TEXT, amount TEXT, burn_txid TEXT UNIQUE, user_address TEXT, release_txid TEXT, status TEXT, created_at INTEGER);
     CREATE TABLE operations(op_key TEXT PRIMARY KEY, action TEXT, canonical_id INTEGER, amount TEXT, chain TEXT, recipient TEXT, state TEXT, created_at INTEGER, updated_at INTEGER, tx_id TEXT, result_json TEXT);
+    CREATE TABLE asset_locks(asset_id INTEGER PRIMARY KEY, holder TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
     CREATE TABLE pools(id INTEGER PRIMARY KEY, canonical_a INTEGER, canonical_b INTEGER);
   `)
   db.prepare('INSERT INTO canonical_assets VALUES (1,?,?,?,?,1,?)').run('COIN', protocol, '1000000', decimals, 'deploy')
@@ -97,7 +98,7 @@ async function fixture(t, options = {}) {
   }
   const { context } = load('server.js', n => {
     if (!(n in dependencies)) throw Error('Unexpected import: ' + n); return dependencies[n]
-  }, { fetch: fetchFixture, process: { env: { OPERATOR_TOKEN: op['x-operator-token'], STAMPY_MAINTENANCE: maintenance ? '1' : '0', STAMPY_PREVIEW: '0' } },
+  }, { fetch: fetchFixture, process: { env: { OPERATOR_TOKEN: op['x-operator-token'], STAMPY_MAINTENANCE: maintenance ? '1' : '0', STAMPY_PREVIEW: '0', ASSET_LOCK_TIMEOUT_MS: '400', ASSET_LOCK_LEASE_MS: '2000' } },
     setInterval: () => ({ unref() {} }), __query: query, __exec: exec })
   vm.runInContext('dbQuery = __query; dbExec = __exec', context)
   await new Promise(setImmediate) // let the (intentionally disconnected) startup schema check settle
@@ -189,6 +190,24 @@ test('A06: operator mint without an op_key is rejected before any effect', async
   assert.equal(f.state.mints.length, 0)
 })
 
+test('P0: a live cross-process asset lock blocks a concurrent mint (fail-closed, no mint)', async t => {
+  const f = await fixture(t, { collateral: '100', circulating: '0' })
+  const now = Math.floor(Date.now() / 1000)
+  f.db.prepare('INSERT INTO asset_locks(asset_id,holder,acquired_at,expires_at) VALUES(1,?,?,?)').run('other-live-worker', now, now + 9999)
+  const r = await f.call('/api/mint', { tick: 'COIN', amount: '1', receive_address: owner.address, chain: 'base', op_key: 'k1' }, op)
+  assert.equal(r.code, 503)
+  assert.ok(r.body.locked)
+  assert.equal(f.state.mints.length, 0)          // never minted without holding the lock
+})
+
+test('P0: an expired asset lease is stolen and the mint proceeds', async t => {
+  const f = await fixture(t, { collateral: '100', circulating: '0' })
+  f.db.prepare('INSERT INTO asset_locks(asset_id,holder,acquired_at,expires_at) VALUES(1,?,?,?)').run('dead-worker', 1, 2) // long expired
+  const r = await f.call('/api/mint', { tick: 'COIN', amount: '1', receive_address: owner.address, chain: 'base', op_key: 'k2' }, op)
+  assert.equal(r.code, 200)                       // stole the stale lease
+  assert.equal(f.state.mints.length, 1)
+})
+
 test('F04: Counterparty deposit is credited by PER-TX attribution (txid-idempotent, exact, no operator)', async t => {
   const f = await fixture(t, { protocol: 'counterparty', decimals: 0, collateral: '0', circulating: '0' })
   f.state.sends = [{ source: btcSource, destination: 'vault', status: 'valid', quantity: '1', tx_hash: 'xcpdep', block_index: 10 }]
@@ -202,6 +221,15 @@ test('F04: Counterparty deposit is credited by PER-TX attribution (txid-idempote
   // a txid with no matching send → 404, nothing minted
   assert.equal((await f.call('/api/custody/verify-deposit', f.claim({ txid: 'nope', amount: '1' }))).code, 404)
   assert.equal(f.state.mints.length, 1)
+})
+
+test('ACME deposit exact-amount rejects a partial claim cleanly (no 500 from quantity_base)', async t => {
+  const f = await fixture(t, { protocol: 'acme', decimals: 0, collateral: '0', circulating: '0' })
+  f.state.sends = [{ source: btcSource, destination: 'vault', status: 'valid', quantity: '10', tx_hash: 'acmedep', block_index: 10 }]
+  const r = await f.call('/api/custody/verify-deposit', f.claim({ txid: 'acmedep', amount: '1' }))
+  assert.equal(r.code, 409)                       // "claim EXACTLY the sent amount" — NOT a 500
+  assert.match(JSON.stringify(r.body), /EXACTLY/)
+  assert.equal(f.state.mints.length, 0)
 })
 
 test('F05: a non-operator move requires the burn-owner signature (front-run resistant)', async t => {
