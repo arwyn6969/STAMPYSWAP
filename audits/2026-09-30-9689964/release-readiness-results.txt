@@ -1,0 +1,28 @@
+(node:7272) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ OPEN B01: expired lease can be stolen from a still-running mint and overissue backing (50.774875ms)
+✔ OPEN B02: committed debit plus lost DB response is retried and decrements twice (8.296208ms)
+✔ OPEN B03: failed new representation insert is swallowed and mint is marked completed (6.259583ms)
+✔ OPEN B04: uncertain mint does not reserve its potential issuance against a different operation (5.999375ms)
+✔ OPEN B05: persistent decrement failure reports successful terminal reconciliation (10.636416ms)
+✔ OPEN B05: failed source debit can still be marked decremented and move reports success (5.304875ms)
+✔ OPEN B06: restart reconsumes an explicitly aborted move burn (4.014459ms)
+✔ OPEN B07: asset_locks without uniqueness is accepted and admits two holders (2.7405ms)
+✔ OPEN B07: irrelevant partial unique index passes the operation uniqueness gate (2.438042ms)
+✔ OPEN B06: NULL-status historical redemption is omitted from burn backfill (8.54325ms)
+✔ OPEN B08: withdrawal and move UI omit required authorizations (4.398958ms)
+✔ OPEN B09: SRC-20 output guard permits an excessive miner fee and no transfer payload (3.44925ms)
+✔ FIXED A02: legacy mint key blocks a possibly repeated deposit mint (18.274167ms)
+✔ FIXED A04: successful failed-redeem reconciliation stays freed across startup (3.228958ms)
+✔ FIXED A07: ambiguous stamp broadcast retains reservation and blocks second release (4.099041ms)
+✔ FIXED R04 and F10: partial representation and stamp claims rejected without consuming entitlement (5.317667ms)
+✔ FIXED containment: path variants, schema failure and retired routes remain closed (31.283167ms)
+✔ FIXED F09 and ACME regression: exact indivisible claim succeeds, extra precision fails before mint (22.420666ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 490.5265

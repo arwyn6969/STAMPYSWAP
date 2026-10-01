@@ -1,0 +1,12 @@
+{
+  "server.js": "c91bcd4b9b5f7f3fe99558feb36aa5e7b6cbece248f17264a2f04ec16d6f7279",
+  "recovery.js": "cdaeb2149a7ddeabe0d308653d87285db505b9f53f2f13cb5b7aad63f5c5fa22",
+  "labels.js": "982733d12487db58afa6f969f7791b564bb7934440966fd4d51e362f67f27fca",
+  "custody.js": "a0acf5486b7d27dc48f326b0455a272ac56ce56e5c2ed06950cb6304bfb8311f",
+  "evm-mint.js": "495d5a17c5e90bba79fa60396c5c1510873ca5ad4cf279b801ca1a10c99a6bc9",
+  "sol-mint.js": "a86954727eaad1d4e7b0fb53207bd6ddf0aa981c972b817f831a205c2cb01acd",
+  "package.json": "5e80f2cad6a54e2a2be7a968694ba748b1c8dc1773c64c0b34b658d3455c26db",
+  "package-lock.json": "8fba9e207852d213d14018e865dad21fff6469247c86dfb17b8eda08a347b71e",
+  "test/recovery.test.js": "ade47bca5bf92e3205aa59a47cc7c7a4d7321cac53ce7b4df58703373885d7e8",
+  "test/labels.test.js": "f3be3d54ad58d91a4632b21663b4bc6688347a60bd0ab164766e791b48d76b27"
+}
