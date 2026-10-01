@@ -22,7 +22,8 @@
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
-    "solc": "^0.8.26",
-    "eslint": "^8.57.0"
+    "@openzeppelin/contracts": "^4.9.6",
+    "eslint": "^8.57.0",
+    "solc": "^0.8.26"
   }
 }

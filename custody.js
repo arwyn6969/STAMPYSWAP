@@ -194,18 +194,47 @@ async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20
   // these bounds already refuse unexpected BTC value regardless of destination. All env-overridable.
   const SRC20_DUST = parseInt(process.env.SRC20_DUST_SATS || '1000', 10)
   const SRC20_MAX_NONVAULT = parseInt(process.env.SRC20_MAX_NONVAULT_SATS || '5000', 10)
+  // B09 (audit): bound the MINER FEE and require a real transfer payload before signing. The old guard
+  // only capped non-vault OUTPUT values, so a PSBT whose inputs vastly exceed its outputs (change back
+  // to the vault) passed — a 1,000,000-sat input with 546-sat vault change and no SRC-20 payload implied
+  // a ~999,454-sat fee that would drain vault BTC to miners. We now establish the declared input value,
+  // compute fee = inputs − outputs, and enforce an ABSOLUTE fee cap AND a fee-RATE cap; and we require a
+  // transfer payload (a data/OP_RETURN output plus a non-vault recipient) so an empty sweep is rejected.
+  const SRC20_MAX_FEE = parseInt(process.env.SRC20_MAX_FEE_SATS || '50000', 10)
+  const SRC20_MAX_FEE_RATE = parseInt(process.env.SRC20_MAX_FEE_RATE || '200', 10) // sat/vB
   let _psbt
   try { _psbt = bitcoinjs.Psbt.fromHex(psbtHex) } catch (_) { throw new Error('refusing to sign SRC-20 redeem: could not decode the composed PSBT to verify its outputs (fail-closed)') }
-  let nonVaultTotal = 0
+  // declared input value (fail-closed if any input lacks a witness/non-witness UTXO value we can read)
+  let inSum = 0
+  _psbt.data.inputs.forEach((inp, i) => {
+    let v = null
+    if (inp.witnessUtxo) v = Number(inp.witnessUtxo.value)
+    else if (inp.nonWitnessUtxo) { try { const prev = bitcoinjs.Transaction.fromBuffer(inp.nonWitnessUtxo); v = Number(prev.outs[_psbt.txInputs[i].index].value) } catch (_) { v = null } }
+    if (v == null || !Number.isFinite(v)) throw new Error('refusing to sign SRC-20 redeem: input #' + i + ' has no verifiable value (fail-closed) — cannot establish the miner fee')
+    inSum += v
+  })
+  let nonVaultTotal = 0, outSum = 0, hasData = false, hasRecipient = false
   for (const o of _psbt.txOutputs) {
+    outSum += Number(o.value || 0)
     let addr = null
-    try { addr = bitcoinjs.address.fromOutputScript(o.script, bitcoinjs.networks.bitcoin) } catch (_) { addr = null } // OP_RETURN/bare-data → null, 0-value (fine)
+    try { addr = bitcoinjs.address.fromOutputScript(o.script, bitcoinjs.networks.bitcoin) } catch (_) { addr = null } // OP_RETURN/bare-data → null
+    if (addr === null) { hasData = true; continue } // data/OP_RETURN carries the SRC-20 transfer payload (0 value)
     if (addr === from) continue // change back to the vault — unbounded is fine
+    hasRecipient = true
     const val = Number(o.value || 0)
     nonVaultTotal += val
-    if (val > SRC20_DUST) throw new Error(`refusing to sign SRC-20 redeem: output of ${val} sats to ${addr || 'a data/unknown script'} exceeds the dust cap (${SRC20_DUST}) — the tx must not move real BTC value off the vault (recipient included)`)
+    if (val > SRC20_DUST) throw new Error(`refusing to sign SRC-20 redeem: output of ${val} sats to ${addr} exceeds the dust cap (${SRC20_DUST}) — the tx must not move real BTC value off the vault (recipient included)`)
   }
   if (nonVaultTotal > SRC20_MAX_NONVAULT) throw new Error(`refusing to sign SRC-20 redeem: ${nonVaultTotal} sats total go to non-vault outputs, over the cap (${SRC20_MAX_NONVAULT}) — possible vault BTC leak`)
+  // miner fee = declared inputs − outputs; enforce absolute + rate caps
+  const fee = inSum - outSum
+  if (fee < 0) throw new Error(`refusing to sign SRC-20 redeem: outputs (${outSum}) exceed declared inputs (${inSum}) — malformed`)
+  const vbytes = Math.max(1, Math.ceil(10.5 + _psbt.data.inputs.length * 68 + _psbt.txOutputs.length * 31)) // p2wpkh estimate
+  const impliedFeeRate = fee / vbytes
+  if (fee > SRC20_MAX_FEE) throw new Error(`refusing to sign SRC-20 redeem: implied miner fee ${fee} sats exceeds the cap (${SRC20_MAX_FEE}) — would drain vault BTC`)
+  if (impliedFeeRate > SRC20_MAX_FEE_RATE) throw new Error(`refusing to sign SRC-20 redeem: implied fee rate ${impliedFeeRate.toFixed(1)} sat/vB exceeds the cap (${SRC20_MAX_FEE_RATE})`)
+  // require an actual transfer payload — an empty sweep (only vault change, no data/recipient) is refused
+  if (!hasData && !hasRecipient) throw new Error('refusing to sign SRC-20 redeem: the PSBT carries no transfer payload or recipient output (only vault change) — nothing to transfer')
   const toSignInputs = (built.inputsToSign || []).map(i => ({ index: i.index, address: from, sighashType: i.sighashType }))
   const signer = await btcSigner()
   const signedResp = await signer.signPsbt(psbtHex, { transactionType: 'p2wpkh', toSignInputs })

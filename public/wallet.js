@@ -71,11 +71,11 @@
     setSlot('receive', { status: 'connecting' })
     try {
       const { nonce, message } = await fetch('api/auth/nonce?role=receive').then(r => r.json())
-      let address, signature
+      let address, signature, acct = null
       if (opt.kind === 'standard') {
         const w = opt.wallet
         const res = await w.features['standard:connect'].connect()
-        const acct = (res && res.accounts && res.accounts[0]) || (w.accounts && w.accounts[0])
+        acct = (res && res.accounts && res.accounts[0]) || (w.accounts && w.accounts[0])
         if (!acct) throw new Error('no account')
         address = acct.address
         const out = await w.features['solana:signMessage'].signMessage({ account: acct, message: new TextEncoder().encode(message) })
@@ -89,6 +89,7 @@
       }
       const v = await verifySolana(address, signature, nonce, opt.name)
       state.receive = { address, wallet: opt.name, chain: 'solana', verified: !!v.verified }
+      state.receiveWallet = { kind: opt.kind, wallet: opt.wallet, account: acct, address } // reused to sign redeem/move bindings
       try { window.__stampyReceive = v.verified ? address : null } catch (_) {}
       try { window.dispatchEvent(new CustomEvent('stampy:wallet', { detail: { role: 'receive', address, chain: 'solana' } })) } catch (_) {}
       setSlot('receive', { status: 'connected', ...state.receive })
@@ -126,6 +127,28 @@
     const d = state.depositWallet
     if (!d) throw new Error('connect your Bitcoin (deposit) wallet first')
     return signBtcMessage(d.kind, d.wallet, d.address, message)
+  }
+  // B08 (audit): sign the redeem/move owner-binding message with the wallet that holds the burned
+  // representation. Solana → ed25519 (returned base58, matching the server's nacl verify); EVM →
+  // personal_sign (0x hex, verified via ethers). The server binds the release/mint to this signature.
+  async function signSolanaMessage(message) {
+    const d = state.receiveWallet
+    if (!d) throw new Error('connect your Solana wallet first (the one that burned the representation)')
+    const bytes = new TextEncoder().encode(message)
+    let sig
+    if (d.kind === 'standard') { const out = await d.wallet.features['solana:signMessage'].signMessage({ account: d.account, message: bytes }); sig = (out[0] || out).signature }
+    else { const s = await d.wallet.signMessage(bytes, 'utf8'); sig = s.signature || s }
+    return bs58encode(sig)
+  }
+  async function signEvmMessage(message) {
+    const d = state.evmWallet
+    if (!d) throw new Error('connect your Base/Ethereum wallet first (the one that burned the representation)')
+    return d.provider.request({ method: 'personal_sign', params: [message, d.address] })
+  }
+  window.stampySignForChain = async function (chain, message) {
+    if (chain === 'solana') return signSolanaMessage(message)
+    if (chain === 'base' || chain === 'ethereum' || chain === 'base-mainnet') return signEvmMessage(message)
+    throw new Error('unsupported chain for signing: ' + chain)
   }
 
   async function connectDeposit(opt) {
@@ -194,6 +217,7 @@
         verified = !!v.verified
       } catch (_) {}
       state.evm = { address, wallet: opt.name, chain: 'evm', verified }
+      state.evmWallet = { provider: opt.provider, address } // reused to sign redeem/move bindings
       try { window.__stampyEvm = address } catch (_) {}
       try { window.dispatchEvent(new CustomEvent('stampy:wallet', { detail: { role: 'evm', address, chain: 'evm' } })) } catch (_) {}
       setSlot('evm', { status: 'connected', ...state.evm })

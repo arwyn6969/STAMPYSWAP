@@ -62,8 +62,27 @@ async function mintTokens({ existingMint, amountBase, amountBase9, decimals = DE
   const em = await emblem()
   const authority = new PublicKey(em.publicKey)
   let mint = null
-  if (existingMint) { try { mint = new PublicKey(existingMint); await getMint(connection, mint) } catch (_) { mint = null } }
-  if (!mint) mint = await createMint(connection, feePayer, authority, authority, decimals) // decimals sized per asset (u64-safe)
+  if (existingMint) {
+    // AUDIT (30-Sep): a TRANSIENT getMint RPC failure must NOT fall through to createMint — that would
+    // mint a DIFFERENT token (identity change) backed by the same collateral. Distinguish "the mint does
+    // not exist" (fail closed; reconcile) from a transient error (retry); NEVER auto-create a new identity
+    // when an existingMint was supplied.
+    let pk
+    try { pk = new PublicKey(existingMint) } catch (_) { throw new Error('stored Solana mint address is invalid: ' + existingMint) }
+    let lastErr
+    for (let i = 0; i < 4; i++) {
+      try { await getMint(connection, pk); mint = pk; break }
+      catch (e) {
+        lastErr = e
+        if (/could not find|not found|TokenAccountNotFound|Invalid account owner|account does not exist/i.test(String(e && (e.message || e)))) {
+          const er = new Error('the stored Solana mint ' + existingMint + ' does not exist on-chain — refusing to create a NEW token identity automatically (reconcile required)'); er.code = 'MINT_MISSING'; throw er
+        }
+        await new Promise(r => setTimeout(r, 200 * (i + 1))) // transient RPC error → back off and retry
+      }
+    }
+    if (!mint) { const er = new Error('could not verify the existing Solana mint after retries (transient RPC) — not creating a new identity: ' + (lastErr && (lastErr.message || lastErr))); er.code = 'RPC_UNCERTAIN'; throw er }
+  }
+  if (!mint) mint = await createMint(connection, feePayer, authority, authority, decimals) // new rep only; decimals sized per asset (u64-safe)
 
   const ata = await getOrCreateAssociatedTokenAccount(connection, feePayer, mint, owner)
 

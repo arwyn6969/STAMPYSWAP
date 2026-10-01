@@ -968,15 +968,21 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
     }
   }
 
-  // ---- SOLVENCY INVARIANT (cross-chain): total circulating ≤ collateral ≤ source supply ----
-  // A fresh reservation now exists (if opKey); a definite pre-send rejection here must RELEASE it so a
-  // legitimate later retry (e.g. after more collateral is confirmed) is not permanently blocked.
-  if (totalCirculating + mintBase > availableCollateral) {
+  // ---- SOLVENCY INVARIANT (cross-chain): circulating + RESERVED ≤ collateral ≤ source supply ----
+  // B01/B04 (audit): the invariant is "confirmed issuance + all issuance that MAY have happened ≤
+  // confirmed backing". So we add `reserved` = supply claimed by OTHER in-flight/uncertain mint ops
+  // (durable operations rows), excluding this op's own reservation. This is what stops a slow mint whose
+  // lock lease expired (B01) or an uncertain mint left as 'reconcile' (B04) from letting a different
+  // op_key issue against the same collateral — the reservation holds the backing across the whole op,
+  // independent of the lock lease. A fresh reservation now exists (if opKey); a definite pre-send
+  // rejection here must RELEASE it so a legitimate later retry is not permanently blocked.
+  const reserved = await reservedBase(asset.id, opKey)
+  if (totalCirculating + reserved + mintBase > availableCollateral) {
     if (opKey) await opFail(opKey)
-    return { status: 409, body: { error: 'insufficient collateral', reason: 'mint would exceed confirmed backing across all chains',
-      total_circulating: fromBaseUnits(totalCirculating), minting: mintAmt, collateral: fromBaseUnits(availableCollateral) } }
+    return { status: 409, body: { error: 'insufficient collateral', reason: 'mint would exceed confirmed backing across all chains (including in-flight/uncertain reservations)',
+      total_circulating: fromBaseUnits(totalCirculating), reserved: fromBaseUnits(reserved), minting: mintAmt, collateral: fromBaseUnits(availableCollateral) } }
   }
-  if (maxSupply > 0n && totalCirculating + mintBase > maxSupply) {
+  if (maxSupply > 0n && totalCirculating + reserved + mintBase > maxSupply) {
     if (opKey) await opFail(opKey)
     return { status: 409, body: { error: 'exceeds source max supply', max_supply: asset.max_supply } }
   }
@@ -1026,22 +1032,30 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
   } else { if (opKey) await opFail(opKey); return { status: 400, body: { error: 'unsupported destination chain' } } } // grok: release the reservation, don't strand it
 
   const newCirc = circulating + mintBase
-  if (rep) {
-    // P0: atomic CAS increment (not read-modify-write) so a concurrent writer can't lose our delta.
-    const b = await bumpCirculating(rep.id, mintBase)
-    if (!b.ok) { if (opKey) await opReconcile(opKey); return { status: 500, body: { error: 'mint accounting write contention — on-chain mint done, op kept for reconciliation: ' + b.reason, reconcile: true } } }
-    await dbExec('UPDATE representations SET status=?, dest_address=?, updated_at=? WHERE id=?', ['CANONICAL', mintAddr, now(), rep.id]).catch(() => {})
-  } else {
+  // Ensure a representation row exists (create with ZERO supply if new), then apply the mint as a
+  // once-only accounting event. B03 (audit): a NEW-rep INSERT that fails for a reason OTHER than the
+  // UNIQUE(canonical_id,dest_chain) race must NOT be swallowed as a completed mint — otherwise the
+  // on-chain mint happened but no supply is recorded, and the op is wrongly marked complete. We verify
+  // the row actually exists; if it does not, the accounting could not be made durable → keep the op
+  // reserved for reconciliation (backing stays reserved via reservedBase) and NEVER opComplete.
+  let repRow = rep
+  if (!repRow) {
     try {
       await dbExec(`INSERT INTO representations (canonical_id, dest_chain, dest_address, dest_symbol, status, authority_model, circulating_supply, updated_at)
-        VALUES (?, ?, ?, ?, 'CANONICAL', 'interim single-key (audited multisig in prod)', ?, ?)`,
-        [asset.id, chain, mintAddr, displayTicker(asset.exact_ticker), fromBaseUnits(newCirc, 18), now()])
-    } catch (_) {
-      // lost the create race (UNIQUE(canonical_id,dest_chain)) → the row exists; apply our delta atomically
-      const ex = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
-      if (ex) { await bumpCirculating(ex.id, mintBase); await dbExec('UPDATE representations SET status=?, dest_address=?, updated_at=? WHERE id=?', ['CANONICAL', mintAddr, now(), ex.id]).catch(() => {}) }
+        VALUES (?, ?, ?, ?, 'CANONICAL', 'interim single-key (audited multisig in prod)', '0', ?)`,
+        [asset.id, chain, mintAddr, displayTicker(asset.exact_ticker), now()])
+    } catch (_) { /* possibly a UNIQUE(canonical_id,dest_chain) race — verify below before trusting it */ }
+    repRow = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
+    if (!repRow) {
+      if (opKey) await opReconcile(opKey)
+      return { status: 500, body: { error: 'representation row could not be created after an on-chain mint — reconciliation required (backing stays reserved, mint NOT marked complete)', reconcile: true, mint_address: mintAddr, signature } }
     }
   }
+  // once-only increment keyed to this logical mint (opKey if present, else the on-chain tx signature)
+  const mintEventKey = `mint:${opKey || ('tx:' + signature)}`
+  const inc = await applyCirculatingDelta(repRow.id, mintBase, mintEventKey).catch(e => ({ ok: false, reason: String(e.message || e) }))
+  if (!inc || !inc.ok) { if (opKey) await opReconcile(opKey); return { status: 500, body: { error: 'mint accounting write failed — on-chain mint done, op kept for reconciliation: ' + (inc && inc.reason), reconcile: true } } }
+  await dbExec('UPDATE representations SET status=?, dest_address=?, updated_at=? WHERE id=?', ['CANONICAL', mintAddr, now(), repRow.id]).catch(() => {})
   await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, dest_tx, status, created_at)
     VALUES (?, 'mint', ?, ?, ?, ?, ?)`, [asset.id, mintAmt, chain, signature, real ? 'minted' : 'simulated', now()])
 
@@ -1150,42 +1164,77 @@ async function opComplete(op_key, tx_id, result) {
 async function opFail(op_key) { await dbExec('DELETE FROM operations WHERE op_key=?', [op_key]).catch(() => {}) } // proven pre-send failure → retryable
 async function opReconcile(op_key) { await dbExec(`UPDATE operations SET state='reconcile', updated_at=? WHERE op_key=?`, [now(), op_key]).catch(() => {}) }
 
-// A01 (audit): EXACTLY-ONCE release finalization, shared by normal redemption AND operator reconcile.
-// The circulation decrement and the terminal-status write are separate rows (no cross-row transaction),
-// so a crash between them could let a retry decrement circulation TWICE → understated circulation →
-// over-mint headroom → insolvency. Fix: make the TERMINAL STATUS TRANSITION the compare-and-set gate.
-// Only the caller that flips the reserved row (pending|reconcile → released, changes===1) performs the
-// decrement; any repeat finds it already released (changes 0) and does nothing. Ordering is fail-CLOSED:
-// if the process dies after the flip but before the decrement, circulation stays too HIGH (never
-// over-mints) and the terminal row won't be decremented again. dbExec returns {changes} (Dashboard API).
-// P0 (grok audit): the circulating_supply write must be atomic across PROCESSES, not just the
-// in-process withAssetLock. A plain read-modify-write loses an update when two Node workers share one
-// Dashboard DB (last-write-wins → understated circulating → the solvency check under-counts → unbounded
-// over-mint). This does a COMPARE-AND-SET retry keyed on the exact prior string, so concurrent writers
-// each apply their delta and the DB stays HONEST (== on-chain). If two workers both pass the solvency
-// check and both mint, the DB then reflects the true (over-)supply and the NEXT mint is blocked — i.e.
-// this BOUNDS and self-detects the damage. It does NOT by itself serialize the check across processes;
-// a cross-process per-asset lock (or a single-writer deployment) is STILL required before maintenance
-// is disabled — tracked as the reopen gate. dbExec returns {changes}. delta may be negative.
-async function bumpCirculating(repId, deltaBase) {
-  for (let i = 0; i < 16; i++) {
-    const row = (await dbQuery('SELECT circulating_supply FROM representations WHERE id=?', [repId]))[0]
-    if (!row) return { ok: false, reason: 'representation row not found' }
-    const curStr = row.circulating_supply == null ? '0' : String(row.circulating_supply)
-    let next = toBaseUnits(curStr) + deltaBase; if (next < 0n) next = 0n
-    const u = await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=? AND circulating_supply=?',
-      [fromBaseUnits(next, 18), now(), repId, curStr]).catch(() => ({ changes: 0 }))
-    if (u && (u.changes || 0) >= 1) return { ok: true, newCirc: fromBaseUnits(next, 18) }
-    // lost the CAS race (another writer changed it) → re-read and retry with the fresh value
-  }
-  return { ok: false, reason: 'circulating CAS contention (too many concurrent writers)' }
+// ---- B01/B04 (audit): DURABLE BACKING RESERVATION. The solvency check must count not only issued
+// (circulating) supply but every mint that MAY have happened or is in flight — a reserved op whose
+// outcome is not yet settled. Otherwise a slow/stolen-lease mint (B01) or an uncertain mint (B04)
+// leaves circulation unchanged and a DIFFERENT op_key can mint against the same collateral. A reservation
+// is an operations row in 'reserved' (in flight) or 'reconcile' (uncertain) state; its `amount` is the
+// supply it has claimed. We sum those (excluding the caller's own op) and subtract from available backing.
+async function reservedBase(canonicalId, excludeOpKey) {
+  const rows = await dbQuery(`SELECT op_key, amount FROM operations WHERE canonical_id=? AND action='mint' AND state IN ('reserved','reconcile')`, [canonicalId]).catch(() => [])
+  return rows.reduce((a, r) => (r.op_key === excludeOpKey ? a : a + toBaseUnits(r.amount)), 0n)
 }
+
+// ---- B02/B05 (audit): ONCE-ONLY ACCOUNTING EVENTS. A circulating-supply change must apply EXACTLY once,
+// even when an HTTP database COMMITS an update and then loses the response (a thrown exception does NOT
+// prove nothing happened). The old read-modify-CAS loop reapplied the delta on an ambiguous error →
+// double debit/credit. Fix: model circulating_supply as the materialized SUM of immutable, idempotent
+// accounting_events keyed by a per-logical-effect `event_key` (UNIQUE). Each change (1) durably records
+// its event once, then (2) RECOMPUTES circulating = SUM(events) and writes that ABSOLUTE value. Recompute
+// is convergent, so a lost response is resolved by READING state (does the target value hold?), never by
+// reapplying arithmetic. A seeded `baseline:<repId>` event (migrateSchema) preserves pre-existing supply.
+async function recordAccountingEvent(repId, eventKey, deltaBase) {
+  try { await dbExec('INSERT INTO accounting_events (event_key, rep_id, delta_base, created_at) VALUES (?,?,?,?)', [eventKey, repId, deltaBase.toString(), now()]); return { fresh: true } }
+  catch (e) {
+    // ambiguous: a UNIQUE(event_key) conflict means it is ALREADY recorded (idempotent); any other error
+    // might have failed to persist. Resolve by reading the event's identity, not by assuming.
+    const ev = (await dbQuery('SELECT delta_base FROM accounting_events WHERE event_key=?', [eventKey]))[0]
+    if (!ev) throw new Error('accounting event could not be recorded: ' + (e.message || e))
+    return { fresh: false }
+  }
+}
+// Write an ABSOLUTE circulating value. Because the value is a full recompute (not current+delta), the
+// write is idempotent — so a transient failure can be safely RETRIED with the same target (never
+// double-applies), and an ambiguous (possibly-committed) response is resolved by reading back: if the
+// target already holds, the commit landed and we are done. A persistent failure throws (B05: the caller
+// must NOT report success; the row stays reconcilable/visible).
+async function writeCirculating(repId, targetStr) {
+  let lastErr
+  for (let i = 0; i < 8; i++) {
+    try { await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [targetStr, now(), repId]); return }
+    catch (e) {
+      lastErr = e
+      const row = (await dbQuery('SELECT circulating_supply c FROM representations WHERE id=?', [repId]).catch(() => []))[0]
+      if (row && String(row.c) === targetStr) return // committed despite the lost response
+      // otherwise the write genuinely did not land — retry the SAME absolute target (safe, idempotent)
+    }
+  }
+  throw new Error('circulating write failed after retries: ' + (lastErr && (lastErr.message || lastErr)))
+}
+// Apply a once-only circulating delta for the logical effect identified by eventKey. Idempotent: a retry
+// (same eventKey) recomputes the SAME sum and rewrites it — no double-apply possible. Throws only when the
+// event genuinely could not be recorded or the recompute genuinely did not land (caller then reconciles).
+async function applyCirculatingDelta(repId, deltaBase, eventKey) {
+  await recordAccountingEvent(repId, eventKey, deltaBase)
+  const rows = await dbQuery('SELECT delta_base FROM accounting_events WHERE rep_id=?', [repId])
+  let sum = 0n; for (const r of rows) sum += BigInt(r.delta_base)
+  if (sum < 0n) sum = 0n
+  const target = fromBaseUnits(sum, 18)
+  await writeCirculating(repId, target)
+  return { ok: true, newCirc: target }
+}
+
+// A01/B02/B05 (audit): EXACTLY-ONCE release finalization, shared by normal redemption AND operator
+// reconcile. The decrement is a once-only accounting event keyed on the ledger row (`release:<id>`),
+// so a lost response can never decrement twice (B02). Apply the decrement FIRST, then flip the terminal
+// status only AFTER it is durably applied — so a failed decrement NEVER reports a finalized release
+// (B05): it throws, the row stays pending/reconcile and visible in the repair inventory. The event key
+// makes a resume idempotent (recompute converges); the CAS flip makes the terminal transition once-only.
 async function finalizeReleaseOnce({ ledgerId, canonicalId, chain, amountBase, releaseTxid }) {
-  const upd = await dbExec(`UPDATE collateral_ledger SET status='released', btc_txid=COALESCE(?, btc_txid) WHERE id=? AND status IN ('pending','reconcile')`, [releaseTxid || null, ledgerId])
-  if (!upd || (upd.changes || 0) < 1) return { alreadyFinalized: true } // a prior finalize already claimed the decrement
   const rep = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [canonicalId, chain]))[0]
-  if (rep) await bumpCirculating(rep.id, -amountBase) // P0: atomic CAS decrement
-  return { finalized: true }
+  if (rep) await applyCirculatingDelta(rep.id, -amountBase, `release:${ledgerId}`) // throws on genuine failure → caller keeps the row reconcilable
+  const upd = await dbExec(`UPDATE collateral_ledger SET status='released', btc_txid=COALESCE(?, btc_txid) WHERE id=? AND status IN ('pending','reconcile')`, [releaseTxid || null, ledgerId])
+  return (upd && (upd.changes || 0) >= 1) ? { finalized: true } : { alreadyFinalized: true }
 }
 
 // grok P0 (the maintenance-off gate): a DB-BACKED per-asset lock that serializes the solvency
@@ -1278,9 +1327,19 @@ app.post('/api/move', async (req, res) => {
           await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(from_chain, burn_txid)]).catch(() => {})
           return { status: 409, body: { error: 'move exceeds source circulating', circulating: fromBaseUnits(circ) } }
         }
-        await dbExec(`INSERT OR IGNORE INTO collateral_ledger (canonical_id, direction, amount, dest_chain, btc_txid, status, created_at) VALUES (?, 'move-out', ?, ?, ?, 'pending', ?)`, [asset.id, amount, from_chain, burn_txid, now()])
-        await bumpCirculating(fromRep.id, -toBaseUnits(amount)) // P0: atomic CAS debit
-        // CAS mark: only flips 'pending'→'decremented' (a re-run after the debit can't double-debit)
+        // Ensure a 'pending' move-out row. B06 (audit): a prior 'aborted' row for this burn (operator
+        // confirmed the debit never happened) stays retryable — reset it to 'pending' and reuse it
+        // (btc_txid is UNIQUE, so a fresh INSERT would be ignored). Otherwise insert a new pending row.
+        if (moveOut) await dbExec(`UPDATE collateral_ledger SET status='pending', amount=?, dest_chain=? WHERE id=? AND status='aborted'`, [amount, from_chain, moveOut.id])
+        else await dbExec(`INSERT OR IGNORE INTO collateral_ledger (canonical_id, direction, amount, dest_chain, btc_txid, status, created_at) VALUES (?, 'move-out', ?, ?, ?, 'pending', ?)`, [asset.id, amount, from_chain, burn_txid, now()])
+        // B05 (audit): the source debit is a once-only accounting event. Only mark 'decremented' AFTER it
+        // is durably applied — a failed/ambiguous debit must NOT be reported as a confirmed debit (which
+        // would let the destination mint proceed against an un-reduced source). applyCirculatingDelta
+        // throws on genuine failure → propagates to the handler (500), leaving the row 'pending' (visible
+        // + resumable in the repair inventory), nothing minted.
+        const deb = await applyCirculatingDelta(fromRep.id, -toBaseUnits(amount), `move-out:${normTxid(from_chain, burn_txid)}:${asset.id}`)
+        if (!deb.ok) return { status: 500, body: { error: 'move source debit did not complete — left pending for reconciliation (no destination mint)', reconcile: true } }
+        // CAS mark: only flips 'pending'→'decremented' (idempotent; a re-run after the debit can't double-debit)
         await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE direction='move-out' AND btc_txid=? AND canonical_id=? AND status='pending'`, [burn_txid, asset.id])
       }
       // mint on destination (unlocked core; total circulating now back to original → solvent)
@@ -1319,10 +1378,12 @@ app.post('/api/redeem', async (req, res) => {
       const circulating = rep ? toBaseUnits(rep.circulating_supply || '0') : 0n
       if (burnBase > circulating) return { status: 409, body: { error: 'cannot redeem more than circulating', circulating: fromBaseUnits(circulating) } }
       const newCirc = circulating - burnBase
-      await dbExec('UPDATE representations SET circulating_supply=?, status=?, updated_at=? WHERE id=?',
-        [fromBaseUnits(newCirc, 18), newCirc === 0n ? 'RETIRED' : 'CANONICAL', now(), rep.id])
-      await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, status, created_at)
+      // route through the once-only accounting primitive so circulating stays == SUM(events) (no drift
+      // vs the event-sourced model). Key on the new ledger row so a lost response can't double-decrement.
+      const ins = await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, status, created_at)
         VALUES (?, 'redeem', ?, ?, 'released', ?)`, [asset.id, floorToDecimals(amount, DEST_DECIMALS[chain]), chain, now()])
+      await applyCirculatingDelta(rep.id, -burnBase, `legacy-redeem:${ins && ins.lastInsertRowid}`)
+      if (newCirc === 0n) await dbExec('UPDATE representations SET status=?, updated_at=? WHERE id=?', ['RETIRED', now(), rep.id]).catch(() => {})
       return { status: 200, body: { redeemed: true, tick: asset.exact_ticker, chain, amount: String(amount),
         circulating: fromBaseUnits(newCirc), note: 'Representation burned; equivalent collateral released.' } }
     })
@@ -1859,7 +1920,7 @@ app.get('/api/reconcile', async (req, res) => {
           + '{kind:"move", burn_txid, resolution:"decremented"|"aborted"} — decremented=source debit CONFIRMED (lets the move resume its dest mint); aborted=debit did NOT happen (free the burn, mark aborted). '
           + '{kind:"stamp", burn_txid, resolution:"released"|"failed", release_txid?} — released=stamp went out (mark released); failed=nothing broadcast (delete the reservation, retryable). '
           + '{kind:"burn", burn_txid, chain, resolution:"free"} — free an ORPHAN consumed-burn with no downstream row. '
-          + 'Mint-op (operations) reconciliation is the durable-recovery batch, not here.',
+          + '{kind:"mint", op_key, resolution:"completed"|"failed", release_txid?} — completed=mint confirmed on-chain (record supply, needs release_txid); failed=no mint happened (release the backing reservation).',
     })
   } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
 })
@@ -1915,7 +1976,39 @@ app.post('/api/reconcile', async (req, res) => {
       return res.status(200).json({ reconciled: true, kind, burn_txid, resolution: 'free' })
     }
 
-    if (kind !== 'redeem') return res.status(400).json({ error: 'kind must be "redeem", "move", "stamp", or "burn"' })
+    // ---- kind:"mint" — resolve an uncertain mint OP (B04 audit). An op left 'reserved'/'reconcile'
+    // holds a durable backing reservation (reservedBase) so no other op can mint against it until the
+    // operator establishes the on-chain outcome. 'completed' = the mint DID land (record its supply +
+    // mark the op complete); 'failed' = it did NOT (release the reservation). Immutable request binding:
+    // the op row carries the canonical_id/chain/recipient/amount that were reserved; we act on those.
+    if (kind === 'mint') {
+      const { op_key } = req.body || {}
+      if (!op_key) return res.status(400).json({ error: 'op_key required' })
+      if (resolution !== 'completed' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "completed" (mint confirmed on-chain → record supply) or "failed" (no mint happened → release the reservation)' })
+      const op = (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0]
+      if (!op) return res.status(404).json({ error: 'operation not found' })
+      if (op.action !== 'mint') return res.status(400).json({ error: `operation ${op_key} is not a mint (action=${op.action})` })
+      if (op.state !== 'reserved' && op.state !== 'reconcile') return res.status(409).json({ error: `operation is terminal (state=${op.state}); nothing to reconcile` })
+      const out = await withAssetLock(op.canonical_id, async () => {
+        const cur = (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0]
+        if (!cur || (cur.state !== 'reserved' && cur.state !== 'reconcile')) return { status: 409, body: { error: 'operation no longer reconcilable' } }
+        if (resolution === 'failed') {
+          await dbExec('DELETE FROM operations WHERE op_key=?', [op_key]) // release the reservation (backing freed)
+          return { status: 200, body: { reconciled: true, kind, op_key, resolution: 'failed', note: 'reservation released — backing is available again' } }
+        }
+        // completed: the operator verified the on-chain mint. Record its supply as a once-only event
+        // (idempotent — if some accounting already landed, the event key makes this a no-op) + complete.
+        if (!release_txid) return { status: 400, body: { error: 'release_txid (the on-chain mint signature/tx) required to record a completed mint' } }
+        const repRow = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [op.canonical_id, op.chain]))[0]
+        if (!repRow) return { status: 409, body: { error: 'no representation row for this op chain — create/verify it before recording the mint' } }
+        await applyCirculatingDelta(repRow.id, toBaseUnits(op.amount), `mint:${op_key}`)
+        await dbExec(`UPDATE operations SET state='completed', tx_id=?, updated_at=? WHERE op_key=?`, [release_txid, now(), op_key])
+        return { status: 200, body: { reconciled: true, kind, op_key, resolution: 'completed', amount: op.amount, chain: op.chain, tx_id: release_txid } }
+      })
+      return res.status(out.status).json(out.body)
+    }
+
+    if (kind !== 'redeem') return res.status(400).json({ error: 'kind must be "redeem", "mint", "move", "stamp", or "burn"' })
     if (resolution !== 'released' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "released" or "failed"' })
     const row = (await dbQuery(`SELECT * FROM collateral_ledger WHERE id=? AND direction='redeem'`, [id]))[0]
     if (!row) return res.status(404).json({ error: 'redeem ledger row not found' })
@@ -2423,51 +2516,83 @@ async function tableEnforcesUnique(table, col) {
     for (const m of ddl.matchAll(/\b(?:UNIQUE|PRIMARY KEY)\s*\(([^)]*)\)/ig)) {
       const cols = _colsInParen(m[1]); if (cols.length === 1 && cols[0] === col) return true
     }
-    // a UNIQUE INDEX whose indexed columns are EXACTLY [col] (partial indexes: the WHERE clause is after
-    // the column paren, so we only capture the indexed columns).
+    // a UNIQUE INDEX whose indexed columns are EXACTLY [col]. B07 (audit): a PARTIAL unique index only
+    // enforces uniqueness over the rows matching its WHERE predicate. A predicate on OTHER columns/states
+    // (e.g. UNIQUE(op_key) WHERE state='completed') does NOT prevent two 'reserved' rows with the same
+    // key → it must NOT satisfy the gate. The ONE acceptable partial predicate is exactly "<col> IS NOT
+    // NULL" — the standard 'unique when present' idiom, which still guarantees every non-null value is
+    // unique (and is how the production collateral_ledger.btc_txid gate is expressed).
     const idx = await dbQuery(`SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`, [table])
     for (const r of idx) {
       const s = r.sql || ''
       if (!/\bUNIQUE\b/i.test(s)) continue
       const on = s.match(/\bON\b[^(]*\(([^)]*)\)/i); if (!on) continue
-      const cols = _colsInParen(on[1]); if (cols.length === 1 && cols[0] === col) return true
+      const cols = _colsInParen(on[1]); if (!(cols.length === 1 && cols[0] === col)) continue
+      const wh = s.match(/\bWHERE\b\s*(.+?)\s*;?\s*$/i)
+      if (wh) {
+        const norm = wh[1].replace(/["'`[\]()]/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
+        if (norm !== `${col.toLowerCase()} is not null`) continue // predicate filters other rows → insufficient
+      }
+      return true
     }
     return false
   } catch (_) { return false }
 }
 async function migrateSchema() {
+  // B02/B05 (audit): the once-only accounting-events table. The app normally can't DDL (Dashboard API
+  // blocks CREATE), so in production it is applied out-of-band (agent MCP); this IF-NOT-EXISTS attempt
+  // is a harmless no-op there and creates it for self-contained test fixtures. Verified + gated below.
+  await dbExec(`CREATE TABLE IF NOT EXISTS accounting_events (event_key TEXT PRIMARY KEY, rep_id INTEGER, delta_base TEXT, created_at INTEGER)`).catch(() => {})
   try {
     await dbQuery('SELECT burn_txid FROM consumed_burns LIMIT 1')
     await dbQuery('SELECT burn_txid FROM collateral_ledger LIMIT 1')
     await dbQuery('SELECT op_key FROM operations LIMIT 1') // R05 durable operation records
     await dbQuery('SELECT asset_id FROM asset_locks LIMIT 1') // grok P0: cross-process asset lock table
+    await dbQuery('SELECT event_key FROM accounting_events LIMIT 1') // B02/B05 once-only accounting events
   } catch (e) {
-    console.error('SCHEMA CHECK FAILED — burn registry missing; writes stay contained (SCHEMA_OK false). Apply migration (consumed_burns + operations + collateral_ledger.burn_txid). ' + (e.message || e))
+    console.error('SCHEMA CHECK FAILED — a required table is missing; writes stay contained (SCHEMA_OK false). Apply migration (consumed_burns + operations + collateral_ledger.burn_txid + asset_locks + accounting_events). ' + (e.message || e))
     return // SCHEMA_OK stays false → containment holds even if STAMPY_MAINTENANCE=0
   }
-  // A08 + grok: ALL single-column idempotency gates must be present, or the crash-safety story is void.
+  // A08 + grok + B07 (audit): ALL single-column idempotency gates must be present, or the crash-safety
+  // story is void.
   // - operations.op_key / consumed_burns.burn_txid: one op / one burn = one effect.
   // - collateral_ledger.btc_txid: stops two workers double-crediting the SAME deposit (phantom backing).
   // - bridge_ops.burn_txid: stops two workers double-releasing the SAME stamp burn.
-  const uniqGates = [['operations', 'op_key'], ['consumed_burns', 'burn_txid'], ['collateral_ledger', 'btc_txid'], ['bridge_ops', 'burn_txid']]
+  // - asset_locks.asset_id (B07): without it two holders can acquire the same asset's lock at once.
+  // - accounting_events.event_key (B07/B02): without it an accounting event is not once-only.
+  // tableEnforcesUnique rejects composite and PARTIAL unique indexes, so the guarantee is real.
+  const uniqGates = [['operations', 'op_key'], ['consumed_burns', 'burn_txid'], ['collateral_ledger', 'btc_txid'], ['bridge_ops', 'burn_txid'], ['asset_locks', 'asset_id'], ['accounting_events', 'event_key']]
   for (const [tbl, c] of uniqGates) {
     if (!(await tableEnforcesUnique(tbl, c))) {
-      console.error(`SCHEMA CONSTRAINT CHECK FAILED — ${tbl}.${c} must be UNIQUE on that column ALONE. Writes stay contained (SCHEMA_OK false) until the constraint is in place.`)
+      console.error(`SCHEMA CONSTRAINT CHECK FAILED — ${tbl}.${c} must be UNIQUE on that column ALONE (no composite/partial index). Writes stay contained (SCHEMA_OK false) until the constraint is in place.`)
       return
     }
   }
   try {
-    // old moves recorded the rep-burn hash only in collateral_ledger.btc_txid (direction='move-out')
+    // B02/B05: seed a baseline accounting event per representation so circulating_supply == SUM(events).
+    // Without it, the first event-sourced write would recompute from events alone and wipe pre-existing
+    // supply. Idempotent (UNIQUE event_key 'baseline:<id>'); baseline = current circ − sum(existing events).
+    const reps = await dbQuery('SELECT id, circulating_supply FROM representations')
+    for (const rep of reps) {
+      if ((await dbQuery('SELECT 1 FROM accounting_events WHERE event_key=?', ['baseline:' + rep.id])).length) continue
+      const evs = await dbQuery('SELECT delta_base FROM accounting_events WHERE rep_id=?', [rep.id])
+      let s = 0n; for (const e of evs) s += BigInt(e.delta_base)
+      const base = toBaseUnits(rep.circulating_supply || '0') - s
+      await dbExec('INSERT OR IGNORE INTO accounting_events (event_key, rep_id, delta_base, created_at) VALUES (?,?,?,?)', ['baseline:' + rep.id, rep.id, base.toString(), now()])
+    }
+    // old moves recorded the rep-burn hash only in collateral_ledger.btc_txid (direction='move-out').
+    // B06 (audit): EXCLUDE 'aborted' move-outs — an aborted move deliberately FREED its burn (the source
+    // debit never happened), so re-consuming it on restart would strand a legitimate retry.
     await dbExec(`INSERT OR IGNORE INTO consumed_burns (burn_txid, chain, canonical_id, purpose, created_at)
       SELECT CASE WHEN dest_chain='solana' THEN btc_txid ELSE lower(btc_txid) END, dest_chain, canonical_id, 'move', created_at
-      FROM collateral_ledger WHERE direction='move-out' AND btc_txid IS NOT NULL`)
-    // prior redemptions that recorded a burn_txid (new-schema rows). A04 (audit): EXCLUDE 'failed'
-    // rows — a failed redeem deliberately FREED its burn (GATED pre-send), so re-consuming it on
-    // startup would permanently block the holder's legitimate retry. Only truly-consumed dispositions
-    // (released / reconcile-uncertain) keep the burn reserved.
+      FROM collateral_ledger WHERE direction='move-out' AND btc_txid IS NOT NULL AND (status IS NULL OR status != 'aborted')`)
+    // prior redemptions that recorded a burn_txid. A04 (audit): EXCLUDE 'failed' (a failed redeem freed
+    // its burn pre-send). B06 (audit): INCLUDE SQL NULL status — the live collateral calc counts a
+    // NULL-status redeem as an obligation, so its burn MUST be preserved or the same burn could trigger
+    // a second release. `status != 'failed'` alone drops NULL (NULL != 'failed' is NULL/false in SQL).
     await dbExec(`INSERT OR IGNORE INTO consumed_burns (burn_txid, chain, canonical_id, purpose, created_at)
       SELECT CASE WHEN dest_chain='solana' THEN burn_txid ELSE lower(burn_txid) END, dest_chain, canonical_id, 'redeem', created_at
-      FROM collateral_ledger WHERE direction='redeem' AND burn_txid IS NOT NULL AND status != 'failed'`)
+      FROM collateral_ledger WHERE direction='redeem' AND burn_txid IS NOT NULL AND (status IS NULL OR status != 'failed')`)
   } catch (e) {
     // audit R03: a FAILED backfill must NOT grant readiness — keep writes contained until it succeeds.
     console.error('SCHEMA BACKFILL FAILED — writes stay contained (SCHEMA_OK false) until migration completes: ' + (e.message || e))

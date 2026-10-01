@@ -326,13 +326,18 @@
     </div>
     <div id="rd-out"></div>
     <div class="inspector">
-      <div class="ihdr">2 · Redeem <span>burn representation → release SRC-20 from the vault</span></div>
+      <div class="ihdr">2 · Redeem <span>burn representation on its chain → release SRC-20 from the vault</span></div>
       <div class="bform">
         <input id="rr-tick" type="text" placeholder="Ticker (e.g. $BALD)" autocomplete="off" spellcheck="false" />
         <input id="rr-amount" type="text" inputmode="decimal" placeholder="Amount" autocomplete="off" />
+        <select id="rr-chain"><option value="solana">burned on Solana</option><option value="base">burned on Base</option><option value="ethereum">burned on Ethereum</option></select>
+      </div>
+      <div class="bform">
+        <input id="rr-txid" type="text" placeholder="Your on-chain burn txid (transfer the rep to the zero address, then paste the txid)" autocomplete="off" spellcheck="false" style="flex:2" />
         <input id="rr-to" type="text" placeholder="Your BTC address" autocomplete="off" spellcheck="false" style="flex:2" />
         <button id="rr-redeem">Redeem</button>
       </div>
+      <div class="wnote" style="margin:0 0 8px">Burn your representation first, then redeem: you'll be asked to <b>sign a one-line authorization with the wallet that burned</b> (binds the release to your burn so nobody else can claim it). Requires that chain's wallet connected above.</div>
       <div id="rr-out"></div>
     </div>
   </div>
@@ -708,18 +713,32 @@ async function verifyAndMint(){
     loadReserves2(); loadCustody()
   }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
 }
+// B08 (audit): the redeem form now sends an explicit chain + the on-chain burn txid, and performs the
+// owner-binding signature handshake — POST once to receive the binding message, sign it with the wallet
+// that burned the representation (Solana ed25519 / EVM personal_sign via the wallet layer), then re-POST
+// with auth_sig. This completes the authorization the enabled handler requires (otherwise it returns 401).
 async function doRealRedeem(){
   const tick=$('#rr-tick').value.trim(), amount=$('#rr-amount').value.trim(), to=$('#rr-to').value.trim()
+  const chain=$('#rr-chain').value, burn_txid=$('#rr-txid').value.trim()
   const o=$('#rr-out')
-  if(!tick||!amount||!to){ o.innerHTML='<div class="err">Fill ticker, amount and your BTC address.</div>'; return }
-  o.innerHTML='<span class="spinner"></span> Releasing from the vault…'
+  if(!tick||!amount||!to||!burn_txid){ o.innerHTML='<div class="err">Fill ticker, amount, your on-chain burn txid and your BTC address.</div>'; return }
+  if(typeof window.stampySignForChain!=='function'){ o.innerHTML='<div class="err">Wallet layer not ready — connect the '+esc(chain)+' wallet that burned the tokens.</div>'; return }
+  o.innerHTML='<span class="spinner"></span> Requesting the authorization challenge…'
   try{
-    const r=await fetch('api/custody/redeem',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({tick,amount,to,chain:'solana'})}).then(x=>x.json())
-    if(r.error){ o.innerHTML='<div class="'+(r.gated?'devnet':'err')+'">'+esc(r.error)+'</div>'; return }
+    const base={tick,amount,to,chain,burn_txid}
+    // step 1 — no signature yet; the server returns the exact binding message to sign (HTTP 401)
+    const pre=await fetch('api/custody/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(base)}).then(x=>x.json())
+    if(pre.gated){ o.innerHTML='<div class="devnet">'+esc(pre.error)+'</div>'; return }
+    if(pre.redeemed){ o.innerHTML=`<div class="okmsg">✓ Released <b>${esc(pre.release.amount)}</b> ${esc(disp(pre.release.tick))} → your BTC address · <a href="${esc(pre.release.explorer)}" target="_blank" rel="noopener">tx ↗</a><br/>circulating now ${esc(pre.circulating)}</div>`; loadReserves2(); return }
+    if(!pre.binding_message){ o.innerHTML='<div class="err">'+esc(pre.error||'could not start redemption')+(pre.reason?' — '+esc(pre.reason):'')+'</div>'; return }
+    o.innerHTML='<span class="spinner"></span> Sign the authorization in your '+esc(chain)+' wallet…'
+    const auth_sig=await window.stampySignForChain(chain, pre.binding_message) // sign with the burn-owner key
+    o.innerHTML='<span class="spinner"></span> Releasing from the vault…'
+    const r=await fetch('api/custody/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...base,auth_sig})}).then(x=>x.json())
+    if(r.error){ o.innerHTML='<div class="'+(r.gated?'devnet':'err')+'">'+esc(r.error)+(r.reason?' — '+esc(r.reason):'')+'</div>'; return }
     o.innerHTML=`<div class="okmsg">✓ Released <b>${esc(r.release.amount)}</b> ${esc(disp(r.release.tick))} → your BTC address · <a href="${esc(r.release.explorer)}" target="_blank" rel="noopener">tx ↗</a><br/>circulating now ${esc(r.circulating)}</div>`
     loadReserves2()
-  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message||'rejected')+'</div>' }
 }
 $('#rd-verify').addEventListener('click', verifyAndMint)
 $('#rr-redeem').addEventListener('click', doRealRedeem)
@@ -738,10 +757,20 @@ async function doMove(){
   const o=$('#mv-out')
   if(!tick||!amount||!burn_txid||!to_address){ o.innerHTML='<div class="err">Fill asset, amount, burn txid and destination address.</div>'; return }
   if(from_chain===to_chain){ o.innerHTML='<div class="err">Source and destination must differ.</div>'; return }
-  o.innerHTML='<span class="spinner"></span> Verifying your burn, then minting on '+esc(to_chain)+'…'
+  if(typeof window.stampySignForChain!=='function'){ o.innerHTML='<div class="err">Wallet layer not ready — connect the '+esc(from_chain)+' wallet that burned the tokens.</div>'; return }
+  // B08 (audit): bind the move to the burn owner — POST once to get the binding message, sign it with the
+  // source-chain wallet that burned, then re-POST with auth_sig (the enabled handler 401s without it).
+  o.innerHTML='<span class="spinner"></span> Requesting the authorization challenge…'
   try{
-    const r=await fetch('api/move',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({tick,amount,from_chain,to_chain,burn_txid,to_address})}).then(x=>x.json())
+    const base={tick,amount,from_chain,to_chain,burn_txid,to_address}
+    const pre=await fetch('api/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(base)}).then(x=>x.json())
+    let r=pre
+    if(pre.binding_message){
+      o.innerHTML='<span class="spinner"></span> Sign the authorization in your '+esc(from_chain)+' wallet…'
+      const auth_sig=await window.stampySignForChain(from_chain, pre.binding_message)
+      o.innerHTML='<span class="spinner"></span> Verifying your burn, then minting on '+esc(to_chain)+'…'
+      r=await fetch('api/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...base,auth_sig})}).then(x=>x.json())
+    }
     if(r.error){ o.innerHTML='<div class="err">'+esc(r.error)+(r.reason?' — '+esc(r.reason):'')+'</div>'; return }
     const d=r.destination||{}
     o.innerHTML=`<div class="okmsg">✓ Moved <b>${esc(r.amount)}</b> ${esc(disp(r.tick))} · ${esc(r.from)} → ${esc(r.to)}<br/>
