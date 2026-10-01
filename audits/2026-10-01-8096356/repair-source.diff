@@ -1,0 +1,612 @@
+diff --git a/custody.js b/custody.js
+index 2270a29..76ec46b 100644
+--- a/custody.js
++++ b/custody.js
+@@ -194,18 +194,47 @@ async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20
+   // these bounds already refuse unexpected BTC value regardless of destination. All env-overridable.
+   const SRC20_DUST = parseInt(process.env.SRC20_DUST_SATS || '1000', 10)
+   const SRC20_MAX_NONVAULT = parseInt(process.env.SRC20_MAX_NONVAULT_SATS || '5000', 10)
++  // B09 (audit): bound the MINER FEE and require a real transfer payload before signing. The old guard
++  // only capped non-vault OUTPUT values, so a PSBT whose inputs vastly exceed its outputs (change back
++  // to the vault) passed — a 1,000,000-sat input with 546-sat vault change and no SRC-20 payload implied
++  // a ~999,454-sat fee that would drain vault BTC to miners. We now establish the declared input value,
++  // compute fee = inputs − outputs, and enforce an ABSOLUTE fee cap AND a fee-RATE cap; and we require a
++  // transfer payload (a data/OP_RETURN output plus a non-vault recipient) so an empty sweep is rejected.
++  const SRC20_MAX_FEE = parseInt(process.env.SRC20_MAX_FEE_SATS || '50000', 10)
++  const SRC20_MAX_FEE_RATE = parseInt(process.env.SRC20_MAX_FEE_RATE || '200', 10) // sat/vB
+   let _psbt
+   try { _psbt = bitcoinjs.Psbt.fromHex(psbtHex) } catch (_) { throw new Error('refusing to sign SRC-20 redeem: could not decode the composed PSBT to verify its outputs (fail-closed)') }
+-  let nonVaultTotal = 0
++  // declared input value (fail-closed if any input lacks a witness/non-witness UTXO value we can read)
++  let inSum = 0
++  _psbt.data.inputs.forEach((inp, i) => {
++    let v = null
++    if (inp.witnessUtxo) v = Number(inp.witnessUtxo.value)
++    else if (inp.nonWitnessUtxo) { try { const prev = bitcoinjs.Transaction.fromBuffer(inp.nonWitnessUtxo); v = Number(prev.outs[_psbt.txInputs[i].index].value) } catch (_) { v = null } }
++    if (v == null || !Number.isFinite(v)) throw new Error('refusing to sign SRC-20 redeem: input #' + i + ' has no verifiable value (fail-closed) — cannot establish the miner fee')
++    inSum += v
++  })
++  let nonVaultTotal = 0, outSum = 0, hasData = false, hasRecipient = false
+   for (const o of _psbt.txOutputs) {
++    outSum += Number(o.value || 0)
+     let addr = null
+-    try { addr = bitcoinjs.address.fromOutputScript(o.script, bitcoinjs.networks.bitcoin) } catch (_) { addr = null } // OP_RETURN/bare-data → null, 0-value (fine)
++    try { addr = bitcoinjs.address.fromOutputScript(o.script, bitcoinjs.networks.bitcoin) } catch (_) { addr = null } // OP_RETURN/bare-data → null
++    if (addr === null) { hasData = true; continue } // data/OP_RETURN carries the SRC-20 transfer payload (0 value)
+     if (addr === from) continue // change back to the vault — unbounded is fine
++    hasRecipient = true
+     const val = Number(o.value || 0)
+     nonVaultTotal += val
+-    if (val > SRC20_DUST) throw new Error(`refusing to sign SRC-20 redeem: output of ${val} sats to ${addr || 'a data/unknown script'} exceeds the dust cap (${SRC20_DUST}) — the tx must not move real BTC value off the vault (recipient included)`)
++    if (val > SRC20_DUST) throw new Error(`refusing to sign SRC-20 redeem: output of ${val} sats to ${addr} exceeds the dust cap (${SRC20_DUST}) — the tx must not move real BTC value off the vault (recipient included)`)
+   }
+   if (nonVaultTotal > SRC20_MAX_NONVAULT) throw new Error(`refusing to sign SRC-20 redeem: ${nonVaultTotal} sats total go to non-vault outputs, over the cap (${SRC20_MAX_NONVAULT}) — possible vault BTC leak`)
++  // miner fee = declared inputs − outputs; enforce absolute + rate caps
++  const fee = inSum - outSum
++  if (fee < 0) throw new Error(`refusing to sign SRC-20 redeem: outputs (${outSum}) exceed declared inputs (${inSum}) — malformed`)
++  const vbytes = Math.max(1, Math.ceil(10.5 + _psbt.data.inputs.length * 68 + _psbt.txOutputs.length * 31)) // p2wpkh estimate
++  const impliedFeeRate = fee / vbytes
++  if (fee > SRC20_MAX_FEE) throw new Error(`refusing to sign SRC-20 redeem: implied miner fee ${fee} sats exceeds the cap (${SRC20_MAX_FEE}) — would drain vault BTC`)
++  if (impliedFeeRate > SRC20_MAX_FEE_RATE) throw new Error(`refusing to sign SRC-20 redeem: implied fee rate ${impliedFeeRate.toFixed(1)} sat/vB exceeds the cap (${SRC20_MAX_FEE_RATE})`)
++  // require an actual transfer payload — an empty sweep (only vault change, no data/recipient) is refused
++  if (!hasData && !hasRecipient) throw new Error('refusing to sign SRC-20 redeem: the PSBT carries no transfer payload or recipient output (only vault change) — nothing to transfer')
+   const toSignInputs = (built.inputsToSign || []).map(i => ({ index: i.index, address: from, sighashType: i.sighashType }))
+   const signer = await btcSigner()
+   const signedResp = await signer.signPsbt(psbtHex, { transactionType: 'p2wpkh', toSignInputs })
+diff --git a/public/index.html b/public/index.html
+index 7b9dc48..19457ba 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -326,13 +326,18 @@
+     </div>
+     <div id="rd-out"></div>
+     <div class="inspector">
+-      <div class="ihdr">2 · Redeem <span>burn representation → release SRC-20 from the vault</span></div>
++      <div class="ihdr">2 · Redeem <span>burn representation on its chain → release SRC-20 from the vault</span></div>
+       <div class="bform">
+         <input id="rr-tick" type="text" placeholder="Ticker (e.g. $BALD)" autocomplete="off" spellcheck="false" />
+         <input id="rr-amount" type="text" inputmode="decimal" placeholder="Amount" autocomplete="off" />
++        <select id="rr-chain"><option value="solana">burned on Solana</option><option value="base">burned on Base</option><option value="ethereum">burned on Ethereum</option></select>
++      </div>
++      <div class="bform">
++        <input id="rr-txid" type="text" placeholder="Your on-chain burn txid (transfer the rep to the zero address, then paste the txid)" autocomplete="off" spellcheck="false" style="flex:2" />
+         <input id="rr-to" type="text" placeholder="Your BTC address" autocomplete="off" spellcheck="false" style="flex:2" />
+         <button id="rr-redeem">Redeem</button>
+       </div>
++      <div class="wnote" style="margin:0 0 8px">Burn your representation first, then redeem: you'll be asked to <b>sign a one-line authorization with the wallet that burned</b> (binds the release to your burn so nobody else can claim it). Requires that chain's wallet connected above.</div>
+       <div id="rr-out"></div>
+     </div>
+   </div>
+@@ -708,18 +713,32 @@ async function verifyAndMint(){
+     loadReserves2(); loadCustody()
+   }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
+ }
++// B08 (audit): the redeem form now sends an explicit chain + the on-chain burn txid, and performs the
++// owner-binding signature handshake — POST once to receive the binding message, sign it with the wallet
++// that burned the representation (Solana ed25519 / EVM personal_sign via the wallet layer), then re-POST
++// with auth_sig. This completes the authorization the enabled handler requires (otherwise it returns 401).
+ async function doRealRedeem(){
+   const tick=$('#rr-tick').value.trim(), amount=$('#rr-amount').value.trim(), to=$('#rr-to').value.trim()
++  const chain=$('#rr-chain').value, burn_txid=$('#rr-txid').value.trim()
+   const o=$('#rr-out')
+-  if(!tick||!amount||!to){ o.innerHTML='<div class="err">Fill ticker, amount and your BTC address.</div>'; return }
+-  o.innerHTML='<span class="spinner"></span> Releasing from the vault…'
++  if(!tick||!amount||!to||!burn_txid){ o.innerHTML='<div class="err">Fill ticker, amount, your on-chain burn txid and your BTC address.</div>'; return }
++  if(typeof window.stampySignForChain!=='function'){ o.innerHTML='<div class="err">Wallet layer not ready — connect the '+esc(chain)+' wallet that burned the tokens.</div>'; return }
++  o.innerHTML='<span class="spinner"></span> Requesting the authorization challenge…'
+   try{
+-    const r=await fetch('api/custody/redeem',{method:'POST',headers:{'Content-Type':'application/json'},
+-      body:JSON.stringify({tick,amount,to,chain:'solana'})}).then(x=>x.json())
+-    if(r.error){ o.innerHTML='<div class="'+(r.gated?'devnet':'err')+'">'+esc(r.error)+'</div>'; return }
++    const base={tick,amount,to,chain,burn_txid}
++    // step 1 — no signature yet; the server returns the exact binding message to sign (HTTP 401)
++    const pre=await fetch('api/custody/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(base)}).then(x=>x.json())
++    if(pre.gated){ o.innerHTML='<div class="devnet">'+esc(pre.error)+'</div>'; return }
++    if(pre.redeemed){ o.innerHTML=`<div class="okmsg">✓ Released <b>${esc(pre.release.amount)}</b> ${esc(disp(pre.release.tick))} → your BTC address · <a href="${esc(pre.release.explorer)}" target="_blank" rel="noopener">tx ↗</a><br/>circulating now ${esc(pre.circulating)}</div>`; loadReserves2(); return }
++    if(!pre.binding_message){ o.innerHTML='<div class="err">'+esc(pre.error||'could not start redemption')+(pre.reason?' — '+esc(pre.reason):'')+'</div>'; return }
++    o.innerHTML='<span class="spinner"></span> Sign the authorization in your '+esc(chain)+' wallet…'
++    const auth_sig=await window.stampySignForChain(chain, pre.binding_message) // sign with the burn-owner key
++    o.innerHTML='<span class="spinner"></span> Releasing from the vault…'
++    const r=await fetch('api/custody/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...base,auth_sig})}).then(x=>x.json())
++    if(r.error){ o.innerHTML='<div class="'+(r.gated?'devnet':'err')+'">'+esc(r.error)+(r.reason?' — '+esc(r.reason):'')+'</div>'; return }
+     o.innerHTML=`<div class="okmsg">✓ Released <b>${esc(r.release.amount)}</b> ${esc(disp(r.release.tick))} → your BTC address · <a href="${esc(r.release.explorer)}" target="_blank" rel="noopener">tx ↗</a><br/>circulating now ${esc(r.circulating)}</div>`
+     loadReserves2()
+-  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message)+'</div>' }
++  }catch(e){ o.innerHTML='<div class="err">'+esc(e.message||'rejected')+'</div>' }
+ }
+ $('#rd-verify').addEventListener('click', verifyAndMint)
+ $('#rr-redeem').addEventListener('click', doRealRedeem)
+@@ -738,10 +757,20 @@ async function doMove(){
+   const o=$('#mv-out')
+   if(!tick||!amount||!burn_txid||!to_address){ o.innerHTML='<div class="err">Fill asset, amount, burn txid and destination address.</div>'; return }
+   if(from_chain===to_chain){ o.innerHTML='<div class="err">Source and destination must differ.</div>'; return }
+-  o.innerHTML='<span class="spinner"></span> Verifying your burn, then minting on '+esc(to_chain)+'…'
++  if(typeof window.stampySignForChain!=='function'){ o.innerHTML='<div class="err">Wallet layer not ready — connect the '+esc(from_chain)+' wallet that burned the tokens.</div>'; return }
++  // B08 (audit): bind the move to the burn owner — POST once to get the binding message, sign it with the
++  // source-chain wallet that burned, then re-POST with auth_sig (the enabled handler 401s without it).
++  o.innerHTML='<span class="spinner"></span> Requesting the authorization challenge…'
+   try{
+-    const r=await fetch('api/move',{method:'POST',headers:{'Content-Type':'application/json'},
+-      body:JSON.stringify({tick,amount,from_chain,to_chain,burn_txid,to_address})}).then(x=>x.json())
++    const base={tick,amount,from_chain,to_chain,burn_txid,to_address}
++    const pre=await fetch('api/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(base)}).then(x=>x.json())
++    let r=pre
++    if(pre.binding_message){
++      o.innerHTML='<span class="spinner"></span> Sign the authorization in your '+esc(from_chain)+' wallet…'
++      const auth_sig=await window.stampySignForChain(from_chain, pre.binding_message)
++      o.innerHTML='<span class="spinner"></span> Verifying your burn, then minting on '+esc(to_chain)+'…'
++      r=await fetch('api/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...base,auth_sig})}).then(x=>x.json())
++    }
+     if(r.error){ o.innerHTML='<div class="err">'+esc(r.error)+(r.reason?' — '+esc(r.reason):'')+'</div>'; return }
+     const d=r.destination||{}
+     o.innerHTML=`<div class="okmsg">✓ Moved <b>${esc(r.amount)}</b> ${esc(disp(r.tick))} · ${esc(r.from)} → ${esc(r.to)}<br/>
+diff --git a/public/wallet.js b/public/wallet.js
+index 439d6a2..c5b537c 100644
+--- a/public/wallet.js
++++ b/public/wallet.js
+@@ -71,11 +71,11 @@
+     setSlot('receive', { status: 'connecting' })
+     try {
+       const { nonce, message } = await fetch('api/auth/nonce?role=receive').then(r => r.json())
+-      let address, signature
++      let address, signature, acct = null
+       if (opt.kind === 'standard') {
+         const w = opt.wallet
+         const res = await w.features['standard:connect'].connect()
+-        const acct = (res && res.accounts && res.accounts[0]) || (w.accounts && w.accounts[0])
++        acct = (res && res.accounts && res.accounts[0]) || (w.accounts && w.accounts[0])
+         if (!acct) throw new Error('no account')
+         address = acct.address
+         const out = await w.features['solana:signMessage'].signMessage({ account: acct, message: new TextEncoder().encode(message) })
+@@ -89,6 +89,7 @@
+       }
+       const v = await verifySolana(address, signature, nonce, opt.name)
+       state.receive = { address, wallet: opt.name, chain: 'solana', verified: !!v.verified }
++      state.receiveWallet = { kind: opt.kind, wallet: opt.wallet, account: acct, address } // reused to sign redeem/move bindings
+       try { window.__stampyReceive = v.verified ? address : null } catch (_) {}
+       try { window.dispatchEvent(new CustomEvent('stampy:wallet', { detail: { role: 'receive', address, chain: 'solana' } })) } catch (_) {}
+       setSlot('receive', { status: 'connected', ...state.receive })
+@@ -127,6 +128,28 @@
+     if (!d) throw new Error('connect your Bitcoin (deposit) wallet first')
+     return signBtcMessage(d.kind, d.wallet, d.address, message)
+   }
++  // B08 (audit): sign the redeem/move owner-binding message with the wallet that holds the burned
++  // representation. Solana → ed25519 (returned base58, matching the server's nacl verify); EVM →
++  // personal_sign (0x hex, verified via ethers). The server binds the release/mint to this signature.
++  async function signSolanaMessage(message) {
++    const d = state.receiveWallet
++    if (!d) throw new Error('connect your Solana wallet first (the one that burned the representation)')
++    const bytes = new TextEncoder().encode(message)
++    let sig
++    if (d.kind === 'standard') { const out = await d.wallet.features['solana:signMessage'].signMessage({ account: d.account, message: bytes }); sig = (out[0] || out).signature }
++    else { const s = await d.wallet.signMessage(bytes, 'utf8'); sig = s.signature || s }
++    return bs58encode(sig)
++  }
++  async function signEvmMessage(message) {
++    const d = state.evmWallet
++    if (!d) throw new Error('connect your Base/Ethereum wallet first (the one that burned the representation)')
++    return d.provider.request({ method: 'personal_sign', params: [message, d.address] })
++  }
++  window.stampySignForChain = async function (chain, message) {
++    if (chain === 'solana') return signSolanaMessage(message)
++    if (chain === 'base' || chain === 'ethereum' || chain === 'base-mainnet') return signEvmMessage(message)
++    throw new Error('unsupported chain for signing: ' + chain)
++  }
+ 
+   async function connectDeposit(opt) {
+     setSlot('deposit', { status: 'connecting' })
+@@ -194,6 +217,7 @@
+         verified = !!v.verified
+       } catch (_) {}
+       state.evm = { address, wallet: opt.name, chain: 'evm', verified }
++      state.evmWallet = { provider: opt.provider, address } // reused to sign redeem/move bindings
+       try { window.__stampyEvm = address } catch (_) {}
+       try { window.dispatchEvent(new CustomEvent('stampy:wallet', { detail: { role: 'evm', address, chain: 'evm' } })) } catch (_) {}
+       setSlot('evm', { status: 'connected', ...state.evm })
+diff --git a/server.js b/server.js
+index d501ddc..1273989 100644
+--- a/server.js
++++ b/server.js
+@@ -968,15 +968,21 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
+     }
+   }
+ 
+-  // ---- SOLVENCY INVARIANT (cross-chain): total circulating ≤ collateral ≤ source supply ----
+-  // A fresh reservation now exists (if opKey); a definite pre-send rejection here must RELEASE it so a
+-  // legitimate later retry (e.g. after more collateral is confirmed) is not permanently blocked.
+-  if (totalCirculating + mintBase > availableCollateral) {
++  // ---- SOLVENCY INVARIANT (cross-chain): circulating + RESERVED ≤ collateral ≤ source supply ----
++  // B01/B04 (audit): the invariant is "confirmed issuance + all issuance that MAY have happened ≤
++  // confirmed backing". So we add `reserved` = supply claimed by OTHER in-flight/uncertain mint ops
++  // (durable operations rows), excluding this op's own reservation. This is what stops a slow mint whose
++  // lock lease expired (B01) or an uncertain mint left as 'reconcile' (B04) from letting a different
++  // op_key issue against the same collateral — the reservation holds the backing across the whole op,
++  // independent of the lock lease. A fresh reservation now exists (if opKey); a definite pre-send
++  // rejection here must RELEASE it so a legitimate later retry is not permanently blocked.
++  const reserved = await reservedBase(asset.id, opKey)
++  if (totalCirculating + reserved + mintBase > availableCollateral) {
+     if (opKey) await opFail(opKey)
+-    return { status: 409, body: { error: 'insufficient collateral', reason: 'mint would exceed confirmed backing across all chains',
+-      total_circulating: fromBaseUnits(totalCirculating), minting: mintAmt, collateral: fromBaseUnits(availableCollateral) } }
++    return { status: 409, body: { error: 'insufficient collateral', reason: 'mint would exceed confirmed backing across all chains (including in-flight/uncertain reservations)',
++      total_circulating: fromBaseUnits(totalCirculating), reserved: fromBaseUnits(reserved), minting: mintAmt, collateral: fromBaseUnits(availableCollateral) } }
+   }
+-  if (maxSupply > 0n && totalCirculating + mintBase > maxSupply) {
++  if (maxSupply > 0n && totalCirculating + reserved + mintBase > maxSupply) {
+     if (opKey) await opFail(opKey)
+     return { status: 409, body: { error: 'exceeds source max supply', max_supply: asset.max_supply } }
+   }
+@@ -1026,22 +1032,30 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
+   } else { if (opKey) await opFail(opKey); return { status: 400, body: { error: 'unsupported destination chain' } } } // grok: release the reservation, don't strand it
+ 
+   const newCirc = circulating + mintBase
+-  if (rep) {
+-    // P0: atomic CAS increment (not read-modify-write) so a concurrent writer can't lose our delta.
+-    const b = await bumpCirculating(rep.id, mintBase)
+-    if (!b.ok) { if (opKey) await opReconcile(opKey); return { status: 500, body: { error: 'mint accounting write contention — on-chain mint done, op kept for reconciliation: ' + b.reason, reconcile: true } } }
+-    await dbExec('UPDATE representations SET status=?, dest_address=?, updated_at=? WHERE id=?', ['CANONICAL', mintAddr, now(), rep.id]).catch(() => {})
+-  } else {
++  // Ensure a representation row exists (create with ZERO supply if new), then apply the mint as a
++  // once-only accounting event. B03 (audit): a NEW-rep INSERT that fails for a reason OTHER than the
++  // UNIQUE(canonical_id,dest_chain) race must NOT be swallowed as a completed mint — otherwise the
++  // on-chain mint happened but no supply is recorded, and the op is wrongly marked complete. We verify
++  // the row actually exists; if it does not, the accounting could not be made durable → keep the op
++  // reserved for reconciliation (backing stays reserved via reservedBase) and NEVER opComplete.
++  let repRow = rep
++  if (!repRow) {
+     try {
+       await dbExec(`INSERT INTO representations (canonical_id, dest_chain, dest_address, dest_symbol, status, authority_model, circulating_supply, updated_at)
+-        VALUES (?, ?, ?, ?, 'CANONICAL', 'interim single-key (audited multisig in prod)', ?, ?)`,
+-        [asset.id, chain, mintAddr, displayTicker(asset.exact_ticker), fromBaseUnits(newCirc, 18), now()])
+-    } catch (_) {
+-      // lost the create race (UNIQUE(canonical_id,dest_chain)) → the row exists; apply our delta atomically
+-      const ex = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
+-      if (ex) { await bumpCirculating(ex.id, mintBase); await dbExec('UPDATE representations SET status=?, dest_address=?, updated_at=? WHERE id=?', ['CANONICAL', mintAddr, now(), ex.id]).catch(() => {}) }
++        VALUES (?, ?, ?, ?, 'CANONICAL', 'interim single-key (audited multisig in prod)', '0', ?)`,
++        [asset.id, chain, mintAddr, displayTicker(asset.exact_ticker), now()])
++    } catch (_) { /* possibly a UNIQUE(canonical_id,dest_chain) race — verify below before trusting it */ }
++    repRow = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
++    if (!repRow) {
++      if (opKey) await opReconcile(opKey)
++      return { status: 500, body: { error: 'representation row could not be created after an on-chain mint — reconciliation required (backing stays reserved, mint NOT marked complete)', reconcile: true, mint_address: mintAddr, signature } }
+     }
+   }
++  // once-only increment keyed to this logical mint (opKey if present, else the on-chain tx signature)
++  const mintEventKey = `mint:${opKey || ('tx:' + signature)}`
++  const inc = await applyCirculatingDelta(repRow.id, mintBase, mintEventKey).catch(e => ({ ok: false, reason: String(e.message || e) }))
++  if (!inc || !inc.ok) { if (opKey) await opReconcile(opKey); return { status: 500, body: { error: 'mint accounting write failed — on-chain mint done, op kept for reconciliation: ' + (inc && inc.reason), reconcile: true } } }
++  await dbExec('UPDATE representations SET status=?, dest_address=?, updated_at=? WHERE id=?', ['CANONICAL', mintAddr, now(), repRow.id]).catch(() => {})
+   await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, dest_tx, status, created_at)
+     VALUES (?, 'mint', ?, ?, ?, ?, ?)`, [asset.id, mintAmt, chain, signature, real ? 'minted' : 'simulated', now()])
+ 
+@@ -1150,42 +1164,77 @@ async function opComplete(op_key, tx_id, result) {
+ async function opFail(op_key) { await dbExec('DELETE FROM operations WHERE op_key=?', [op_key]).catch(() => {}) } // proven pre-send failure → retryable
+ async function opReconcile(op_key) { await dbExec(`UPDATE operations SET state='reconcile', updated_at=? WHERE op_key=?`, [now(), op_key]).catch(() => {}) }
+ 
+-// A01 (audit): EXACTLY-ONCE release finalization, shared by normal redemption AND operator reconcile.
+-// The circulation decrement and the terminal-status write are separate rows (no cross-row transaction),
+-// so a crash between them could let a retry decrement circulation TWICE → understated circulation →
+-// over-mint headroom → insolvency. Fix: make the TERMINAL STATUS TRANSITION the compare-and-set gate.
+-// Only the caller that flips the reserved row (pending|reconcile → released, changes===1) performs the
+-// decrement; any repeat finds it already released (changes 0) and does nothing. Ordering is fail-CLOSED:
+-// if the process dies after the flip but before the decrement, circulation stays too HIGH (never
+-// over-mints) and the terminal row won't be decremented again. dbExec returns {changes} (Dashboard API).
+-// P0 (grok audit): the circulating_supply write must be atomic across PROCESSES, not just the
+-// in-process withAssetLock. A plain read-modify-write loses an update when two Node workers share one
+-// Dashboard DB (last-write-wins → understated circulating → the solvency check under-counts → unbounded
+-// over-mint). This does a COMPARE-AND-SET retry keyed on the exact prior string, so concurrent writers
+-// each apply their delta and the DB stays HONEST (== on-chain). If two workers both pass the solvency
+-// check and both mint, the DB then reflects the true (over-)supply and the NEXT mint is blocked — i.e.
+-// this BOUNDS and self-detects the damage. It does NOT by itself serialize the check across processes;
+-// a cross-process per-asset lock (or a single-writer deployment) is STILL required before maintenance
+-// is disabled — tracked as the reopen gate. dbExec returns {changes}. delta may be negative.
+-async function bumpCirculating(repId, deltaBase) {
+-  for (let i = 0; i < 16; i++) {
+-    const row = (await dbQuery('SELECT circulating_supply FROM representations WHERE id=?', [repId]))[0]
+-    if (!row) return { ok: false, reason: 'representation row not found' }
+-    const curStr = row.circulating_supply == null ? '0' : String(row.circulating_supply)
+-    let next = toBaseUnits(curStr) + deltaBase; if (next < 0n) next = 0n
+-    const u = await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=? AND circulating_supply=?',
+-      [fromBaseUnits(next, 18), now(), repId, curStr]).catch(() => ({ changes: 0 }))
+-    if (u && (u.changes || 0) >= 1) return { ok: true, newCirc: fromBaseUnits(next, 18) }
+-    // lost the CAS race (another writer changed it) → re-read and retry with the fresh value
++// ---- B01/B04 (audit): DURABLE BACKING RESERVATION. The solvency check must count not only issued
++// (circulating) supply but every mint that MAY have happened or is in flight — a reserved op whose
++// outcome is not yet settled. Otherwise a slow/stolen-lease mint (B01) or an uncertain mint (B04)
++// leaves circulation unchanged and a DIFFERENT op_key can mint against the same collateral. A reservation
++// is an operations row in 'reserved' (in flight) or 'reconcile' (uncertain) state; its `amount` is the
++// supply it has claimed. We sum those (excluding the caller's own op) and subtract from available backing.
++async function reservedBase(canonicalId, excludeOpKey) {
++  const rows = await dbQuery(`SELECT op_key, amount FROM operations WHERE canonical_id=? AND action='mint' AND state IN ('reserved','reconcile')`, [canonicalId]).catch(() => [])
++  return rows.reduce((a, r) => (r.op_key === excludeOpKey ? a : a + toBaseUnits(r.amount)), 0n)
++}
++
++// ---- B02/B05 (audit): ONCE-ONLY ACCOUNTING EVENTS. A circulating-supply change must apply EXACTLY once,
++// even when an HTTP database COMMITS an update and then loses the response (a thrown exception does NOT
++// prove nothing happened). The old read-modify-CAS loop reapplied the delta on an ambiguous error →
++// double debit/credit. Fix: model circulating_supply as the materialized SUM of immutable, idempotent
++// accounting_events keyed by a per-logical-effect `event_key` (UNIQUE). Each change (1) durably records
++// its event once, then (2) RECOMPUTES circulating = SUM(events) and writes that ABSOLUTE value. Recompute
++// is convergent, so a lost response is resolved by READING state (does the target value hold?), never by
++// reapplying arithmetic. A seeded `baseline:<repId>` event (migrateSchema) preserves pre-existing supply.
++async function recordAccountingEvent(repId, eventKey, deltaBase) {
++  try { await dbExec('INSERT INTO accounting_events (event_key, rep_id, delta_base, created_at) VALUES (?,?,?,?)', [eventKey, repId, deltaBase.toString(), now()]); return { fresh: true } }
++  catch (e) {
++    // ambiguous: a UNIQUE(event_key) conflict means it is ALREADY recorded (idempotent); any other error
++    // might have failed to persist. Resolve by reading the event's identity, not by assuming.
++    const ev = (await dbQuery('SELECT delta_base FROM accounting_events WHERE event_key=?', [eventKey]))[0]
++    if (!ev) throw new Error('accounting event could not be recorded: ' + (e.message || e))
++    return { fresh: false }
++  }
++}
++// Write an ABSOLUTE circulating value. Because the value is a full recompute (not current+delta), the
++// write is idempotent — so a transient failure can be safely RETRIED with the same target (never
++// double-applies), and an ambiguous (possibly-committed) response is resolved by reading back: if the
++// target already holds, the commit landed and we are done. A persistent failure throws (B05: the caller
++// must NOT report success; the row stays reconcilable/visible).
++async function writeCirculating(repId, targetStr) {
++  let lastErr
++  for (let i = 0; i < 8; i++) {
++    try { await dbExec('UPDATE representations SET circulating_supply=?, updated_at=? WHERE id=?', [targetStr, now(), repId]); return }
++    catch (e) {
++      lastErr = e
++      const row = (await dbQuery('SELECT circulating_supply c FROM representations WHERE id=?', [repId]).catch(() => []))[0]
++      if (row && String(row.c) === targetStr) return // committed despite the lost response
++      // otherwise the write genuinely did not land — retry the SAME absolute target (safe, idempotent)
++    }
+   }
+-  return { ok: false, reason: 'circulating CAS contention (too many concurrent writers)' }
++  throw new Error('circulating write failed after retries: ' + (lastErr && (lastErr.message || lastErr)))
++}
++// Apply a once-only circulating delta for the logical effect identified by eventKey. Idempotent: a retry
++// (same eventKey) recomputes the SAME sum and rewrites it — no double-apply possible. Throws only when the
++// event genuinely could not be recorded or the recompute genuinely did not land (caller then reconciles).
++async function applyCirculatingDelta(repId, deltaBase, eventKey) {
++  await recordAccountingEvent(repId, eventKey, deltaBase)
++  const rows = await dbQuery('SELECT delta_base FROM accounting_events WHERE rep_id=?', [repId])
++  let sum = 0n; for (const r of rows) sum += BigInt(r.delta_base)
++  if (sum < 0n) sum = 0n
++  const target = fromBaseUnits(sum, 18)
++  await writeCirculating(repId, target)
++  return { ok: true, newCirc: target }
+ }
++
++// A01/B02/B05 (audit): EXACTLY-ONCE release finalization, shared by normal redemption AND operator
++// reconcile. The decrement is a once-only accounting event keyed on the ledger row (`release:<id>`),
++// so a lost response can never decrement twice (B02). Apply the decrement FIRST, then flip the terminal
++// status only AFTER it is durably applied — so a failed decrement NEVER reports a finalized release
++// (B05): it throws, the row stays pending/reconcile and visible in the repair inventory. The event key
++// makes a resume idempotent (recompute converges); the CAS flip makes the terminal transition once-only.
+ async function finalizeReleaseOnce({ ledgerId, canonicalId, chain, amountBase, releaseTxid }) {
+-  const upd = await dbExec(`UPDATE collateral_ledger SET status='released', btc_txid=COALESCE(?, btc_txid) WHERE id=? AND status IN ('pending','reconcile')`, [releaseTxid || null, ledgerId])
+-  if (!upd || (upd.changes || 0) < 1) return { alreadyFinalized: true } // a prior finalize already claimed the decrement
+   const rep = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [canonicalId, chain]))[0]
+-  if (rep) await bumpCirculating(rep.id, -amountBase) // P0: atomic CAS decrement
+-  return { finalized: true }
++  if (rep) await applyCirculatingDelta(rep.id, -amountBase, `release:${ledgerId}`) // throws on genuine failure → caller keeps the row reconcilable
++  const upd = await dbExec(`UPDATE collateral_ledger SET status='released', btc_txid=COALESCE(?, btc_txid) WHERE id=? AND status IN ('pending','reconcile')`, [releaseTxid || null, ledgerId])
++  return (upd && (upd.changes || 0) >= 1) ? { finalized: true } : { alreadyFinalized: true }
+ }
+ 
+ // grok P0 (the maintenance-off gate): a DB-BACKED per-asset lock that serializes the solvency
+@@ -1278,9 +1327,19 @@ app.post('/api/move', async (req, res) => {
+           await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(from_chain, burn_txid)]).catch(() => {})
+           return { status: 409, body: { error: 'move exceeds source circulating', circulating: fromBaseUnits(circ) } }
+         }
+-        await dbExec(`INSERT OR IGNORE INTO collateral_ledger (canonical_id, direction, amount, dest_chain, btc_txid, status, created_at) VALUES (?, 'move-out', ?, ?, ?, 'pending', ?)`, [asset.id, amount, from_chain, burn_txid, now()])
+-        await bumpCirculating(fromRep.id, -toBaseUnits(amount)) // P0: atomic CAS debit
+-        // CAS mark: only flips 'pending'→'decremented' (a re-run after the debit can't double-debit)
++        // Ensure a 'pending' move-out row. B06 (audit): a prior 'aborted' row for this burn (operator
++        // confirmed the debit never happened) stays retryable — reset it to 'pending' and reuse it
++        // (btc_txid is UNIQUE, so a fresh INSERT would be ignored). Otherwise insert a new pending row.
++        if (moveOut) await dbExec(`UPDATE collateral_ledger SET status='pending', amount=?, dest_chain=? WHERE id=? AND status='aborted'`, [amount, from_chain, moveOut.id])
++        else await dbExec(`INSERT OR IGNORE INTO collateral_ledger (canonical_id, direction, amount, dest_chain, btc_txid, status, created_at) VALUES (?, 'move-out', ?, ?, ?, 'pending', ?)`, [asset.id, amount, from_chain, burn_txid, now()])
++        // B05 (audit): the source debit is a once-only accounting event. Only mark 'decremented' AFTER it
++        // is durably applied — a failed/ambiguous debit must NOT be reported as a confirmed debit (which
++        // would let the destination mint proceed against an un-reduced source). applyCirculatingDelta
++        // throws on genuine failure → propagates to the handler (500), leaving the row 'pending' (visible
++        // + resumable in the repair inventory), nothing minted.
++        const deb = await applyCirculatingDelta(fromRep.id, -toBaseUnits(amount), `move-out:${normTxid(from_chain, burn_txid)}:${asset.id}`)
++        if (!deb.ok) return { status: 500, body: { error: 'move source debit did not complete — left pending for reconciliation (no destination mint)', reconcile: true } }
++        // CAS mark: only flips 'pending'→'decremented' (idempotent; a re-run after the debit can't double-debit)
+         await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE direction='move-out' AND btc_txid=? AND canonical_id=? AND status='pending'`, [burn_txid, asset.id])
+       }
+       // mint on destination (unlocked core; total circulating now back to original → solvent)
+@@ -1319,10 +1378,12 @@ app.post('/api/redeem', async (req, res) => {
+       const circulating = rep ? toBaseUnits(rep.circulating_supply || '0') : 0n
+       if (burnBase > circulating) return { status: 409, body: { error: 'cannot redeem more than circulating', circulating: fromBaseUnits(circulating) } }
+       const newCirc = circulating - burnBase
+-      await dbExec('UPDATE representations SET circulating_supply=?, status=?, updated_at=? WHERE id=?',
+-        [fromBaseUnits(newCirc, 18), newCirc === 0n ? 'RETIRED' : 'CANONICAL', now(), rep.id])
+-      await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, status, created_at)
++      // route through the once-only accounting primitive so circulating stays == SUM(events) (no drift
++      // vs the event-sourced model). Key on the new ledger row so a lost response can't double-decrement.
++      const ins = await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, status, created_at)
+         VALUES (?, 'redeem', ?, ?, 'released', ?)`, [asset.id, floorToDecimals(amount, DEST_DECIMALS[chain]), chain, now()])
++      await applyCirculatingDelta(rep.id, -burnBase, `legacy-redeem:${ins && ins.lastInsertRowid}`)
++      if (newCirc === 0n) await dbExec('UPDATE representations SET status=?, updated_at=? WHERE id=?', ['RETIRED', now(), rep.id]).catch(() => {})
+       return { status: 200, body: { redeemed: true, tick: asset.exact_ticker, chain, amount: String(amount),
+         circulating: fromBaseUnits(newCirc), note: 'Representation burned; equivalent collateral released.' } }
+     })
+@@ -1859,7 +1920,7 @@ app.get('/api/reconcile', async (req, res) => {
+           + '{kind:"move", burn_txid, resolution:"decremented"|"aborted"} — decremented=source debit CONFIRMED (lets the move resume its dest mint); aborted=debit did NOT happen (free the burn, mark aborted). '
+           + '{kind:"stamp", burn_txid, resolution:"released"|"failed", release_txid?} — released=stamp went out (mark released); failed=nothing broadcast (delete the reservation, retryable). '
+           + '{kind:"burn", burn_txid, chain, resolution:"free"} — free an ORPHAN consumed-burn with no downstream row. '
+-          + 'Mint-op (operations) reconciliation is the durable-recovery batch, not here.',
++          + '{kind:"mint", op_key, resolution:"completed"|"failed", release_txid?} — completed=mint confirmed on-chain (record supply, needs release_txid); failed=no mint happened (release the backing reservation).',
+     })
+   } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+ })
+@@ -1915,7 +1976,39 @@ app.post('/api/reconcile', async (req, res) => {
+       return res.status(200).json({ reconciled: true, kind, burn_txid, resolution: 'free' })
+     }
+ 
+-    if (kind !== 'redeem') return res.status(400).json({ error: 'kind must be "redeem", "move", "stamp", or "burn"' })
++    // ---- kind:"mint" — resolve an uncertain mint OP (B04 audit). An op left 'reserved'/'reconcile'
++    // holds a durable backing reservation (reservedBase) so no other op can mint against it until the
++    // operator establishes the on-chain outcome. 'completed' = the mint DID land (record its supply +
++    // mark the op complete); 'failed' = it did NOT (release the reservation). Immutable request binding:
++    // the op row carries the canonical_id/chain/recipient/amount that were reserved; we act on those.
++    if (kind === 'mint') {
++      const { op_key } = req.body || {}
++      if (!op_key) return res.status(400).json({ error: 'op_key required' })
++      if (resolution !== 'completed' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "completed" (mint confirmed on-chain → record supply) or "failed" (no mint happened → release the reservation)' })
++      const op = (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0]
++      if (!op) return res.status(404).json({ error: 'operation not found' })
++      if (op.action !== 'mint') return res.status(400).json({ error: `operation ${op_key} is not a mint (action=${op.action})` })
++      if (op.state !== 'reserved' && op.state !== 'reconcile') return res.status(409).json({ error: `operation is terminal (state=${op.state}); nothing to reconcile` })
++      const out = await withAssetLock(op.canonical_id, async () => {
++        const cur = (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0]
++        if (!cur || (cur.state !== 'reserved' && cur.state !== 'reconcile')) return { status: 409, body: { error: 'operation no longer reconcilable' } }
++        if (resolution === 'failed') {
++          await dbExec('DELETE FROM operations WHERE op_key=?', [op_key]) // release the reservation (backing freed)
++          return { status: 200, body: { reconciled: true, kind, op_key, resolution: 'failed', note: 'reservation released — backing is available again' } }
++        }
++        // completed: the operator verified the on-chain mint. Record its supply as a once-only event
++        // (idempotent — if some accounting already landed, the event key makes this a no-op) + complete.
++        if (!release_txid) return { status: 400, body: { error: 'release_txid (the on-chain mint signature/tx) required to record a completed mint' } }
++        const repRow = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [op.canonical_id, op.chain]))[0]
++        if (!repRow) return { status: 409, body: { error: 'no representation row for this op chain — create/verify it before recording the mint' } }
++        await applyCirculatingDelta(repRow.id, toBaseUnits(op.amount), `mint:${op_key}`)
++        await dbExec(`UPDATE operations SET state='completed', tx_id=?, updated_at=? WHERE op_key=?`, [release_txid, now(), op_key])
++        return { status: 200, body: { reconciled: true, kind, op_key, resolution: 'completed', amount: op.amount, chain: op.chain, tx_id: release_txid } }
++      })
++      return res.status(out.status).json(out.body)
++    }
++
++    if (kind !== 'redeem') return res.status(400).json({ error: 'kind must be "redeem", "mint", "move", "stamp", or "burn"' })
+     if (resolution !== 'released' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "released" or "failed"' })
+     const row = (await dbQuery(`SELECT * FROM collateral_ledger WHERE id=? AND direction='redeem'`, [id]))[0]
+     if (!row) return res.status(404).json({ error: 'redeem ledger row not found' })
+@@ -2423,51 +2516,83 @@ async function tableEnforcesUnique(table, col) {
+     for (const m of ddl.matchAll(/\b(?:UNIQUE|PRIMARY KEY)\s*\(([^)]*)\)/ig)) {
+       const cols = _colsInParen(m[1]); if (cols.length === 1 && cols[0] === col) return true
+     }
+-    // a UNIQUE INDEX whose indexed columns are EXACTLY [col] (partial indexes: the WHERE clause is after
+-    // the column paren, so we only capture the indexed columns).
++    // a UNIQUE INDEX whose indexed columns are EXACTLY [col]. B07 (audit): a PARTIAL unique index only
++    // enforces uniqueness over the rows matching its WHERE predicate. A predicate on OTHER columns/states
++    // (e.g. UNIQUE(op_key) WHERE state='completed') does NOT prevent two 'reserved' rows with the same
++    // key → it must NOT satisfy the gate. The ONE acceptable partial predicate is exactly "<col> IS NOT
++    // NULL" — the standard 'unique when present' idiom, which still guarantees every non-null value is
++    // unique (and is how the production collateral_ledger.btc_txid gate is expressed).
+     const idx = await dbQuery(`SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL`, [table])
+     for (const r of idx) {
+       const s = r.sql || ''
+       if (!/\bUNIQUE\b/i.test(s)) continue
+       const on = s.match(/\bON\b[^(]*\(([^)]*)\)/i); if (!on) continue
+-      const cols = _colsInParen(on[1]); if (cols.length === 1 && cols[0] === col) return true
++      const cols = _colsInParen(on[1]); if (!(cols.length === 1 && cols[0] === col)) continue
++      const wh = s.match(/\bWHERE\b\s*(.+?)\s*;?\s*$/i)
++      if (wh) {
++        const norm = wh[1].replace(/["'`[\]()]/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
++        if (norm !== `${col.toLowerCase()} is not null`) continue // predicate filters other rows → insufficient
++      }
++      return true
+     }
+     return false
+   } catch (_) { return false }
+ }
+ async function migrateSchema() {
++  // B02/B05 (audit): the once-only accounting-events table. The app normally can't DDL (Dashboard API
++  // blocks CREATE), so in production it is applied out-of-band (agent MCP); this IF-NOT-EXISTS attempt
++  // is a harmless no-op there and creates it for self-contained test fixtures. Verified + gated below.
++  await dbExec(`CREATE TABLE IF NOT EXISTS accounting_events (event_key TEXT PRIMARY KEY, rep_id INTEGER, delta_base TEXT, created_at INTEGER)`).catch(() => {})
+   try {
+     await dbQuery('SELECT burn_txid FROM consumed_burns LIMIT 1')
+     await dbQuery('SELECT burn_txid FROM collateral_ledger LIMIT 1')
+     await dbQuery('SELECT op_key FROM operations LIMIT 1') // R05 durable operation records
+     await dbQuery('SELECT asset_id FROM asset_locks LIMIT 1') // grok P0: cross-process asset lock table
++    await dbQuery('SELECT event_key FROM accounting_events LIMIT 1') // B02/B05 once-only accounting events
+   } catch (e) {
+-    console.error('SCHEMA CHECK FAILED — burn registry missing; writes stay contained (SCHEMA_OK false). Apply migration (consumed_burns + operations + collateral_ledger.burn_txid). ' + (e.message || e))
++    console.error('SCHEMA CHECK FAILED — a required table is missing; writes stay contained (SCHEMA_OK false). Apply migration (consumed_burns + operations + collateral_ledger.burn_txid + asset_locks + accounting_events). ' + (e.message || e))
+     return // SCHEMA_OK stays false → containment holds even if STAMPY_MAINTENANCE=0
+   }
+-  // A08 + grok: ALL single-column idempotency gates must be present, or the crash-safety story is void.
++  // A08 + grok + B07 (audit): ALL single-column idempotency gates must be present, or the crash-safety
++  // story is void.
+   // - operations.op_key / consumed_burns.burn_txid: one op / one burn = one effect.
+   // - collateral_ledger.btc_txid: stops two workers double-crediting the SAME deposit (phantom backing).
+   // - bridge_ops.burn_txid: stops two workers double-releasing the SAME stamp burn.
+-  const uniqGates = [['operations', 'op_key'], ['consumed_burns', 'burn_txid'], ['collateral_ledger', 'btc_txid'], ['bridge_ops', 'burn_txid']]
++  // - asset_locks.asset_id (B07): without it two holders can acquire the same asset's lock at once.
++  // - accounting_events.event_key (B07/B02): without it an accounting event is not once-only.
++  // tableEnforcesUnique rejects composite and PARTIAL unique indexes, so the guarantee is real.
++  const uniqGates = [['operations', 'op_key'], ['consumed_burns', 'burn_txid'], ['collateral_ledger', 'btc_txid'], ['bridge_ops', 'burn_txid'], ['asset_locks', 'asset_id'], ['accounting_events', 'event_key']]
+   for (const [tbl, c] of uniqGates) {
+     if (!(await tableEnforcesUnique(tbl, c))) {
+-      console.error(`SCHEMA CONSTRAINT CHECK FAILED — ${tbl}.${c} must be UNIQUE on that column ALONE. Writes stay contained (SCHEMA_OK false) until the constraint is in place.`)
++      console.error(`SCHEMA CONSTRAINT CHECK FAILED — ${tbl}.${c} must be UNIQUE on that column ALONE (no composite/partial index). Writes stay contained (SCHEMA_OK false) until the constraint is in place.`)
+       return
+     }
+   }
+   try {
+-    // old moves recorded the rep-burn hash only in collateral_ledger.btc_txid (direction='move-out')
++    // B02/B05: seed a baseline accounting event per representation so circulating_supply == SUM(events).
++    // Without it, the first event-sourced write would recompute from events alone and wipe pre-existing
++    // supply. Idempotent (UNIQUE event_key 'baseline:<id>'); baseline = current circ − sum(existing events).
++    const reps = await dbQuery('SELECT id, circulating_supply FROM representations')
++    for (const rep of reps) {
++      if ((await dbQuery('SELECT 1 FROM accounting_events WHERE event_key=?', ['baseline:' + rep.id])).length) continue
++      const evs = await dbQuery('SELECT delta_base FROM accounting_events WHERE rep_id=?', [rep.id])
++      let s = 0n; for (const e of evs) s += BigInt(e.delta_base)
++      const base = toBaseUnits(rep.circulating_supply || '0') - s
++      await dbExec('INSERT OR IGNORE INTO accounting_events (event_key, rep_id, delta_base, created_at) VALUES (?,?,?,?)', ['baseline:' + rep.id, rep.id, base.toString(), now()])
++    }
++    // old moves recorded the rep-burn hash only in collateral_ledger.btc_txid (direction='move-out').
++    // B06 (audit): EXCLUDE 'aborted' move-outs — an aborted move deliberately FREED its burn (the source
++    // debit never happened), so re-consuming it on restart would strand a legitimate retry.
+     await dbExec(`INSERT OR IGNORE INTO consumed_burns (burn_txid, chain, canonical_id, purpose, created_at)
+       SELECT CASE WHEN dest_chain='solana' THEN btc_txid ELSE lower(btc_txid) END, dest_chain, canonical_id, 'move', created_at
+-      FROM collateral_ledger WHERE direction='move-out' AND btc_txid IS NOT NULL`)
+-    // prior redemptions that recorded a burn_txid (new-schema rows). A04 (audit): EXCLUDE 'failed'
+-    // rows — a failed redeem deliberately FREED its burn (GATED pre-send), so re-consuming it on
+-    // startup would permanently block the holder's legitimate retry. Only truly-consumed dispositions
+-    // (released / reconcile-uncertain) keep the burn reserved.
++      FROM collateral_ledger WHERE direction='move-out' AND btc_txid IS NOT NULL AND (status IS NULL OR status != 'aborted')`)
++    // prior redemptions that recorded a burn_txid. A04 (audit): EXCLUDE 'failed' (a failed redeem freed
++    // its burn pre-send). B06 (audit): INCLUDE SQL NULL status — the live collateral calc counts a
++    // NULL-status redeem as an obligation, so its burn MUST be preserved or the same burn could trigger
++    // a second release. `status != 'failed'` alone drops NULL (NULL != 'failed' is NULL/false in SQL).
+     await dbExec(`INSERT OR IGNORE INTO consumed_burns (burn_txid, chain, canonical_id, purpose, created_at)
+       SELECT CASE WHEN dest_chain='solana' THEN burn_txid ELSE lower(burn_txid) END, dest_chain, canonical_id, 'redeem', created_at
+-      FROM collateral_ledger WHERE direction='redeem' AND burn_txid IS NOT NULL AND status != 'failed'`)
++      FROM collateral_ledger WHERE direction='redeem' AND burn_txid IS NOT NULL AND (status IS NULL OR status != 'failed')`)
+   } catch (e) {
+     // audit R03: a FAILED backfill must NOT grant readiness — keep writes contained until it succeeds.
+     console.error('SCHEMA BACKFILL FAILED — writes stay contained (SCHEMA_OK false) until migration completes: ' + (e.message || e))
+diff --git a/sol-mint.js b/sol-mint.js
+index c0cf689..e46d04f 100644
+--- a/sol-mint.js
++++ b/sol-mint.js
+@@ -62,8 +62,27 @@ async function mintTokens({ existingMint, amountBase, amountBase9, decimals = DE
+   const em = await emblem()
+   const authority = new PublicKey(em.publicKey)
+   let mint = null
+-  if (existingMint) { try { mint = new PublicKey(existingMint); await getMint(connection, mint) } catch (_) { mint = null } }
+-  if (!mint) mint = await createMint(connection, feePayer, authority, authority, decimals) // decimals sized per asset (u64-safe)
++  if (existingMint) {
++    // AUDIT (30-Sep): a TRANSIENT getMint RPC failure must NOT fall through to createMint — that would
++    // mint a DIFFERENT token (identity change) backed by the same collateral. Distinguish "the mint does
++    // not exist" (fail closed; reconcile) from a transient error (retry); NEVER auto-create a new identity
++    // when an existingMint was supplied.
++    let pk
++    try { pk = new PublicKey(existingMint) } catch (_) { throw new Error('stored Solana mint address is invalid: ' + existingMint) }
++    let lastErr
++    for (let i = 0; i < 4; i++) {
++      try { await getMint(connection, pk); mint = pk; break }
++      catch (e) {
++        lastErr = e
++        if (/could not find|not found|TokenAccountNotFound|Invalid account owner|account does not exist/i.test(String(e && (e.message || e)))) {
++          const er = new Error('the stored Solana mint ' + existingMint + ' does not exist on-chain — refusing to create a NEW token identity automatically (reconcile required)'); er.code = 'MINT_MISSING'; throw er
++        }
++        await new Promise(r => setTimeout(r, 200 * (i + 1))) // transient RPC error → back off and retry
++      }
++    }
++    if (!mint) { const er = new Error('could not verify the existing Solana mint after retries (transient RPC) — not creating a new identity: ' + (lastErr && (lastErr.message || lastErr))); er.code = 'RPC_UNCERTAIN'; throw er }
++  }
++  if (!mint) mint = await createMint(connection, feePayer, authority, authority, decimals) // new rep only; decimals sized per asset (u64-safe)
+ 
+   const ata = await getOrCreateAssociatedTokenAccount(connection, feePayer, mint, owner)
+ 

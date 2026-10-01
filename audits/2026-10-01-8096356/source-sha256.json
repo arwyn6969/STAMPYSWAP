@@ -1,0 +1,20 @@
+{
+  "server.js": "68ce5502bb9baab7fe43c76fdab1a5c9fe23988a4e9d96835165ec336f6d3240",
+  "recovery.js": "cdaeb2149a7ddeabe0d308653d87285db505b9f53f2f13cb5b7aad63f5c5fa22",
+  "labels.js": "982733d12487db58afa6f969f7791b564bb7934440966fd4d51e362f67f27fca",
+  "custody.js": "d8248c9cd11d02270e094affcbd0718e26779e90b798d50d001e3f0843f40060",
+  "evm-mint.js": "495d5a17c5e90bba79fa60396c5c1510873ca5ad4cf279b801ca1a10c99a6bc9",
+  "sol-mint.js": "48ca6587c03d3bc2de46e75ddb8dd717aeb65dea4cbd3333612496a3102e1f77",
+  "counterparty.js": "99efbc6e33a7d6fd5db37a639a9747d94cefe58802ee8ab57e53a438431cd4f4",
+  "acme.js": "a0410418f909e27ee7882ec884037e878c4d8a4fad16c09911a84af0134ff621",
+  "package.json": "5f289fa5775541437b5257f5272ed9ce3d60e9ac3310499ba9a7c43aab27a607",
+  "package-lock.json": "2fa26c11f1470eefd84db203171c72761147c2c0c728895f4f929f2e9fc34ae4",
+  "public/index.html": "fd700eb472aa987f2add0faa351c41704ef974a7197b63abc852488756d0ab41",
+  "public/wallet.js": "d57089b9146596dc7de65d0cc6ed924bef628641c760e6df108ea760a0da1f0e",
+  "test/handler.test.cjs": "08f3661db26e969875a8a23d4dc16a483a950cc15c6cbd02e650e5f87146262f",
+  "test/audit-b.test.cjs": "90729c15f95a11f292f9abed09f81ae75729aeb92187d757c571b2ff23d3bb49",
+  "test/audit-b.fixture.cjs": "7527c7021b1d5120e6d6bb915e6e25cda386c0609d3c4406382ff7c9f2177d7d",
+  "gen-erc20-mainnet.js": "453f97dfe56fafba5ab6517aebc706dc8208ab7ff022978c122ac6c9ac0fd3e6",
+  "StampyRepMainnet.sol": "5a809a9dc8fa4b75161dfd60ae25663bbbf223dc9c82a35dd344a8840ed6f1db",
+  "erc20-mainnet-artifact.json": "7eb4573fcde476ccc98b6945ecb6f8485df82fbd2c9258a881a53faa67d3ea13"
+}

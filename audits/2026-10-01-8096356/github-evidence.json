@@ -1,0 +1,60 @@
+{
+  "review_date": "2026-10-01",
+  "repository": "https://github.com/arwyn6969/STAMPYSWAP",
+  "baseline": "9689964dac19f4b45c5532a744bd3fd8dfe0daea",
+  "reviewed": "80963563fc7eb3ce1b30bd87d2c1dcb096393418",
+  "main_at_recheck": "80963563fc7eb3ce1b30bd87d2c1dcb096393418",
+  "commit_date": "2026-10-01T15:20:32Z",
+  "commit_subject": "Audit 2026-09-30 B01-B09: durable backing reservation + once-only accounting",
+  "changed_files": [
+    {
+      "file": "CLAUDE.md",
+      "changes": 23
+    },
+    {
+      "file": "custody.js",
+      "changes": 35
+    },
+    {
+      "file": "package-lock.json",
+      "changes": 8
+    },
+    {
+      "file": "package.json",
+      "changes": 5
+    },
+    {
+      "file": "public/index.html",
+      "changes": 49
+    },
+    {
+      "file": "public/wallet.js",
+      "changes": 28
+    },
+    {
+      "file": "server.js",
+      "changes": 271
+    },
+    {
+      "file": "sol-mint.js",
+      "changes": 23
+    },
+    {
+      "file": "test/audit-b.fixture.cjs",
+      "changes": 137
+    },
+    {
+      "file": "test/audit-b.test.cjs",
+      "changes": 208
+    }
+  ],
+  "check_runs": {
+    "total_count": 0,
+    "check_runs": []
+  },
+  "status": {
+    "state": "pending",
+    "total_count": 0,
+    "statuses": []
+  }
+}

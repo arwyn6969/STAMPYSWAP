@@ -1,0 +1,26 @@
+[
+  {
+    "requested": "https://arwyn.party/stampyswap/",
+    "final_url": "https://arwyn.party/stampyswap/",
+    "status": 200,
+    "content_type": "text/html; charset=utf-8",
+    "bytes": 3705,
+    "saved": "live-get-0.txt"
+  },
+  {
+    "requested": "https://arwyn.party/stampyswap/api/status",
+    "final_url": "https://arwyn.party/stampyswap/api/status",
+    "status": 200,
+    "content_type": "text/html; charset=utf-8",
+    "bytes": 59782,
+    "saved": "live-get-1.txt"
+  },
+  {
+    "requested": "https://arwyn.party/stampyswap/api/custody/status",
+    "final_url": "https://arwyn.party/stampyswap/api/custody/status",
+    "status": 200,
+    "content_type": "text/html; charset=utf-8",
+    "bytes": 59782,
+    "saved": "live-get-2.txt"
+  }
+]

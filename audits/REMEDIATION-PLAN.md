@@ -1,5 +1,12 @@
 # STAMPYSWAP consolidated remediation plan
 
+Current review: **`80963563fc7eb3ce1b30bd87d2c1dcb096393418`**, 1 October 2026. The [repair audit](2026-10-01-8096356/AUDIT.md) and [new Emblem handoff](2026-10-01-8096356/EMBLEM-HANDOFF.md) supersede the status statements below. A limited release candidate remains blocked.
+
+Next work: make backing allocation consistent under stale reads/lease expiry (C01), fail closed on reservation-read failure (C02), prevent stale absolute supply writes (C03), correct event-native baseline initialization/restart (C04), restore non-vault value caps for spendable unknown scripts (C05), and complete move recovery/materialization (C06). Retain verified B06/B07/B08 behavior, the once-only single-event retry protection, reproducible contract build and Solana identity fix. Finish the separately acknowledged CI, advisory, semantic-validation, staging and deployment-evidence gates before candidate review.
+
+## Preserved September planning context
+
+
 Current baseline: **`9689964dac19f4b45c5532a744bd3fd8dfe0daea`**, independently reviewed on 30 September 2026. The [latest release audit](2026-09-30-9689964/AUDIT.md) and [Emblem handoff](2026-09-30-9689964/EMBLEM-HANDOFF.md) supersede earlier current-status and sequencing statements below. Public custody remains no-go.
 
 The current order is: (1) durable backing reservations and once-only accounting/recovery, B01–B05; (2) schema/history/disposition correctness, B06–B07; (3) complete Bitcoin signing validation, B09; (4) supported UI/network flows, reproducible builds/CI and deployment evidence, including B08; then an independent frozen-release-candidate review. Production containment and scope must be confirmed by the operator. Working installation/lint/tests are now verified; they do not close the newly reproduced runtime failures.

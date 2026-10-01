@@ -1,6 +1,17 @@
 # STAMPYSWAP audit register and ownership recommendation
 
-## Latest completed independent review 30 September 2026
+## Latest completed repair review 1 October 2026
+
+Reviewed **`80963563fc7eb3ce1b30bd87d2c1dcb096393418`**, against the September baseline **`9689964`**. See the [repair audit](2026-10-01-8096356/AUDIT.md), [Emblem handoff](2026-10-01-8096356/EMBLEM-HANDOFF.md) and [verification summary](2026-10-01-8096356/verification-summary.json).
+
+The claim that all B01–B09 findings are remediated is **not verified**. B06/B07's reported failures and B08's local authorization flow are fixed. The original B02 response-loss case is fixed. New independent schedules reproduce C01–C04 accounting/allocation failures, C05's Bitcoin script-value bypass and C06's move-repair gap. Custody must remain contained; this is not release clearance.
+
+Fresh install, lint, 37 project tests and a byte-identical mainnet contract build pass. The independent suite completes 39 checks: 31 positive verifications and eight defect/residual reproductions. The old suite has six positive passes and 12 OPEN failures; its B08 failure is a missing-fixture-field error, so separate integration tests establish the actual authorization fix. OPEN checks passing is evidence of a defect.
+
+The public browser view reports maintenance and release gated. Backend revision, effective environment/file flags and production state are not independently attested. No live write or deployment was performed. The report and evidence are the current handoff; earlier entries below are preserved history.
+
+
+## Previous completed independent review 30 September 2026
 
 Current reviewed GitHub main is **`9689964dac19f4b45c5532a744bd3fd8dfe0daea`**, published 22 September and rechecked on 30 September. Nine commits follow the previous completed review. See the [detailed release audit](2026-09-30-9689964/AUDIT.md), [Emblem repair handoff](2026-09-30-9689964/EMBLEM-HANDOFF.md) and [GitHub evidence](2026-09-30-9689964/github-evidence.json).
 

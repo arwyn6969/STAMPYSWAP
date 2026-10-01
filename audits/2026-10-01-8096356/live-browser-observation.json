@@ -1,0 +1,22 @@
+{
+  "observed_date": "2026-10-01",
+  "url": "https://arwyn.party/stampyswap/app/",
+  "method": "Read-only browser accessibility and rendered DOM inspection; no form submitted or wallet connected",
+  "maintenance_banner_present": true,
+  "maintenance_text": "Service in maintenance — a security audit is being remediated. Deposits, mints, cross-chain moves, redemptions and pool operations are temporarily disabled.",
+  "custody_release_text": "release gated",
+  "custody_pause_text": "Deposits/mints/redemptions are PAUSED for security remediation. Custody holds real assets; nothing new is accepted right now.",
+  "new_redeem_chain_and_burn_fields_visible": true,
+  "backend_revision_verified": false,
+  "deployment_environment_or_flag_file_verified": false,
+  "direct_status_navigation": "Blocked by browser client; programmatic GETs to app/status endpoints returned 403",
+  "button_disabled_attributes": {
+    "rd-verify": false,
+    "rr-redeem": false,
+    "mv-go": false,
+    "sb-exec": false,
+    "p-create": false,
+    "s-swap": false
+  },
+  "qualification": "The rendered application reports maintenance and release gating. This does not independently establish effective environment values, the absence of .custody-live, worker count, backend SHA, chain solvency, or enforcement on every live request. No value-changing request was sent."
+}

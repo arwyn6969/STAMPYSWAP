@@ -1,0 +1,210 @@
+TAP version 13
+# (node:11030) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: OPEN C01/B01: stale supply snapshot before reservation survives an expired lease and overissues
+ok 1 - OPEN C01/B01: stale supply snapshot before reservation survives an expired lease and overissues
+  ---
+  duration_ms: 53.733
+  ...
+# Subtest: OPEN C02/B04: reservation-read error is converted to zero and reuses uncertain backing
+ok 2 - OPEN C02/B04: reservation-read error is converted to zero and reuses uncertain backing
+  ---
+  duration_ms: 10.232375
+  ...
+# Subtest: OPEN C03/B02: an older absolute supply write overwrites a newer sum and permits extra mint
+ok 3 - OPEN C03/B02: an older absolute supply write overwrites a newer sum and permits extra mint
+  ---
+  duration_ms: 14.534084
+  ...
+# Subtest: OPEN C04/B03/B05: restart baseline cancels an unmaterialized mint event on a new representation
+ok 4 - OPEN C04/B03/B05: restart baseline cancels an unmaterialized mint event on a new representation
+  ---
+  duration_ms: 19.019
+  ...
+# Subtest: OPEN C05/B09: a spendable bare public-key output bypasses the non-vault value caps
+ok 5 - OPEN C05/B09: a spendable bare public-key output bypasses the non-vault value caps
+  ---
+  duration_ms: 14.590375
+  ...
+# Subtest: OPEN B09 residual: an unrelated dust recipient with no data payload still reaches signer
+ok 6 - OPEN B09 residual: an unrelated dust recipient with no data payload still reaches signer
+  ---
+  duration_ms: 1.860167
+  ...
+# Subtest: VERIFIED B01 narrow: lease expiry during an already-reserved mint blocks a competitor
+ok 7 - VERIFIED B01 narrow: lease expiry during an already-reserved mint blocks a competitor
+  ---
+  duration_ms: 10.686042
+  ...
+# Subtest: VERIFIED B02/B05 release retry and restart at before-event
+ok 8 - VERIFIED B02/B05 release retry and restart at before-event
+  ---
+  duration_ms: 10.576542
+  ...
+# Subtest: VERIFIED B02/B05 release retry and restart at after-event
+ok 9 - VERIFIED B02/B05 release retry and restart at after-event
+  ---
+  duration_ms: 9.574125
+  ...
+# Subtest: VERIFIED B02/B05 release retry and restart at before-cache
+ok 10 - VERIFIED B02/B05 release retry and restart at before-cache
+  ---
+  duration_ms: 8.978542
+  ...
+# Subtest: VERIFIED B02/B05 release retry and restart at after-cache
+ok 11 - VERIFIED B02/B05 release retry and restart at after-cache
+  ---
+  duration_ms: 10.0685
+  ...
+# Subtest: VERIFIED B02/B05 release retry and restart at before-terminal
+ok 12 - VERIFIED B02/B05 release retry and restart at before-terminal
+  ---
+  duration_ms: 9.036667
+  ...
+# Subtest: VERIFIED B02/B05 release retry and restart at after-terminal
+ok 13 - VERIFIED B02/B05 release retry and restart at after-terminal
+  ---
+  duration_ms: 13.130167
+  ...
+# Subtest: VERIFIED B03 narrow: insert failure retains reservation and does not return completed success
+ok 14 - VERIFIED B03 narrow: insert failure retains reservation and does not return completed success
+  ---
+  duration_ms: 6.498166
+  ...
+# Subtest: VERIFIED B04 narrow: an uncertain external mint blocks a different key across restart
+ok 15 - VERIFIED B04 narrow: an uncertain external mint blocks a different key across restart
+  ---
+  duration_ms: 8.174875
+  ...
+# Subtest: OPEN C06/B05: a failed move cache write has no complete repair through the phase-only action
+ok 16 - OPEN C06/B05: a failed move cache write has no complete repair through the phase-only action
+  ---
+  duration_ms: 10.3825
+  ...
+# Subtest: VERIFIED B06: aborted move survives reboot and can actually finish its retry
+ok 17 - VERIFIED B06: aborted move survives reboot and can actually finish its retry
+  ---
+  duration_ms: 11.947958
+  ...
+# Subtest: VERIFIED B06: NULL historical redeemed burn stays consumed after two migrations
+ok 18 - VERIFIED B06: NULL historical redeemed burn stays consumed after two migrations
+  ---
+  duration_ms: 7.545125
+  ...
+# Subtest: VERIFIED B07 schema gate: no-lock-key
+ok 19 - VERIFIED B07 schema gate: no-lock-key
+  ---
+  duration_ms: 4.38375
+  ...
+# Subtest: VERIFIED B07 schema gate: partial-op
+ok 20 - VERIFIED B07 schema gate: partial-op
+  ---
+  duration_ms: 4.580125
+  ...
+# Subtest: VERIFIED B07 schema gate: composite-op
+ok 21 - VERIFIED B07 schema gate: composite-op
+  ---
+  duration_ms: 5.386333
+  ...
+# Subtest: VERIFIED B07 schema gate: no-event-key
+ok 22 - VERIFIED B07 schema gate: no-event-key
+  ---
+  duration_ms: 9.64275
+  ...
+# Subtest: VERIFIED B07 schema gate: valid-not-null-index
+ok 23 - VERIFIED B07 schema gate: valid-not-null-index
+  ---
+  duration_ms: 4.981
+  ...
+# Subtest: VERIFIED B08: actual EVM wallet helper and redeem form complete owner authorization
+ok 24 - VERIFIED B08: actual EVM wallet helper and redeem form complete owner authorization
+  ---
+  duration_ms: 14.435083
+  ...
+# Subtest: VERIFIED B08: actual EVM wallet helper and move form complete owner authorization
+ok 25 - VERIFIED B08: actual EVM wallet helper and move form complete owner authorization
+  ---
+  duration_ms: 9.481667
+  ...
+# Subtest: VERIFIED B09 narrow: excessive declared miner fee is refused before signer access
+ok 26 - VERIFIED B09 narrow: excessive declared miner fee is refused before signer access
+  ---
+  duration_ms: 1.797083
+  ...
+# Subtest: VERIFIED containment: default maintenance, path variants, retired routes and custody gate
+ok 27 - VERIFIED containment: default maintenance, path variants, retired routes and custody gate
+  ---
+  duration_ms: 9.00375
+  ...
+# Subtest: VERIFIED mint recovery on an existing representation at before-event
+ok 28 - VERIFIED mint recovery on an existing representation at before-event
+  ---
+  duration_ms: 9.68325
+  ...
+# Subtest: VERIFIED mint recovery on an existing representation at after-event
+ok 29 - VERIFIED mint recovery on an existing representation at after-event
+  ---
+  duration_ms: 9.949541
+  ...
+# Subtest: VERIFIED mint recovery on an existing representation at before-cache
+ok 30 - VERIFIED mint recovery on an existing representation at before-cache
+  ---
+  duration_ms: 10.261083
+  ...
+# Subtest: VERIFIED mint recovery on an existing representation at after-cache
+ok 31 - VERIFIED mint recovery on an existing representation at after-cache
+  ---
+  duration_ms: 14.486292
+  ...
+# Subtest: VERIFIED mint recovery on an existing representation at before-ledger
+ok 32 - VERIFIED mint recovery on an existing representation at before-ledger
+  ---
+  duration_ms: 10.250584
+  ...
+# Subtest: VERIFIED mint recovery on an existing representation at after-ledger
+ok 33 - VERIFIED mint recovery on an existing representation at after-ledger
+  ---
+  duration_ms: 10.235125
+  ...
+# Subtest: VERIFIED mint recovery on an existing representation at after-complete
+ok 34 - VERIFIED mint recovery on an existing representation at after-complete
+  ---
+  duration_ms: 10.400667
+  ...
+# (node:11030) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+# (node:11030) ExperimentalWarning: CommonJS module /private/tmp/stampyswap-repair-audit-8096356/node_modules/rpc-websockets/dist/index.cjs is loading ES Module /private/tmp/stampyswap-repair-audit-8096356/node_modules/rpc-websockets/node_modules/uuid/dist-node/index.js using require().
+# Support for loading ES Module in require() is an experimental feature and might change at any time
+# Subtest: OPEN retained limitation: opComplete persistence failure still returns mint success
+ok 35 - OPEN retained limitation: opComplete persistence failure still returns mint success
+  ---
+  duration_ms: 5.954125
+  ...
+# Subtest: VERIFIED additional Solana repair: transient lookup cannot create a replacement mint
+ok 36 - VERIFIED additional Solana repair: transient lookup cannot create a replacement mint
+  ---
+  duration_ms: 97.453791
+  ...
+# Subtest: VERIFIED additional Solana repair: not-found lookup cannot create a replacement mint
+ok 37 - VERIFIED additional Solana repair: not-found lookup cannot create a replacement mint
+  ---
+  duration_ms: 1.277166
+  ...
+# Subtest: VERIFIED B08: Solana standard signing helper returns a verifiable owner signature
+ok 38 - VERIFIED B08: Solana standard signing helper returns a verifiable owner signature
+  ---
+  duration_ms: 15.5005
+  ...
+# Subtest: VERIFIED B08: Solana injected signing helper returns a verifiable owner signature
+ok 39 - VERIFIED B08: Solana injected signing helper returns a verifiable owner signature
+  ---
+  duration_ms: 7.752417
+  ...
+1..39
+# tests 39
+# suites 0
+# pass 39
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 845.3575

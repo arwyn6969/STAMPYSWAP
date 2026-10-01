@@ -1,26 +1,24 @@
 # STAMPYSWAP audit evidence
 
-Start with the **30 September 2026 release readiness audit** of source revision `9689964dac19f4b45c5532a744bd3fd8dfe0daea`.
+Start with the **1 October 2026 independent repair audit** of revision `80963563fc7eb3ce1b30bd87d2c1dcb096393418`.
 
-- [Detailed release readiness report](2026-09-30-9689964/AUDIT.md)
-- [Emblem repair handoff and acceptance criteria](2026-09-30-9689964/EMBLEM-HANDOFF.md)
-- [Downloadable current audit bundle](2026-09-30-9689964/STAMPYSWAP-2026-09-30-9689964-audit-handoff.zip)
-- [Current audit register and review history](AUDIT-REGISTER.md)
+- [Latest finding-by-finding repair audit](2026-10-01-8096356/AUDIT.md)
+- [Latest Emblem repair handoff](2026-10-01-8096356/EMBLEM-HANDOFF.md)
+- [Latest runnable evidence bundle](2026-10-01-8096356/STAMPYSWAP-8096356-repair-audit-handoff.zip)
+- [Audit register and review history](AUDIT-REGISTER.md)
 - [Consolidated remediation plan](REMEDIATION-PLAN.md)
 
-The current verdict is **not ready for public custody or full mainnet release**. The project tests pass, but the additional fault-injection checks reproduce remaining accounting, recovery, schema, user-flow and signing-validation problems. OPEN tests pass when they reproduce a defect; they are not release approval.
+The B06/B07 reported failures and B08 local authorization flow are verified fixed, and the clean build and 37 project tests pass. Broader checks still reproduce accounting, reservation, restart and Bitcoin output-validation failures. This is a repair audit, **not release clearance**. The public application reports maintenance and release gated; backend configuration and deployment identity remain unverified.
 
-The current folder contains the runnable independent fixture and checks, source hashes, recorded test/build/install results, dependency advisories and saved GitHub state. Its handoff explains how to reproduce the results against the exact source revision without production credentials or funded wallets.
+The latest independent suite contains 39 evidence checks: 31 verify protections and eight reproduce defects or retained limitations. An OPEN test passing demonstrates a defect. Follow the report's pinned-source reproduction instructions; the audit publication branch is documentation, not the repaired application checkout.
 
-## Historical evidence
+## Previous reviews
 
-Earlier reports remain preserved to explain the repair history and prevent an old finding from being confused with current status:
-
+- [30 September baseline audit at 9689964](2026-09-30-9689964/AUDIT.md)
+- [30 September handoff](2026-09-30-9689964/EMBLEM-HANDOFF.md)
 - [21 September audit at 457dc9a](457dc9a/AUDIT.md)
 - [Earlier review at 621499e](621499e/AUDIT.md)
 - [Original audit at 2345961](2345961/AUDIT.md)
 - [Previously supplied review at 07672db](07672db/PROVIDED-REVIEW.md)
 
-The `b164086` directory contains an unfinished historical harness, not a completed audit or current test result. Consult the register for provenance.
-
-Published for the project owner to share with Emblem. This publication contains documentation and local audit evidence; application fixes and deployment approval are separate work.
+The `b164086` directory contains an unfinished historical harness, not a completed audit. Earlier evidence is preserved. No application repair, deployment approval or live transaction is part of this publication.
