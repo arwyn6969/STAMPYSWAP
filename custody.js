@@ -215,15 +215,26 @@ async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20
   })
   let nonVaultTotal = 0, outSum = 0, hasData = false, hasRecipient = false
   for (const o of _psbt.txOutputs) {
-    outSum += Number(o.value || 0)
-    let addr = null
-    try { addr = bitcoinjs.address.fromOutputScript(o.script, bitcoinjs.networks.bitcoin) } catch (_) { addr = null } // OP_RETURN/bare-data → null
-    if (addr === null) { hasData = true; continue } // data/OP_RETURN carries the SRC-20 transfer payload (0 value)
-    if (addr === from) continue // change back to the vault — unbounded is fine
-    hasRecipient = true
     const val = Number(o.value || 0)
+    outSum += val
+    // C05 (audit): ONLY a true OP_RETURN (script opcode 0x6a) is unspendable "data" and exempt from the
+    // value caps — and it must carry NO value. Everything else moves (or could move) real BTC and MUST be
+    // bounded, INCLUDING scripts that fail standard-address conversion (e.g. a bare pay-to-pubkey, which
+    // is spendable). The previous guard treated any unconvertible script as 0-value data → a spendable
+    // bare-pubkey output slipped 999k sats past the caps. Fail closed on unknown spendable scripts.
+    const script = o.script
+    const isOpReturn = script && script.length > 0 && script[0] === 0x6a
+    if (isOpReturn) {
+      if (val !== 0) throw new Error(`refusing to sign SRC-20 redeem: an OP_RETURN output carries ${val} sats (must be zero)`)
+      hasData = true; continue
+    }
+    let addr = null
+    try { addr = bitcoinjs.address.fromOutputScript(script, bitcoinjs.networks.bitcoin) } catch (_) { addr = null }
+    if (addr === from) continue // change back to the vault — unbounded is fine
+    // a known recipient OR an unknown/non-standard spendable script: both count toward the caps
+    hasRecipient = true
     nonVaultTotal += val
-    if (val > SRC20_DUST) throw new Error(`refusing to sign SRC-20 redeem: output of ${val} sats to ${addr} exceeds the dust cap (${SRC20_DUST}) — the tx must not move real BTC value off the vault (recipient included)`)
+    if (val > SRC20_DUST) throw new Error(`refusing to sign SRC-20 redeem: output of ${val} sats to ${addr || 'a non-standard/unspendable-looking but spendable script'} exceeds the dust cap (${SRC20_DUST}) — the tx must not move real BTC value off the vault (recipient included)`)
   }
   if (nonVaultTotal > SRC20_MAX_NONVAULT) throw new Error(`refusing to sign SRC-20 redeem: ${nonVaultTotal} sats total go to non-vault outputs, over the cap (${SRC20_MAX_NONVAULT}) — possible vault BTC leak`)
   // miner fee = declared inputs − outputs; enforce absolute + rate caps

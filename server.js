@@ -944,21 +944,19 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
   const mintBase = toBaseUnits(mintAmt)
   if (mintBase <= 0n) return { status: 400, body: { error: `amount below ${chain} precision (${destDec} dp)` } }
 
-  const availableCollateral = (await collateralBase(asset.id)) - (await redeemedBase(asset.id))
   const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
-  const circulating = rep ? toBaseUnits(rep.circulating_supply || '0') : 0n
-  const allReps = await dbQuery('SELECT circulating_supply FROM representations WHERE canonical_id=?', [asset.id])
-  const totalCirculating = allReps.reduce((a, r) => a + toBaseUnits(r.circulating_supply || '0'), 0n)
   const maxSupply = toBaseUnits(asset.max_supply || '0')
 
-  // ---- R05 durable op guard (F07) — A03 (audit): the op MUST be consulted BEFORE the solvency check.
-  // Otherwise a RESUME of a mint another worker already completed would fail the (now headroom-consumed)
-  // collateral check and be misread by the caller as a definite failure → it would delete backing that
-  // is now backing the peer's mint = insolvency. Reserve first; a completed op returns the cached result
-  // without re-checking collateral; a reserved/uncertain op reconciles; a legacy-format op fails closed.
+  // ---- R05 durable op guard (F07) — A03 (audit): the op MUST be consulted/RESERVED BEFORE the solvency
+  // snapshot is read. Otherwise a RESUME of a mint another worker already completed would fail the (now
+  // headroom-consumed) collateral check and be misread as a definite failure → deleting backing now
+  // behind the peer's mint = insolvency. A completed op returns its cached result; a reserved/uncertain
+  // op reconciles; a legacy-format op fails closed.
+  // C01 (audit): the reservation MUST be inserted and durable BEFORE we read the solvency snapshot, and
+  // the snapshot MUST be read AFTER it — a lease-based lock can be stolen while this worker is paused, so
+  // any state read before the reservation is stale. Reading circulating + reserved + collateral here,
+  // after the reservation exists, is what makes a stolen-lease competitor visible to BOTH workers.
   if (opKey) {
-    // A02: absence of the EXACT key must not be read as "no prior mint" — older builds keyed the op with a
-    // trailing :chain:recipient. Detect any legacy-format op for this identity and fail closed (reconcile).
     const legacy = await dbQuery(`SELECT state FROM operations WHERE op_key LIKE ? LIMIT 1`, [opKey + ':%'])
     if (legacy.length) return { status: 409, body: { error: 'a legacy operation record exists for this mint identity — reconciliation required (not auto-retried)', reconcile: true, op: opKey } }
     const g = await opReserve(opKey, { action: 'mint', canonical_id: asset.id, amount: mintAmt, chain, recipient: receive_address })
@@ -968,15 +966,22 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
     }
   }
 
-  // ---- SOLVENCY INVARIANT (cross-chain): circulating + RESERVED ≤ collateral ≤ source supply ----
-  // B01/B04 (audit): the invariant is "confirmed issuance + all issuance that MAY have happened ≤
-  // confirmed backing". So we add `reserved` = supply claimed by OTHER in-flight/uncertain mint ops
-  // (durable operations rows), excluding this op's own reservation. This is what stops a slow mint whose
-  // lock lease expired (B01) or an uncertain mint left as 'reconcile' (B04) from letting a different
-  // op_key issue against the same collateral — the reservation holds the backing across the whole op,
-  // independent of the lock lease. A fresh reservation now exists (if opKey); a definite pre-send
-  // rejection here must RELEASE it so a legitimate later retry is not permanently blocked.
-  const reserved = await reservedBase(asset.id, opKey)
+  // ---- SOLVENCY INVARIANT (cross-chain): circulating + RESERVED + mint ≤ collateral ≤ source supply ----
+  // All three liability inputs are read FRESH here (AFTER the reservation) from the AUTHORITATIVE sources:
+  // circulating from the accounting-event ledger (not the display cache — C03), reserved from in-flight
+  // ops. B01/B04/C01/C02: reservedBase and assetCirculatingBase THROW on a read failure → we fail CLOSED
+  // (release this fresh reservation so a later retry is not blocked, and return a retryable error). Never
+  // treat an unreadable liability as zero. A definite pre-send rejection releases this op's reservation.
+  let availableCollateral, totalCirculating, reserved
+  try {
+    availableCollateral = (await collateralBase(asset.id)) - (await redeemedBase(asset.id))
+    totalCirculating = await assetCirculatingBase(asset.id)
+    reserved = await reservedBase(asset.id, opKey)
+  } catch (e) {
+    if (opKey) await opFail(opKey)
+    return { status: 503, body: { error: 'could not read backing/liability state — mint refused (fail-closed), retry: ' + String(e.message || e), retryable: true } }
+  }
+  const circulating = rep ? await repCirculatingBase(rep.id).catch(() => 0n) : 0n // display figure for the response only
   if (totalCirculating + reserved + mintBase > availableCollateral) {
     if (opKey) await opFail(opKey)
     return { status: 409, body: { error: 'insufficient collateral', reason: 'mint would exceed confirmed backing across all chains (including in-flight/uncertain reservations)',
@@ -1170,9 +1175,43 @@ async function opReconcile(op_key) { await dbExec(`UPDATE operations SET state='
 // leaves circulation unchanged and a DIFFERENT op_key can mint against the same collateral. A reservation
 // is an operations row in 'reserved' (in flight) or 'reconcile' (uncertain) state; its `amount` is the
 // supply it has claimed. We sum those (excluding the caller's own op) and subtract from available backing.
+// C02 (audit): this is a SAFETY-CRITICAL liability read. It MUST NOT swallow a DB error and return "no
+// reservations" — that would let a second mint reuse an uncertain mint's backing. Any read failure
+// THROWS and propagates, so mintCriticalCore aborts with a retryable error (fail-closed).
+// C03 (audit): an op whose mint accounting event is ALREADY recorded is now counted in `circulating`
+// (the event sum). Counting it ALSO as a reservation would double-count; so we exclude those — the
+// reservation covers only issuance that has NOT yet landed in the event ledger.
 async function reservedBase(canonicalId, excludeOpKey) {
-  const rows = await dbQuery(`SELECT op_key, amount FROM operations WHERE canonical_id=? AND action='mint' AND state IN ('reserved','reconcile')`, [canonicalId]).catch(() => [])
-  return rows.reduce((a, r) => (r.op_key === excludeOpKey ? a : a + toBaseUnits(r.amount)), 0n)
+  const rows = await dbQuery(`SELECT op_key, amount FROM operations WHERE canonical_id=? AND action='mint' AND state IN ('reserved','reconcile')`, [canonicalId])
+  let sum = 0n
+  for (const r of rows) {
+    if (r.op_key === excludeOpKey) continue
+    const ev = await dbQuery('SELECT 1 FROM accounting_events WHERE event_key=?', [`mint:${r.op_key}`])
+    if (ev.length) continue // already materialized into circulating (events) — don't double-count
+    sum += toBaseUnits(r.amount)
+  }
+  return sum
+}
+// C01/C03 (audit): circulating supply is AUTHORITATIVE from the immutable accounting-event ledger, read
+// FRESH (exact BigInt) at every solvency/PoR decision. The representations.circulating_supply column is
+// only a best-effort DISPLAY cache — a stale cache write (e.g. a lock stolen mid-materialization) can
+// never drive a solvency decision or understate supply, because solvency never reads the column. These
+// reads THROW on DB failure (fail-closed, same reason as reservedBase).
+async function repCirculatingBase(repId) {
+  const rows = await dbQuery('SELECT delta_base FROM accounting_events WHERE rep_id=?', [repId])
+  let s = 0n; for (const r of rows) s += BigInt(r.delta_base)
+  return s < 0n ? 0n : s
+}
+async function assetCirculatingBase(canonicalId) {
+  const reps = await dbQuery('SELECT id FROM representations WHERE canonical_id=?', [canonicalId])
+  let s = 0n; for (const rep of reps) s += await repCirculatingBase(rep.id)
+  return s
+}
+// Sync the display cache column to the authoritative event sum (idempotent; safe to call anytime).
+async function rematerialize(repId) {
+  const target = fromBaseUnits(await repCirculatingBase(repId), 18)
+  await writeCirculating(repId, target)
+  return target
 }
 
 // ---- B02/B05 (audit): ONCE-ONLY ACCOUNTING EVENTS. A circulating-supply change must apply EXACTLY once,
@@ -1320,8 +1359,7 @@ app.post('/api/move', async (req, res) => {
         // 'pending' → a later resume reconciles instead of blindly re-debiting or over-issuing.
         const claim = await consumeBurn({ chain: from_chain, txid: burn_txid, canonical_id: asset.id, purpose: 'move', owner: burn.owner, amount })
         if (!claim.ok) return { status: 409, body: { error: 'burn already consumed (race)' } }
-        const fresh = (await dbQuery('SELECT circulating_supply FROM representations WHERE id=?', [fromRep.id]))[0]
-        const circ = toBaseUnits((fresh && fresh.circulating_supply) || '0')
+        const circ = await repCirculatingBase(fromRep.id) // C03: authoritative from the event ledger
         if (toBaseUnits(amount) > circ) {
           // the move never started → free the burn so it stays retryable (nothing was decremented yet)
           await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(from_chain, burn_txid)]).catch(() => {})
@@ -1394,7 +1432,7 @@ app.post('/api/redeem', async (req, res) => {
 // REAL proof-of-reserves — per-asset collateral vs circulating, with the solvency check.
 app.get('/api/reserves', async (_req, res) => {
   try {
-    const reps = await dbQuery(`SELECT r.canonical_id, r.dest_chain, r.dest_address, r.status, r.circulating_supply, ca.exact_ticker
+    const reps = await dbQuery(`SELECT r.id, r.canonical_id, r.dest_chain, r.dest_address, r.status, ca.exact_ticker
       FROM representations r JOIN canonical_assets ca ON ca.id=r.canonical_id WHERE r.status IN ('CANONICAL','VERIFIED')`)
     const byAsset = {}
     for (const r of reps) {
@@ -1404,8 +1442,9 @@ app.get('/api/reserves', async (_req, res) => {
           collateral_base: coll - red, circulating_base: 0n, chains: [] }
       }
       const a = byAsset[r.canonical_id]
-      a.circulating_base += toBaseUnits(r.circulating_supply || '0')
-      a.chains.push({ chain: r.dest_chain, address: r.dest_address, circulating: fromBaseUnits(toBaseUnits(r.circulating_supply || '0')) })
+      const repCirc = await repCirculatingBase(r.id) // C03: PoR is authoritative from the event ledger, not the display cache
+      a.circulating_base += repCirc
+      a.chains.push({ chain: r.dest_chain, address: r.dest_address, circulating: fromBaseUnits(repCirc) })
     }
     // indicative USD pricing (thin memecoin markets) — server-side, cached, honest
     const btc = await prices.btcUsd().catch(() => null)
@@ -1821,7 +1860,7 @@ app.post('/api/custody/redeem', async (req, res) => {
     // The operator header is an audited back-office override (no burn required).
     const out = await withAssetLock(asset.id, async () => {
       const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
-      const circ = rep ? toBaseUnits(rep.circulating_supply || '0') : 0n
+      const circ = rep ? await repCirculatingBase(rep.id) : 0n // C03: authoritative from the event ledger
       if (toBaseUnits(amt) > circ) return { status: 409, body: { error: 'cannot redeem more than circulating', circulating: fromBaseUnits(circ) } }
       const { burn_txid, auth_sig } = req.body || {}
       let burnInfo = null
@@ -1938,7 +1977,16 @@ app.post('/api/reconcile', async (req, res) => {
       if (!mrow) return res.status(404).json({ error: 'move-out row not found for that burn_txid' })
       if (mrow.status !== 'pending') return res.status(409).json({ error: `move-out is not pending (status=${mrow.status})` })
       const out = await withAssetLock(mrow.canonical_id, async () => {
-        if (resolution === 'decremented') { await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE id=? AND status='pending'`, [mrow.id]); return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, note: 'resubmit the move with the same burn_txid to complete the destination mint' } } }
+        if (resolution === 'decremented') {
+          // C06 (audit): advancing the phase is not enough — a failed source materialization must be
+          // REPAIRED. The debit event is authoritative, so re-materialize the source cache from the event
+          // ledger before marking decremented. (With events authoritative the dest mint already sees the
+          // reduced source; this also makes the display cache truthful.)
+          const srcRep = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [mrow.canonical_id, mrow.dest_chain]))[0]
+          if (srcRep) await rematerialize(srcRep.id).catch(() => {})
+          await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE id=? AND status='pending'`, [mrow.id])
+          return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, note: 'source debit re-materialized; resubmit the move with the same burn_txid to complete the destination mint' } }
+        }
         // aborted: operator confirmed the debit never happened → free the burn + mark aborted (retryable)
         const cbChain = mrow.dest_chain
         await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(cbChain, burn_txid)]).catch(() => {})
@@ -2569,16 +2617,21 @@ async function migrateSchema() {
     }
   }
   try {
-    // B02/B05: seed a baseline accounting event per representation so circulating_supply == SUM(events).
-    // Without it, the first event-sourced write would recompute from events alone and wipe pre-existing
-    // supply. Idempotent (UNIQUE event_key 'baseline:<id>'); baseline = current circ − sum(existing events).
+    // B02/B05: seed a baseline accounting event for LEGACY representations whose circulating_supply was
+    // set before the event model, so SUM(events) == pre-existing supply.
+    // C04 (audit): a representation that ALREADY HAS ANY accounting event is an EVENT-MODEL rep — its
+    // events ARE its complete history, so it must NEVER get a baseline. Seeding `baseline = circ −
+    // sum(events)` for such a rep is catastrophic: a new rep whose first mint event was recorded but whose
+    // display cache (circulating_supply) stayed at 0 would get a NEGATIVE baseline that cancels the real
+    // mint liability on restart. So: seed ONLY when the rep has ZERO events (true legacy) AND circ > 0;
+    // never derive a baseline from the display cache for an event-bearing rep.
     const reps = await dbQuery('SELECT id, circulating_supply FROM representations')
     for (const rep of reps) {
-      if ((await dbQuery('SELECT 1 FROM accounting_events WHERE event_key=?', ['baseline:' + rep.id])).length) continue
       const evs = await dbQuery('SELECT delta_base FROM accounting_events WHERE rep_id=?', [rep.id])
-      let s = 0n; for (const e of evs) s += BigInt(e.delta_base)
-      const base = toBaseUnits(rep.circulating_supply || '0') - s
-      await dbExec('INSERT OR IGNORE INTO accounting_events (event_key, rep_id, delta_base, created_at) VALUES (?,?,?,?)', ['baseline:' + rep.id, rep.id, base.toString(), now()])
+      if (evs.length) continue // event-model rep — its events are authoritative; do NOT seed a baseline
+      const circ = toBaseUnits(rep.circulating_supply || '0')
+      if (circ <= 0n) continue // nothing to preserve
+      await dbExec('INSERT OR IGNORE INTO accounting_events (event_key, rep_id, delta_base, created_at) VALUES (?,?,?,?)', ['baseline:' + rep.id, rep.id, circ.toString(), now()])
     }
     // old moves recorded the rep-burn hash only in collateral_ledger.btc_txid (direction='move-out').
     // B06 (audit): EXCLUDE 'aborted' move-outs — an aborted move deliberately FREED its burn (the source

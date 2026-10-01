@@ -206,3 +206,100 @@ test('B09: a well-formed SRC-20 transfer (payload + dust recipient + small fee) 
   assert.equal(r.released, true)
   assert.equal(signed.n, 1) // signed exactly once
 })
+
+// ============================================================================
+// Repair-audit follow-up (1 October 2026): findings C01–C06. These assert the
+// CORRECT behaviour under the full concurrency/restart model — stolen lease,
+// read failure, stale write, restart migration — that the first repair missed.
+// ============================================================================
+const supply = (f, chain) => { const r = f.db.prepare('SELECT circulating_supply c FROM representations WHERE dest_chain=?').get(chain); return r ? r.c : null }
+
+// C01: a stale supply snapshot taken BEFORE the reservation must not survive a stolen lease.
+test('C01: stale snapshot before reservation cannot overissue after an expired-lease steal', async t => {
+  const clock = { now: 1000000 }, entered = deferred(), resume = deferred(); let pause = true
+  const a = await fixture(t, { collateral: '10', circulating: '0', clock, async beforeExec(sql, params) {
+    if (pause && sql.startsWith('INSERT INTO operations') && params[0] === 'stale-A') { pause = false; entered.resolve(); await resume.promise }
+  } })
+  const b = await fixture(t, { db: a.db, clock }); t.after(() => resume.resolve())
+  const first = a.call('/api/mint', mint('stale-A'), op); await entered.promise
+  clock.now += 31000
+  assert.equal((await b.call('/api/mint', mint('fresh-B'), op)).code, 200) // B wins the backing
+  resume.resolve(); assert.notEqual((await first).code, 200) // A resumes, re-reads fresh state, is BLOCKED
+  assert.equal(a.state.mints.length + b.state.mints.length, 1) // exactly one on-chain mint
+  assert.equal(await a.context.assetCirculatingBase(1), 10n * 10n ** 18n) // 10 issued against 10 backing
+})
+
+// C02: a reservation-read failure must STOP issuance, never read as "zero reservations".
+test('C02: a reservation-read error fails closed instead of reusing uncertain backing', async t => {
+  let loseMint = true, failRead = false
+  const f = await fixture(t, { collateral: '10', circulating: '0',
+    afterMint() { if (loseMint) { loseMint = false; throw Error('accepted mint, response lost') } },
+    beforeQuery(sql) { if (failRead && sql.startsWith('SELECT op_key, amount FROM operations')) throw Error('reservation read unavailable') } })
+  assert.equal((await f.call('/api/mint', mint('uncertain'), op)).code, 502) // uncertain → reconcile
+  failRead = true
+  const second = await f.call('/api/mint', mint('new-key'), op)
+  assert.notEqual(second.code, 200) // fail-closed (503 retryable), NOT a mint against uncertain backing
+  assert.equal(f.state.mints.length, 1)
+  assert.equal(f.db.prepare("SELECT state FROM operations WHERE op_key='uncertain'").get().state, 'reconcile')
+})
+
+// C03: an older absolute cache write must not understate supply and permit extra issuance.
+test('C03: a stale cache write cannot drive solvency — extra mint is blocked', async t => {
+  const clock = { now: 1000000 }, entered = deferred(), resume = deferred(); let pause = true
+  const a = await fixture(t, { collateral: '120', circulating: '100', clock, async beforeExec(sql, params) {
+    if (pause && sql.startsWith('UPDATE representations SET circulating_supply=') && params[0] === '110') { pause = false; entered.resolve(); await resume.promise }
+  } })
+  const b = await fixture(t, { db: a.db, clock }); t.after(() => resume.resolve())
+  const first = a.call('/api/mint', mint('sum-A'), op); await entered.promise; clock.now += 31000
+  assert.equal((await b.call('/api/mint', mint('sum-B'), op)).code, 200)
+  resume.resolve(); assert.equal((await first).code, 200)
+  assert.notEqual((await a.call('/api/mint', mint('extra-C'), op)).code, 200) // blocked by the authoritative event sum
+  assert.equal(a.state.mints.length + b.state.mints.length, 2)
+  assert.equal(await a.context.assetCirculatingBase(1), 120n * 10n ** 18n) // 120 issued == 120 backing (never 130)
+})
+
+// C04: restart migration must not cancel a real-but-unmaterialized mint liability.
+test('C04: restart baseline does not erase an unmaterialized mint event', async t => {
+  let fail = true
+  const f = await fixture(t, { collateral: '10', circulating: '0', beforeExec(sql) {
+    if (fail && sql.startsWith('UPDATE representations SET circulating_supply=')) throw Error('cache write failed persistently') } })
+  const first = await f.call('/api/mint', mint('new-rep-crash', 'ethereum'), op)
+  assert.equal(first.code, 500); assert.equal(f.state.mints.length, 1)
+  fail = false
+  const reboot = await fixture(t, { db: f.db })
+  const rep = f.db.prepare("SELECT id FROM representations WHERE dest_chain='ethereum'").get()
+  const baseline = f.db.prepare('SELECT delta_base FROM accounting_events WHERE event_key=?').get('baseline:' + rep.id)
+  assert.equal(baseline, undefined) // NO baseline seeded for an event-model rep (the defect inserted -10)
+  assert.equal((await reboot.call('/api/reconcile', { kind: 'mint', op_key: 'new-rep-crash', resolution: 'completed', release_txid: 'known-onchain-mint' }, op)).code, 200)
+  assert.equal(await reboot.context.repCirculatingBase(rep.id), 10n * 10n ** 18n) // liability preserved
+  assert.notEqual((await reboot.call('/api/mint', mint('extra-after-restart', 'ethereum'), op)).code, 200) // blocked
+  assert.equal(f.state.mints.length + reboot.state.mints.length, 1)
+})
+
+// C05: a spendable bare-pubkey output must be bounded by the value caps, not treated as data.
+test('C05: a spendable bare public-key output is refused before signing', async () => {
+  const bitcoin = dep('bitcoinjs-lib')
+  const key = dep('ecpair').ECPairFactory(dep('@bitcoinerlab/secp256k1')).fromPrivateKey(Buffer.alloc(32, 9))
+  const script = bitcoin.payments.p2pk({ pubkey: Buffer.from(key.publicKey) }).output
+  assert.throws(() => bitcoin.address.fromOutputScript(script)) // not a standard address
+  const from = btcSource
+  const p = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin })
+  p.addInput({ hash: '11'.repeat(32), index: 0, witnessUtxo: { script: bitcoin.address.toOutputScript(from), value: 1000000 } })
+  p.addOutput({ script, value: 999000 }); p.addOutput({ address: from, value: 500 })
+  const signed = { n: 0 }
+  const c = loadCustody(signed, p.toHex(), [{ index: 0, sighashType: 1 }])
+  await assert.rejects(c.redeem({ tick: 'COIN', amount: '10', toAddress: dep('bitcoinjs-lib').payments.p2wpkh({ hash: Buffer.alloc(20, 9) }).address }))
+  assert.equal(signed.n, 0)
+})
+
+// C06: the move reconcile action must repair the missing materialization so the move can finish.
+test('C06: move reconcile re-materializes the debit and the move can complete', async t => {
+  let fail = true
+  const f = await fixture(t, { beforeExec(sql) { if (fail && sql.startsWith('UPDATE representations SET circulating_supply=')) throw Error('persistent cache failure') } })
+  assert.equal((await f.call('/api/move', f.move(), op)).code, 500); fail = false
+  assert.equal((await f.call('/api/reconcile', undefined, op)).body.stuck_moves.length, 1) // visible
+  assert.equal((await f.call('/api/reconcile', { kind: 'move', burn_txid: burnId, resolution: 'decremented' }, op)).code, 200)
+  assert.equal(await f.context.repCirculatingBase(1), 90n * 10n ** 18n) // source debit materialized (100→90)
+  assert.equal((await f.call('/api/move', f.move(), op)).code, 200) // move can now finish
+  assert.equal(f.state.mints.length, 1)
+})
