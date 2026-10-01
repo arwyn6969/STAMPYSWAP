@@ -303,3 +303,29 @@ test('C06: move reconcile re-materializes the debit and the move can complete', 
   assert.equal((await f.call('/api/move', f.move(), op)).code, 200) // move can now finish
   assert.equal(f.state.mints.length, 1)
 })
+
+// C07 (repair-audit follow-up): the mint solvency check reads `reserved` and the event-sum
+// (`circulating`) separately. A peer mint that records its event BETWEEN those two reads must not
+// slip through both (it migrates reserved→circulating the instant its event lands). Reading
+// `reserved` FIRST makes that interleaving fail CLOSED (counted in reserved AND then in the
+// append-only event sum = conservative block), never under-counted → never over-issued.
+test('C07: a peer mint completing between the reserved and circulating reads cannot be missed', async t => {
+  let fired = false
+  const f = await fixture(t, { collateral: '10', circulating: '0',
+    // when the mint solvency check finishes reading the reservation list, simulate a peer op 'W'
+    // recording its mint event + completing — i.e. it migrates reserved→circulating mid-check.
+    afterQuery(sql, params, rows, state) {
+      if (!fired && sql.startsWith('SELECT op_key, amount FROM operations') && params[0] === 1) {
+        fired = true
+        const rep = f.db.prepare("SELECT id FROM representations WHERE dest_chain='base'").get()
+        f.db.prepare("INSERT OR IGNORE INTO accounting_events(event_key,rep_id,delta_base,created_at) VALUES(?,?,?,?)").run('mint:peer-W', rep.id, (10n * 10n ** 18n).toString(), 1)
+        f.db.prepare("INSERT OR IGNORE INTO operations(op_key,action,canonical_id,amount,chain,recipient,state,created_at,updated_at) VALUES('peer-W','mint',1,'10','base',?, 'completed',1,1)").run(owner.address)
+      }
+    } })
+  // seed peer-W as reserved (no event yet) so the reservation read sees it before it "completes"
+  f.db.prepare("INSERT INTO operations(op_key,action,canonical_id,amount,chain,recipient,state,created_at,updated_at) VALUES('peer-W','mint',1,'10','base',?, 'reserved',1,1)").run(owner.address)
+  const r = await f.call('/api/mint', mint('A'), op)
+  assert.notEqual(r.code, 200) // A is blocked — peer-W's 10 is counted (reserved→event), backing is full
+  assert.equal(f.state.mints.length, 0)
+  assert.ok((await f.context.assetCirculatingBase(1)) <= 10n * 10n ** 18n) // never exceeds the 10 backing
+})

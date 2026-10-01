@@ -975,8 +975,18 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
   let availableCollateral, totalCirculating, reserved
   try {
     availableCollateral = (await collateralBase(asset.id)) - (await redeemedBase(asset.id))
-    totalCirculating = await assetCirculatingBase(asset.id)
+    // ORDERING INVARIANT (do not reorder): read `reserved` BEFORE `totalCirculating`.
+    // A mint op's supply lives in exactly one of two buckets and migrates reserved→circulating the
+    // instant its (append-only, immutable) `mint:<op_key>` event is recorded. reservedBase EXCLUDES ops
+    // whose event already exists (to avoid double-counting with circulating). If we read circulating
+    // FIRST and reserved SECOND, a peer op that records its event BETWEEN the two reads is missed by
+    // BOTH (not yet in the event sum; now excluded from reserved) → under-count → over-issue. Reading
+    // reserved FIRST makes that same interleaving fail CLOSED: the op is still counted in `reserved`
+    // (no event at read time), and because events are append-only, the later circulating read also sees
+    // it — a brief double-count (conservative block), never a gap. Every outstanding mint is therefore
+    // counted in reserved+circulating AT LEAST once regardless of concurrent completion.
     reserved = await reservedBase(asset.id, opKey)
+    totalCirculating = await assetCirculatingBase(asset.id)
   } catch (e) {
     if (opKey) await opFail(opKey)
     return { status: 503, body: { error: 'could not read backing/liability state — mint refused (fail-closed), retry: ' + String(e.message || e), retryable: true } }
