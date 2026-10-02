@@ -974,19 +974,24 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
   // treat an unreadable liability as zero. A definite pre-send rejection releases this op's reservation.
   let availableCollateral, totalCirculating, reserved
   try {
-    availableCollateral = (await collateralBase(asset.id)) - (await redeemedBase(asset.id))
-    // ORDERING INVARIANT (do not reorder): read `reserved` BEFORE `totalCirculating`.
-    // A mint op's supply lives in exactly one of two buckets and migrates reserved→circulating the
-    // instant its (append-only, immutable) `mint:<op_key>` event is recorded. reservedBase EXCLUDES ops
-    // whose event already exists (to avoid double-counting with circulating). If we read circulating
-    // FIRST and reserved SECOND, a peer op that records its event BETWEEN the two reads is missed by
-    // BOTH (not yet in the event sum; now excluded from reserved) → under-count → over-issue. Reading
-    // reserved FIRST makes that same interleaving fail CLOSED: the op is still counted in `reserved`
-    // (no event at read time), and because events are append-only, the later circulating read also sees
-    // it — a brief double-count (conservative block), never a gap. Every outstanding mint is therefore
-    // counted in reserved+circulating AT LEAST once regardless of concurrent completion.
+    // ORDERING INVARIANT (do not reorder these three reads). They are read non-atomically, so the order
+    // is chosen so that EVERY concurrent interleaving fails CLOSED (conservatively blocks), never open.
+    //
+    // (1) `reserved` BEFORE `totalCirculating` [C07]: a mint op migrates reserved→circulating the instant
+    //     its append-only `mint:<op_key>` event is recorded, and reservedBase EXCLUDES ops whose event
+    //     exists. Circulating-first would miss an op that records its event between the reads (gone from
+    //     both). Reserved-first counts it in `reserved` and, events being append-only, the later
+    //     circulating read sees it too — a brief double-count (block), never a gap.
+    //
+    // (2) `availableCollateral` LAST [D01]: a concurrent REDEEM moves collateral out (redeemedBase↑) and
+    //     reduces circulating (release event). If available is read FIRST and circulating LAST, the mint
+    //     straddles a redeem with a stale-HIGH collateral snapshot + fresh-LOW circulating → it passes
+    //     against backing that is already gone → INSOLVENCY. Reading available LAST means any redeem that
+    //     lands during the window is reflected in a lower available (the stale value is then circulating,
+    //     read earlier = stale HIGH = conservative). Deposits only grow, so a stale-low available is safe.
     reserved = await reservedBase(asset.id, opKey)
     totalCirculating = await assetCirculatingBase(asset.id)
+    availableCollateral = (await collateralBase(asset.id)) - (await redeemedBase(asset.id))
   } catch (e) {
     if (opKey) await opFail(opKey)
     return { status: 503, body: { error: 'could not read backing/liability state — mint refused (fail-closed), retry: ' + String(e.message || e), retryable: true } }
@@ -1891,6 +1896,29 @@ app.post('/api/custody/redeem', async (req, res) => {
       }
       // reserve a pending accounting row BEFORE the external release (crash-safety)
       const pend = await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, burn_txid, status, created_at) VALUES (?, 'redeem', ?, ?, ?, 'pending', ?)`, [asset.id, amt, chain, burn_txid || null, now()])
+      // D02 (self-audit): RESERVE-FIRST, like mint. A pending redeem has NOT yet decremented circulating
+      // (that happens at finalizeReleaseOnce). Two concurrent redeems each pass the single-row `amt ≤ circ`
+      // check above and then BOTH release → over-release the vault (prod allows multiple NULL-burn pending
+      // rows; the in-process lock does not serialize across workers, and a DB lease can be stolen). Now that
+      // THIS redeem's pending row is durably inserted, re-check that ALL in-flight (pending/reconcile)
+      // redeems for this asset+chain together do not exceed circulating. Concurrent redeems each see the
+      // other's pending row → both fail closed (retryable), never a double release. Fail-closed on read error.
+      let inflightBase, circNow
+      try {
+        const inflight = await dbQuery(`SELECT amount FROM collateral_ledger WHERE canonical_id=? AND dest_chain=? AND direction='redeem' AND status IN ('pending','reconcile')`, [asset.id, chain])
+        inflightBase = inflight.reduce((a, r) => a + toBaseUnits(r.amount), 0n)
+        circNow = rep ? await repCirculatingBase(rep.id) : 0n
+      } catch (e) {
+        await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
+        if (!operatorMode && burn_txid) await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, burn_txid)]).catch(() => {})
+        return { status: 503, body: { error: 'could not read in-flight redemption state — redeem refused (fail-closed), retry: ' + String(e.message || e), retryable: true } }
+      }
+      if (inflightBase > circNow) {
+        // another in-flight redeem already claims the backing — back THIS one out (nothing released yet)
+        await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
+        if (!operatorMode && burn_txid) await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, burn_txid)]).catch(() => {})
+        return { status: 409, body: { error: 'redeem would exceed circulating together with other in-flight redemptions — retry', in_flight: fromBaseUnits(inflightBase), circulating: fromBaseUnits(circNow), retryable: true } }
+      }
       let release
       const redeemDec = asset.decimals == null ? 8 : Number(asset.decimals)
       const redeemArgs = { tick: asset.exact_ticker, amount: amt, toAddress: to, protocol: asset.source_protocol, dec: redeemDec }

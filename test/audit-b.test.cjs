@@ -375,3 +375,48 @@ test('H3: a retried custody redeem with the same burn cannot double-release', as
   assert.equal(f.state.releases.length, 1) // NO second release
   assert.equal(await f.context.repCirculatingBase(1), 90n * 10n ** 18n) // NOT decremented again
 })
+
+// ============================================================================
+// Self-audit (2 Oct): two NEW over-issue/over-release races the external audit
+// did not probe — the mint's collateral snapshot vs a concurrent redeem, and
+// two concurrent redeems. Both reproduced insolvency on 54b11dc before the fix.
+// ============================================================================
+
+// D01: a redeem that lands DURING a mint's liability-read window must not let the mint over-issue.
+// The mint now reads availableCollateral LAST (after reserved + circulating) so a concurrent redeem's
+// collateral reduction is always seen → fails closed. (Reproduced 20-vs-10-style insolvency pre-fix.)
+test('D01: a redeem during a mint read window cannot cause over-issue', async t => {
+  const entered = deferred(), resume = deferred(); let pause = true
+  const a = await fixture(t, { collateral: '100', circulating: '100',
+    async afterQuery(sql) { if (pause && sql.startsWith('SELECT op_key, amount FROM operations')) { pause = false; entered.resolve(); await resume.promise } } })
+  const b = await fixture(t, { db: a.db })
+  const mintP = a.call('/api/mint', mint('mintA'), op)
+  await entered.promise
+  assert.equal((await b.call('/api/custody/redeem', { tick: 'COIN', amount: '10', to: btcSource, chain: 'base' }, op)).code, 200)
+  resume.resolve()
+  const mr = await mintP
+  assert.notEqual(mr.code, 200) // mint blocked — the collateral the redeem removed is no longer available
+  const circ = await a.context.assetCirculatingBase(1)
+  const avail = (await a.context.collateralBase(1)) - (await a.context.redeemedBase(1))
+  assert.ok(circ <= avail, `insolvent: circulating ${circ} > available ${avail}`)
+})
+
+// D02: two concurrent redeems must not release more than circulating (reserve-first: each in-flight
+// redeem's pending row is counted against circulating, so the second fails closed). Operator-gated,
+// but prod's partial (nulls-allowed) burn index previously let both pending rows + both releases land.
+test('D02: concurrent redeems cannot over-release past circulating', async t => {
+  const entered = deferred(), resume = deferred(); let pause = false
+  const a = await fixture(t, { collateral: '100', circulating: '10',
+    async afterQuery(sql) { if (pause && sql.startsWith('SELECT delta_base FROM accounting_events WHERE rep_id')) { pause = false; entered.resolve(); await resume.promise } } })
+  const b = await fixture(t, { db: a.db })
+  pause = true
+  const r1 = a.call('/api/custody/redeem', { tick: 'COIN', amount: '10', to: btcSource, chain: 'base' }, op)
+  await entered.promise
+  const r2 = await b.call('/api/custody/redeem', { tick: 'COIN', amount: '10', to: btcSource, chain: 'base' }, op)
+  resume.resolve()
+  const r1r = await r1
+  const released = a.state.releases.length + b.state.releases.length
+  assert.equal(released, 1) // exactly one release of 10 against 10 circulating
+  assert.ok(r1r.code !== 200 || r2.code !== 200) // not both succeed
+  assert.ok((await a.context.repCirculatingBase(1)) >= 0n)
+})
