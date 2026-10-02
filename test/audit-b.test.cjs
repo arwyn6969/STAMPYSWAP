@@ -329,3 +329,49 @@ test('C07: a peer mint completing between the reserved and circulating reads can
   assert.equal(f.state.mints.length, 0)
   assert.ok((await f.context.assetCirculatingBase(1)) <= 10n * 10n ** 18n) // never exceeds the 10 backing
 })
+
+// ============================================================================
+// Hardening pass (2 Oct): adversarial probes of paths the reviewer flagged —
+// the reservedBase per-op event lookup under failure, event-replay idempotency,
+// and one-burn-one-release on the custody redeem path.
+// ============================================================================
+
+// H1: the reservation read fails closed even when its PER-OP event-existence lookup errors (not just
+// the top-level ops query). An unreadable liability must never be treated as zero reserved supply.
+test('H1: a failing per-op reservation event-lookup fails the mint closed', async t => {
+  const f = await fixture(t, { collateral: '10', circulating: '0',
+    beforeQuery(sql) { if (sql.startsWith('SELECT 1 FROM accounting_events WHERE event_key=')) throw Error('event-existence lookup unavailable') } })
+  // a peer reserved mint op (no event yet) forces reservedBase to run the per-op event lookup
+  f.db.prepare("INSERT INTO operations(op_key,action,canonical_id,amount,chain,recipient,state,created_at,updated_at) VALUES('peer','mint',1,'10','base',?, 'reserved',1,1)").run(owner.address)
+  const r = await f.call('/api/mint', mint('A'), op)
+  assert.notEqual(r.code, 200) // fail-closed (503), not a mint against an unreadable reservation
+  assert.equal(f.state.mints.length, 0)
+})
+
+// H2: the accounting-event ledger applies a logical effect EXACTLY once — re-applying the same
+// event_key (a retried/duplicated decrement) converges to the same supply, never doubles. This is the
+// invariant the whole redesign rests on, asserted directly against the primitive.
+test('H2: re-applying the same accounting event_key is idempotent (no double effect)', async t => {
+  const f = await fixture(t, { circulating: '100' }) // rep 1, baseline 100
+  const D = 10n * 10n ** 18n
+  await f.context.applyCirculatingDelta(1, -D, 'dup:evt-X')
+  assert.equal(await f.context.repCirculatingBase(1), 90n * 10n ** 18n)
+  await f.context.applyCirculatingDelta(1, -D, 'dup:evt-X') // SAME key again (retry / lost response)
+  assert.equal(await f.context.repCirculatingBase(1), 90n * 10n ** 18n) // still 90 — applied once
+  await f.context.applyCirculatingDelta(1, -D, 'dup:evt-Y') // a DIFFERENT key does apply
+  assert.equal(await f.context.repCirculatingBase(1), 80n * 10n ** 18n)
+})
+
+// H3: one burn authorizes exactly one release — a retried custody redeem with the same burn_txid does
+// not release again or decrement twice (idempotent via the shared consumed-burns registry).
+test('H3: a retried custody redeem with the same burn cannot double-release', async t => {
+  const f = await fixture(t, { collateral: '100', circulating: '100' })
+  const first = await f.call('/api/custody/redeem', await f.redeem()) // owner-signed, burnId
+  assert.equal(first.code, 200)
+  assert.equal(f.state.releases.length, 1)
+  assert.equal(await f.context.repCirculatingBase(1), 90n * 10n ** 18n) // decremented once
+  const retry = await f.call('/api/custody/redeem', await f.redeem()) // SAME burn_txid
+  assert.notEqual(retry.code, 200) // burn already consumed → refused
+  assert.equal(f.state.releases.length, 1) // NO second release
+  assert.equal(await f.context.repCirculatingBase(1), 90n * 10n ** 18n) // NOT decremented again
+})

@@ -2601,6 +2601,12 @@ async function migrateSchema() {
   // blocks CREATE), so in production it is applied out-of-band (agent MCP); this IF-NOT-EXISTS attempt
   // is a harmless no-op there and creates it for self-contained test fixtures. Verified + gated below.
   await dbExec(`CREATE TABLE IF NOT EXISTS accounting_events (event_key TEXT PRIMARY KEY, rep_id INTEGER, delta_base TEXT, created_at INTEGER)`).catch(() => {})
+  // HARDENING: every solvency/PoR read sums a rep's events via WHERE rep_id=? — index it so that scan is
+  // not O(table) as the (append-only, unbounded) event log grows. (No-op in prod if DDL is blocked; the
+  // index is also created out-of-band via MCP.) NOTE/known limit: the event log has no compaction yet —
+  // folding events into a fresh baseline is deferred because it must not drop an event_key that a lost
+  // response could still replay (release:/mint:/move-out: keys must stay unique to stay idempotent).
+  await dbExec(`CREATE INDEX IF NOT EXISTS idx_accounting_events_rep ON accounting_events(rep_id)`).catch(() => {})
   try {
     await dbQuery('SELECT burn_txid FROM consumed_burns LIMIT 1')
     await dbQuery('SELECT burn_txid FROM collateral_ledger LIMIT 1')
