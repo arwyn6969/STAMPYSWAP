@@ -1,0 +1,18 @@
+{
+  "reviewed_sha": "457dc9ad52bbe3aa9b1a36dd646fa6080c602e39",
+  "node": "v23.3.0",
+  "npm": "11.4.0",
+  "focused_evidence_checks": 15,
+  "real_router_evidence_checks": 26,
+  "repository_pure_unit_tests": 12,
+  "npm_test_reported_entries": 13,
+  "npm_test_live_smoke_is_not_validated": true,
+  "clean_npm_ci_exit": 1,
+  "separately_provisioned_eslint": "8.57.1",
+  "lint_exit": 0,
+  "syntax_files_checked": 23,
+  "lockfile_sha256": "8fba9e207852d213d14018e865dad21fff6469247c86dfb17b8eda08a347b71e",
+  "router_dependency_source": "Previous isolated audit install; package-lock byte-identical to target",
+  "production_state_verified": false,
+  "note": "OPEN/COUNTEREXAMPLE checks pass when the defect is reproduced. These counts are evidence, not release clearance."
+}

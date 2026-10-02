@@ -1,0 +1,21 @@
+(node:56754) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ CONFIRMED F01: custody release accepts anonymous caller without a burn (5.207417ms)
+✔ CONFIRMED F02: legacy redeem fabricates a withdrawal and reopens XCP mint headroom (3.3835ms)
+✔ CONFIRMED F03: public txid rewrite makes an already minted deposit claimable twice (2.114709ms)
+✔ CONFIRMED F04: historical one-unit XCP depositor claims another depositor balance (1.500666ms)
+✔ CONFIRMED F05: victim burn is accepted for minting to attacker without authorization (1.9415ms)
+✔ CONFIRMED F06a: failed deposit mint cannot be retried (1.606166ms)
+✔ CONFIRMED F06b: failed cross-chain mint says retryable but rejects retry (1.416083ms)
+✔ CONFIRMED F07: database failure after mint permits duplicate operator retry (1.492584ms)
+✔ CONFIRMED F08: Base mainnet deposit is consumed before unsupported-chain rejection (1.813458ms)
+✔ CONFIRMED F09: one indivisible ACME deposit backs 1.9 representation units (1.938291ms)
+✔ CONFIRMED F10: anonymous partial stamp-bridge claim consumes a victim full burn (2.102708ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 72.938209

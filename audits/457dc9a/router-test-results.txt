@@ -1,0 +1,36 @@
+(node:21624) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ FIXED containment baseline: canonical path returns 503 with no effects (48.319625ms)
+✔ FIXED F01 core: public custody request without burn is rejected (8.892709ms)
+✔ FIXED owner check: real signature from another wallet is rejected (10.644292ms)
+✔ FIXED new burn deduplication: valid owner succeeds, uppercase replay fails (10.600916ms)
+✔ CONTAINED F04: public XCP claims remain operator-only with maintenance disabled (17.766167ms)
+✔ CONTAINED F05: public move rejected; operator path still lacks holder authorization (6.273792ms)
+✔ FIXED F09: excess source precision rejected before any credit (16.203833ms)
+✔ FIXED F08 claim-loss guard: unsupported Base mainnet leaves no credit (12.834875ms)
+✔ OPEN F07 (operator omits op_key): successful mint plus failed ledger update still permits duplicate retry (5.938709ms)
+✔ OPEN R04: owner-authorized partial redeem consumes full burn entitlement (7.368416ms)
+✔ OPEN F10: partial stamp claim still consumes victim full burn when enabled (4.156042ms)
+✔ FIXED shared registry: a freshly redeemed burn cannot also authorize a move (8.144291ms)
+✔ FIXED signature binding: tampering with BTC destination invalidates authorization (5.583167ms)
+✔ FIXED F09 positive case: exact indivisible amount remains accepted (13.5275ms)
+✔ OPEN UI regression: existing redemption form never sends the newly required burn/signature (4.610084ms)
+✔ FIXED R01: maintenance blocks write URL variants before effects (46.874666ms)
+✔ FIXED legacy retirement: preview and operator cannot mutate deposit identity (6.063792ms)
+✔ FIXED schema gate: operator cannot bypass unready schema with maintenance off (2.816583ms)
+✔ FIXED readiness ordering: failed historical backfill leaves writes closed (2.5015ms)
+✔ FIXED R02 redeem: unknown broadcast retains burn and blocks another release (6.40475ms)
+✔ FIXED historical move replay: startup backfills move-out burn before serving writes (3.75ms)
+✔ FIXED R06 depth gate: one-confirmation Base burn rejected, three accepted (6.472125ms)
+✔ FIXED F07 same operation: explicit op_key stops retry after landed mint and DB failure (4.613125ms)
+✔ FIXED R07 maintenance: wrap availability and custody deposits disabled (4.471875ms)
+✔ OPEN R05 stamp release: unknown broadcast still permits a second release (4.03325ms)
+✔ OPEN R03 schema gate: missing primary keys still declared ready (1.919625ms)
+ℹ tests 26
+ℹ suites 0
+ℹ pass 26
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 556.573875

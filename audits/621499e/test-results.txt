@@ -1,0 +1,36 @@
+(node:58732) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ FIXED containment baseline: canonical path returns 503 with no effects (50.5035ms)
+✔ NEW R01 / OPEN F03: URL variants bypass maintenance and permit double credit (39.309333ms)
+✔ NEW R01: uppercase legacy GET poll still changes ledger during maintenance (5.594916ms)
+✔ FIXED F01 core: public custody request without burn is rejected (5.000708ms)
+✔ FIXED owner check: real signature from another wallet is rejected (9.237ms)
+✔ FIXED new burn deduplication: valid owner succeeds, uppercase replay fails (11.560917ms)
+✔ FIXED F02 public live-mode restriction survives path variants (5.309875ms)
+✔ CONTAINED F04: public XCP claims remain operator-only after maintenance bypass (15.082583ms)
+✔ CONTAINED F05: public move rejected; operator path still lacks holder authorization (6.14875ms)
+✔ FIXED F09: excess source precision rejected before any credit (13.647125ms)
+✔ FIXED F08 claim-loss guard: unsupported Base mainnet leaves no credit (10.862458ms)
+✔ OPEN F06: definite pre-send deposit failure is still not retryable (24.280875ms)
+✔ OPEN F06: operator move consumes burn before destination failure and blocks retry (4.517292ms)
+✔ OPEN F07: successful mint plus failed ledger update still permits duplicate retry (4.997416ms)
+✔ NEW R02: ambiguous broadcast error frees burn; retry can release twice (8.905875ms)
+✔ NEW R02 alternative schema: unique legacy burn column prevents retry but still loses consumed marker (8.039167ms)
+✔ NEW R03: old move burn recorded only in collateral_ledger can redeem again (4.946125ms)
+✔ NEW R04: owner-authorized partial redeem consumes full burn entitlement (5.808167ms)
+✔ OPEN F10: partial stamp claim still consumes victim full burn through URL variant (3.868292ms)
+✔ OPEN finality: actual EVM verifier accepts a one-block burn without checking depth (5.472625ms)
+✔ OPEN maintenance messaging: route advertises enabled wrapping while service is paused (4.148833ms)
+✔ OPEN migration packaging: missing new table is reported as already consumed (4.03275ms)
+✔ FIXED shared registry: a freshly redeemed burn cannot also authorize a move (6.030917ms)
+✔ FIXED signature binding: tampering with BTC destination invalidates authorization (4.943291ms)
+✔ FIXED F09 positive case: exact indivisible amount remains accepted (15.902875ms)
+✔ NEW UI regression: existing redemption form never sends the newly required burn/signature (5.398334ms)
+ℹ tests 26
+ℹ suites 0
+ℹ pass 26
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 506.868792

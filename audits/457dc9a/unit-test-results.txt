@@ -1,0 +1,20 @@
+✔ SRC-20 provenance anchors on the deploy tx (0.399417ms)
+✔ ACME provenance names the ACME protocol (no deploy tx, no double-prefix) (0.088084ms)
+✔ Counterparty provenance names counterparty (not src-20) (0.052083ms)
+✔ missing protocol defaults to src-20 (back-compat) (0.059084ms)
+✔ op keys are deterministic and identity-scoped (not recipient-scoped) (0.53925ms)
+✔ resolveDepositOp: no prior op → proceed (0.086209ms)
+✔ resolveDepositOp: completed op → done (idempotent, never re-mint) (0.109583ms)
+✔ resolveDepositOp: in-flight op, different recipient → retarget (deposit spoken for) (0.049666ms)
+✔ resolveDepositOp: in-flight op, same recipient → reconcile (outcome unknown, no auto-retry) (0.051333ms)
+✔ resolveMoveBurn: no burn row → start (0.050625ms)
+✔ resolveMoveBurn: burn consumed by a move of THIS asset → resume (dest-mint only) (0.038375ms)
+✔ resolveMoveBurn: burn consumed by a redeem, or a move of ANOTHER asset → reject (0.052291ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 53.506333

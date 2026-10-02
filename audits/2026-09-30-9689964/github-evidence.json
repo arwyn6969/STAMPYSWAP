@@ -1,0 +1,123 @@
+{
+  "review_date": "2026-09-30",
+  "repository": "https://github.com/arwyn6969/STAMPYSWAP",
+  "reviewed_sha": "9689964dac19f4b45c5532a744bd3fd8dfe0daea",
+  "previous_review_sha": "457dc9ad52bbe3aa9b1a36dd646fa6080c602e39",
+  "new_commits": [
+    {
+      "sha": "9689964dac19f4b45c5532a744bd3fd8dfe0daea",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/commit/9689964dac19f4b45c5532a744bd3fd8dfe0daea",
+      "date": "2026-09-22T13:19:06Z",
+      "subject": "Grok residual list: ACME quantity_base bug, DB-backed per-asset lock (maintenance-off gate), reconcile move/stamp/burn, SRC-20 PSBT fail-closed, resolveAsset, swap op_key"
+    },
+    {
+      "sha": "e3b3d1af60113c5bae5e6b17cd2aed7240bf7270",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/commit/e3b3d1af60113c5bae5e6b17cd2aed7240bf7270",
+      "date": "2026-09-22T12:27:55Z",
+      "subject": "Grok audit blockers: circulating CAS (P0), A03 tighten, 4-table single-col uniqueness (P1), SRC-20 PSBT sweep guard (P1), exact-amount ACME/SRC-20 deposits, opFail/=== /confirms"
+    },
+    {
+      "sha": "6b03d451f152df7c0bd029ca4402f34d9344247a",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/commit/6b03d451f152df7c0bd029ca4402f34d9344247a",
+      "date": "2026-09-22T10:33:06Z",
+      "subject": "Audit: Solana exact-burn uses the asset's real SPL decimals (not hardcoded 9dp)"
+    },
+    {
+      "sha": "ded1079ae2f913db340eb0fc2c36dc2b79c9c89a",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/commit/ded1079ae2f913db340eb0fc2c36dc2b79c9c89a",
+      "date": "2026-09-22T10:31:11Z",
+      "subject": "Audit F04: Counterparty per-tx deposit attribution (replaces balance-delta, lifts freeze)"
+    },
+    {
+      "sha": "7e218ca59170cbdb3a7124f2e8c083e73a7ddcad",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/commit/7e218ca59170cbdb3a7124f2e8c083e73a7ddcad",
+      "date": "2026-09-22T10:26:21Z",
+      "subject": "Audit F05: move holder-authorization (burn-owner signs binding) + handler test"
+    },
+    {
+      "sha": "deaaa3bbf2189a7f46a3b3a402b8bd7a4fa040e5",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/commit/deaaa3bbf2189a7f46a3b3a402b8bd7a4fa040e5",
+      "date": "2026-09-22T10:23:06Z",
+      "subject": "Add checked-in handler prevention tests (A01/A03/A05/A06) — 18/18"
+    },
+    {
+      "sha": "4133d9bd69f1fc5529b2a4d77ca7798958010e0d",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/commit/4133d9bd69f1fc5529b2a4d77ca7798958010e0d",
+      "date": "2026-09-21T23:24:34Z",
+      "subject": "Audit 457dc9a entitlement: exact-amount burns (R04 redeem/move + F10 stamp)"
+    },
+    {
+      "sha": "8fd9855e3a0b43fea19f6d6f2157d555b87d1e7b",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/commit/8fd9855e3a0b43fea19f6d6f2157d555b87d1e7b",
+      "date": "2026-09-21T22:49:40Z",
+      "subject": "Audit 457dc9a recovery core: CAS finalizer (A01) + op-order/credit-guard (A03) + legacy keys (A02) + move phases (A05) + reconcile-failed (A04.1) + stamp reserve-before-broadcast (A07)"
+    },
+    {
+      "sha": "459025d9b2ef54e67cf5274c0f586645b994abec",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/commit/459025d9b2ef54e67cf5274c0f586645b994abec",
+      "date": "2026-09-21T21:45:12Z",
+      "subject": "Audit 457dc9a batch 1 (clean fixes): A06 op_key required, A04.2 backfill skips failed, A08 verify PK constraints, A09 test/lockfile hygiene"
+    }
+  ],
+  "main_rechecked": "9689964dac19f4b45c5532a744bd3fd8dfe0daea",
+  "branches": [
+    {
+      "name": "audit/2345961-custody-gates",
+      "sha": "f344885d74d8e54b2aac12d64d8ad19c588b4293"
+    },
+    {
+      "name": "main",
+      "sha": "9689964dac19f4b45c5532a744bd3fd8dfe0daea"
+    }
+  ],
+  "pull_requests": [
+    {
+      "number": 1,
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/pull/1",
+      "state": "open",
+      "title": "Audit 2345961: close public vault-drain / accounting / protocol-swap holes",
+      "head": "f344885d74d8e54b2aac12d64d8ad19c588b4293",
+      "updated_at": "2026-09-21T14:04:44Z"
+    }
+  ],
+  "releases": [],
+  "check_runs": {
+    "total_count": 0,
+    "check_runs": []
+  },
+  "commit_status": {
+    "sha": "9689964dac19f4b45c5532a744bd3fd8dfe0daea",
+    "state": "pending",
+    "total_count": 0,
+    "statuses": []
+  },
+  "actions": {
+    "total_count": 7,
+    "workflow_runs": [
+      {
+        "id": 22870967930,
+        "url": "https://github.com/arwyn6969/STAMPYSWAP/actions/runs/22870967930",
+        "sha": "77dea9bcc4c957cc44d8a85c40979e52fbf76020",
+        "status": "completed",
+        "conclusion": "failure",
+        "created_at": "2026-03-09T19:28:06Z"
+      },
+      {
+        "id": 22779411757,
+        "url": "https://github.com/arwyn6969/STAMPYSWAP/actions/runs/22779411757",
+        "sha": "19d45535f896d70d84a95737fa2fb55186427b11",
+        "status": "completed",
+        "conclusion": "failure",
+        "created_at": "2026-03-06T19:49:20Z"
+      },
+      {
+        "id": 22768513006,
+        "url": "https://github.com/arwyn6969/STAMPYSWAP/actions/runs/22768513006",
+        "sha": "b6e577f4fde78c511a188997309315c7cda4fbb9",
+        "status": "completed",
+        "conclusion": "failure",
+        "created_at": "2026-03-06T14:49:55Z"
+      }
+    ]
+  }
+}

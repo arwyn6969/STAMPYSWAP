@@ -1,0 +1,117 @@
+[
+  {
+    "file": "amm.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "counterparty.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "evm-mint.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "uniswap.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "gen-erc20-mainnet.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "server.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "soljson.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "labels.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "safe.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "recovery.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "prices.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "gen-og.mjs",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "sol-mint.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "test-acme.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "custody.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "squads.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "gen-amm.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "gen-erc20.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "evm-signer.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "acme.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "test/recovery.test.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "test/labels.test.js",
+    "exit": 0,
+    "output": ""
+  },
+  {
+    "file": "public/wallet.js",
+    "exit": 0,
+    "output": ""
+  }
+]

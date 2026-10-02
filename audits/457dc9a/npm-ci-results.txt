@@ -1,0 +1,130 @@
+npm error code EUSAGE
+npm error
+npm error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.
+npm error
+npm error Missing: eslint@8.57.1 from lock file
+npm error Missing: @eslint-community/eslint-utils@4.10.1 from lock file
+npm error Missing: @eslint-community/regexpp@4.12.2 from lock file
+npm error Missing: @eslint/eslintrc@2.1.4 from lock file
+npm error Missing: @eslint/js@8.57.1 from lock file
+npm error Missing: @humanwhocodes/config-array@0.13.0 from lock file
+npm error Missing: @humanwhocodes/module-importer@1.0.1 from lock file
+npm error Missing: @nodelib/fs.walk@1.2.8 from lock file
+npm error Missing: @ungap/structured-clone@1.4.0 from lock file
+npm error Missing: ajv@6.15.0 from lock file
+npm error Missing: chalk@4.1.2 from lock file
+npm error Missing: cross-spawn@7.0.6 from lock file
+npm error Missing: debug@4.4.3 from lock file
+npm error Missing: doctrine@3.0.0 from lock file
+npm error Missing: escape-string-regexp@4.0.0 from lock file
+npm error Missing: eslint-scope@7.2.2 from lock file
+npm error Missing: eslint-visitor-keys@3.4.3 from lock file
+npm error Missing: espree@9.6.1 from lock file
+npm error Missing: esquery@1.7.0 from lock file
+npm error Missing: esutils@2.0.3 from lock file
+npm error Missing: fast-deep-equal@3.1.3 from lock file
+npm error Missing: file-entry-cache@6.0.1 from lock file
+npm error Missing: find-up@5.0.0 from lock file
+npm error Missing: glob-parent@6.0.2 from lock file
+npm error Missing: globals@13.24.0 from lock file
+npm error Missing: graphemer@1.4.0 from lock file
+npm error Missing: ignore@5.3.2 from lock file
+npm error Missing: imurmurhash@0.1.4 from lock file
+npm error Missing: is-glob@4.0.3 from lock file
+npm error Missing: is-path-inside@3.0.3 from lock file
+npm error Missing: js-yaml@4.3.2 from lock file
+npm error Missing: json-stable-stringify-without-jsonify@1.0.1 from lock file
+npm error Missing: levn@0.4.1 from lock file
+npm error Missing: lodash.merge@4.6.2 from lock file
+npm error Missing: minimatch@3.1.5 from lock file
+npm error Missing: natural-compare@1.4.0 from lock file
+npm error Missing: optionator@0.9.4 from lock file
+npm error Missing: strip-ansi@6.0.1 from lock file
+npm error Missing: text-table@0.2.0 from lock file
+npm error Missing: debug@4.4.3 from lock file
+npm error Missing: import-fresh@3.3.1 from lock file
+npm error Missing: strip-json-comments@3.1.1 from lock file
+npm error Missing: @humanwhocodes/object-schema@2.0.3 from lock file
+npm error Missing: debug@4.4.3 from lock file
+npm error Missing: @nodelib/fs.scandir@2.1.5 from lock file
+npm error Missing: fastq@1.20.3 from lock file
+npm error Missing: @nodelib/fs.stat@2.0.5 from lock file
+npm error Missing: run-parallel@1.2.0 from lock file
+npm error Missing: fast-json-stable-stringify@2.1.0 from lock file
+npm error Missing: json-schema-traverse@0.4.1 from lock file
+npm error Missing: uri-js@4.4.1 from lock file
+npm error Missing: path-key@3.1.1 from lock file
+npm error Missing: shebang-command@2.0.0 from lock file
+npm error Missing: which@2.0.2 from lock file
+npm error Missing: esrecurse@4.3.0 from lock file
+npm error Missing: estraverse@5.3.0 from lock file
+npm error Missing: acorn@8.18.0 from lock file
+npm error Missing: acorn-jsx@5.3.2 from lock file
+npm error Missing: reusify@1.1.0 from lock file
+npm error Missing: flat-cache@3.2.0 from lock file
+npm error Missing: locate-path@6.0.0 from lock file
+npm error Missing: path-exists@4.0.0 from lock file
+npm error Missing: flatted@3.4.4 from lock file
+npm error Missing: keyv@4.5.4 from lock file
+npm error Missing: rimraf@3.0.2 from lock file
+npm error Missing: type-fest@0.20.2 from lock file
+npm error Missing: parent-module@1.0.1 from lock file
+npm error Missing: resolve-from@4.0.0 from lock file
+npm error Missing: is-extglob@2.1.1 from lock file
+npm error Missing: argparse@2.0.1 from lock file
+npm error Missing: json-buffer@3.0.1 from lock file
+npm error Missing: prelude-ls@1.2.1 from lock file
+npm error Missing: type-check@0.4.0 from lock file
+npm error Missing: p-locate@5.0.0 from lock file
+npm error Missing: brace-expansion@1.1.21 from lock file
+npm error Missing: balanced-match@1.0.2 from lock file
+npm error Missing: concat-map@0.0.1 from lock file
+npm error Missing: deep-is@0.1.4 from lock file
+npm error Missing: fast-levenshtein@2.0.6 from lock file
+npm error Missing: word-wrap@1.2.5 from lock file
+npm error Missing: p-limit@3.1.0 from lock file
+npm error Missing: yocto-queue@0.1.0 from lock file
+npm error Missing: callsites@3.1.0 from lock file
+npm error Missing: glob@7.2.3 from lock file
+npm error Missing: fs.realpath@1.0.0 from lock file
+npm error Missing: inflight@1.0.6 from lock file
+npm error Missing: once@1.4.0 from lock file
+npm error Missing: path-is-absolute@1.0.1 from lock file
+npm error Missing: wrappy@1.0.2 from lock file
+npm error Missing: queue-microtask@1.2.3 from lock file
+npm error Missing: shebang-regex@3.0.0 from lock file
+npm error Missing: ansi-regex@5.0.1 from lock file
+npm error Missing: punycode@2.3.1 from lock file
+npm error Missing: isexe@2.0.0 from lock file
+npm error Missing: ms@2.1.3 from lock file
+npm error Missing: ms@2.1.3 from lock file
+npm error Missing: ansi-styles@4.3.0 from lock file
+npm error Missing: supports-color@7.2.0 from lock file
+npm error Missing: color-convert@2.0.1 from lock file
+npm error Missing: color-name@1.1.4 from lock file
+npm error Missing: has-flag@4.0.0 from lock file
+npm error Missing: ms@2.1.3 from lock file
+npm error
+npm error Clean install a project
+npm error
+npm error Usage:
+npm error npm ci
+npm error
+npm error Options:
+npm error [--install-strategy <hoisted|nested|shallow|linked>] [--legacy-bundling]
+npm error [--global-style] [--omit <dev|optional|peer> [--omit <dev|optional|peer> ...]]
+npm error [--include <prod|dev|optional|peer> [--include <prod|dev|optional|peer> ...]]
+npm error [--strict-peer-deps] [--foreground-scripts] [--ignore-scripts] [--no-audit]
+npm error [--no-bin-links] [--no-fund] [--dry-run]
+npm error [-w|--workspace <workspace-name> [-w|--workspace <workspace-name> ...]]
+npm error [-ws|--workspaces] [--include-workspace-root] [--install-links]
+npm error
+npm error aliases: clean-install, ic, install-clean, isntall-clean
+npm error
+npm error Run "npm help ci" for more info
+npm notice
+npm notice New major version of npm available! 10.9.2 -> 12.0.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.2
+npm notice To update run: npm install -g npm@12.0.2
+npm notice
+npm error A complete log of this run can be found in: /private/tmp/stampyswap-npm-audit-cache/_logs/2026-09-21T21_15_29_197Z-debug-0.log

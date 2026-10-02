@@ -1,0 +1,129 @@
+{
+  "reviewed_commit": {
+    "sha": "457dc9ad52bbe3aa9b1a36dd646fa6080c602e39",
+    "date": "2026-09-21T20:29:16Z",
+    "message": "labels: protocol-correct srcOrigin provenance (src-20/counterparty/acme) + tests\n\nNew pure labels.js srcOriginFor(asset) fixes ACME/Counterparty reps being stamped\nbitcoin:src-20:... on-chain. Isolated from recovery.js (re-verify target stays frozen).\ntest/labels.test.js 4/4; total 13/13; lint clean.\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+  },
+  "checked_at": "2026-09-21 21:23:22 UTC",
+  "recent_commits": [
+    {
+      "sha": "457dc9ad52bbe3aa9b1a36dd646fa6080c602e39",
+      "date": "2026-09-21T20:29:16Z",
+      "message": "labels: protocol-correct srcOrigin provenance (src-20/counterparty/acme) + tests\n\nNew pure labels.js srcOriginFor(asset) fixes ACME/Counterparty reps being stamped\nbitcoin:src-20:... on-chain. Isolated from recovery.js (re-verify target stays frozen).\ntest/labels.test.js 4/4; total 13/13; lint clean.\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "add181b531179933578e441abf58bb3f09a62b6f",
+      "date": "2026-09-21T17:38:30Z",
+      "message": "docs: record stored-secret self-push method (no chat-paste)\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "b1640865cce3bab1c3de349f875cb9a5fae8aebf",
+      "date": "2026-09-21T17:04:37Z",
+      "message": "Audit R05 Step-2: durable recovery (F06 deposit+move resume/rollback, BTC UTXO lock, CI tests)\n\n- verify-deposit: op-state-keyed idempotency (deposit-identity op_key) — completed=idempotent,\n  reserved/reconcile=reconcile (no auto-retry), retarget guard, no-op=resume. Crash-safe F06.\n- move: burn-identity resume + rollback — source decrement kept on dest-mint fail (retryable unit\n  is just the dest mint; resubmit same burn to resume); over-circulating frees the burn.\n- withBtcVaultLock: global shared-UTXO serialization across all custody releases (redeem + stamp).\n- recovery.js: pure F06 decision logic + test/recovery.test.js (node --test) 9/9; server uses it.\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "5e496962cbf0848c52aeef9ecdd2de77abe1193c",
+      "date": "2026-09-21T16:56:12Z",
+      "message": "Audit quick-wins: operator-token timing-safe compare + operator reconcile tool\n\n- isOperator: constant-time safeEqual (crypto.timingSafeEqual) replaces === (timing leak)\n- GET/POST /api/reconcile (operator-only): resolve stuck redeem rows (reconcile/pending)\n  that redeemedBase() counts forever and can block mints. released=finalize/decrement,\n  failed=restore collateral + free burn. Under withAssetLock; mint-op recovery deferred to R05.\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "bc21921d5c53d73126dce95388debc97a289695f",
+      "date": "2026-09-21T16:45:25Z",
+      "message": "Audit R05 (part 2): op-guard all mint callers + fix completed-op accounting ordering\n\n- performMint now threads opKey → mintCritical; /api/mint accepts operator op_key; pool-seed\n  mints (amm/create sides A+B) pass deterministic op_keys. Every mint entry point except the\n  operator demo swap-fund is now crash-safe/idempotent (audit qual: callers omitted opKey).\n- opComplete moved to AFTER the accounting writes (was before): a failed accounting no longer\n  leaves an op 'completed' with a cached-success that hides under-reported circulating (over-mint/\n  insolvency risk). A crash/throw before completion leaves 'reserved' → retry reconciles (never\n  re-mints) and surfaces the incomplete accounting. Verified: operator mint reaches mintCritical\n  → clean 503 UNFUNDED; lint clean; reads 200 / writes 503.\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "1168ff71761d96480386bb200650b2a087e9c099",
+      "date": "2026-09-21T16:32:00Z",
+      "message": "Audit register batch: static no-undef gate + schema-readiness hardening\n\n- ESLint no-undef static check + 'npm run lint' script (would have caught the opKey\n  ReferenceError). Verified: flags an undefined ref (exit 1); all app files pass clean.\n- migrateSchema (R03): SCHEMA_OK granted ONLY after schema check AND historical backfill\n  both succeed; a failed backfill keeps writes contained (was: readiness before backfill).\n- Maintenance middleware: !SCHEMA_OK now HARD-blocks all writes BEFORE the operator bypass\n  (invariants depend on the registry/operations tables).\n- opComplete no longer swallows persistence failures — logs loudly for reconciliation.\nVerified: boot logs 'SCHEMA_OK=true' only after backfill; reads 200, writes 503.\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "b09fa31545e0e900ffa86ccb9ce1b20474ebe954",
+      "date": "2026-09-21T16:14:19Z",
+      "message": "Audit 07672db BLOCKER: fix mintCritical opKey signature + verify-deposit throw handling\n\n- mintCritical was using opKey without declaring it in the signature → ReferenceError on\n  EVERY mint (only masked because the mint path is maintenance-blocked). Added opKey=null param.\n  Runtime-verified: operator /api/mint now reaches mintCritical and returns clean 503 UNFUNDED,\n  not 500. Idempotency verified: duplicate op_key hits the PRIMARY KEY → no re-mint.\n- mintCritical uncertain-outcome returns now flag reconcile:true (so verify-deposit does NOT\n  revert a credit whose mint may have succeeded → prevents circulating>collateral insolvency).\n- verify-deposit: wrap the mint call — a THROW after the credit INSERT keeps the credit (never\n  revert a possibly-successful mint) + flags reconciliation; definite pre-send failure reverts\n  (retryable); uncertain keeps (reconcile).\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "07672db29d83659126914c0a7aed93f00eee8d55",
+      "date": "2026-09-21T15:40:09Z",
+      "message": "Audit R05 (part 1): durable operation records for crash-safe minting (F06/F07)\n\n- operations table (op_key PRIMARY KEY = cross-process idempotency) + opReserve/opComplete/\n  opFail/opReconcile helpers; added to startup schema check\n- mintCritical now op-guarded: RESERVE before the on-chain mint, mark COMPLETED (with txid)\n  BEFORE the accounting writes → a failed DB update can no longer cause a re-mint on retry (F07);\n  a retry of a completed op returns idempotently; UNFUNDED/BADADDR (pre-send) → retryable,\n  any other mint error → reconcile (never re-mint an uncertain outcome)\n- deposit-mint + move-mint pass deterministic op_keys\n- verify-deposit F06: revert the collateral credit on a definite pre-send mint failure so the\n  deposit is retryable; keep it (reconcile) on an uncertain outcome\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "d42f9fb0c5ac17e8f228d46b7d3a912e89453642",
+      "date": "2026-09-21T15:33:09Z",
+      "message": "Audit 621499e: R06 burn finality + R07 truthful status\n\nR06: burns must be FINAL before authorizing a Bitcoin release (a shallow burn can reorg\n  out after the asset is gone). Solana verifier now queries at 'finalized'; EVM verifier\n  returns confirmation depth and verifyRepBurn enforces a per-chain minimum (base 3,\n  ethereum 12, base-mainnet 20, env-overridable). Also route base-mainnet burns to the EVM verifier.\nR07: stop advertising availability while paused — wrap/route enabled=false + service=maintenance\n  + honest reason during maintenance; /api/custody/status deposits_live=false + maintenance note.\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "1397e6edc26f352cdd6638fcbf3eb2e96718ef40",
+      "date": "2026-09-21T15:27:28Z",
+      "message": "Audit 621499e re-review: fix R01 (containment bypass) + R02 + R03\n\nR01 (critical): maintenance regex blacklist matched raw path but Express dispatches\n  case-insensitively w/ optional trailing/double slashes → bypassable (re-exposed F03).\n  Replace with DEFAULT-DENY (block all non-GET /api during maintenance, no list to bypass)\n  + normPath() aligned to Express dispatch (used by maintenance + rate-limit). PERMANENTLY\n  RETIRE (410) legacy /api/redeem, /api/preview/confirm-deposit, and all /api/bridge/intent*\n  mutation/poll routes; kill the intent sweep. Verified: uppercase/trailing/double-slash all 503.\nR02: redeem catch no longer frees the burn reservation on UNKNOWN broadcast outcome — only a\n  proven pre-send GATED failure is retryable; uncertainty → keep consumed + status='reconcile'.\nR03: startup migrateSchema() verifies burn-registry schema (fail-loud → containment holds if\n  missing) + idempotent backfill of historical move-out/redeem burns into consumed_burns.\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "621499e6c6ac2a1e4e2f2e1b3ea7489da187b66a",
+      "date": "2026-09-21T14:55:16Z",
+      "message": "Audit PR3: authorized burns (owner-bound releases/moves + shared consume-once)\n\n- evm-mint/sol-mint verifyBurn now return the real BURNER (Transfer.from / burn authority)\n- shared consumed_burns registry (PRIMARY KEY) — one burn authorizes exactly ONE action,\n  ever, across redeem AND move (was two separate per-endpoint checks) [F05/F10 class]\n- /api/custody/redeem: require an owner signature binding burn→BTC recipient (verifyBurnOwnerSig\n  EVM/EIP-191 + Solana/ed25519) so you can't redeem someone else's burn to your address (F05);\n  reserve burn before release, free it on definite pre-broadcast failure (retryable) else\n  fail-closed (no double-release)\n- /api/move: shared consume-once + record burner; normalize txids (EVM lowercase, Solana as-is)\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "6a8bb6928811e2e6e35143ee22c556881db3616d",
+      "date": "2026-09-21T14:46:16Z",
+      "message": "Audit fixes: F09 excess-precision guard, F08 mint-capability check, ACME redeem decimals\n\n- verify-deposit: reject amounts with more precision than the source asset (F09 — a\n  1-unit indivisible deposit could mint 1.9); unit-tested against the exploit\n- verify-deposit: fail-closed if destination chain isn't a real mint target (F08 —\n  base-mainnet was advertised but mintCritical would reject after recording the claim)\n- custody redeem: carry the asset's real source decimals (was hardcoded 8) and pass\n  authoritative qtyBase for ACME so the composed-quantity assertion actually runs\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "b1c49ceeefcab57246e733834176172f066a14a5",
+      "date": "2026-09-21T14:24:18Z",
+      "message": "Audit 2345961 PR1: maintenance containment\n\nSingle choke-point (before any DB write/signer call) disabling ALL value-moving /\naccounting-changing routes while remediation proceeds — neutralizes F01-F10 at once:\n- redeem, custody/redeem, verify-deposit, mint, mint/migrate-authority, move,\n  amm/create, amm/swap, amm/deploy-mock, preview/confirm-deposit, stampbridge/execute\n- legacy intent paths incl. POST bridge/intent/:id/txid + GET bridge/intent/:id (F03)\n- intent background sweep disabled in maintenance\n- operator header bypass for reviewed back-office; /api/status + UI maintenance banner\n- reads/discovery + deployed Uniswap trading unaffected. Toggle STAMPY_MAINTENANCE=0.\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "69288a8f2acf038b04dd5949d4be662dc5a9175b",
+      "date": "2026-09-21T14:18:42Z",
+      "message": "Audit residuals: fail-loud key loading + operator-gate /api/move\n\n- evm-signer/sol-mint/squads/safe: refuse to auto-generate keys if file missing\n  (STAMPY_ALLOW_KEYGEN=1 to intentionally init) — prevents silent key rotation / stranded funds\n- /api/move operator-only (was public mint + unbound burn = front-run/gas-drain)\n\nCo-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    },
+    {
+      "sha": "5222498067be0b0b6ef88f0b02c98b76c06cd77a",
+      "date": "2026-09-21T14:13:58Z",
+      "message": "Audit 2345961: fix P0 vault-safety + key P1s\n\nP0 (fixed):\n- /api/custody/redeem: require on-chain BURN PROOF (non-operator) + crash-safe pending ledger\n  row before broadcast + burn_txid idempotency (was: released vault on SQL counter alone = drain)\n- /api/redeem: blocked unless preview/operator (was public accounting-only burn desyncing PoR)\n- /api/amm/swap: operator-only (was unauthenticated protocol-inventory minting)\nP1 (fixed):\n- verify-deposit uses resolveAsset (ACME/SOAP collision)\n- Uniswap swap minOut = quote-50bps; addLiquidity mins = 99% (were 0)\n- ACME_CONFIRMATIONS default 3 (was 1)\n- wrap/route preview reflects real mainnet state (was always testnet)\n- XCP deposit-mint frozen to operator-only pending per-tx attribution\n- redeemedBase excludes failed redeems\n\nCustody stays GATED OFF until residuals cleared. Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+    }
+  ],
+  "github_checks": {
+    "check_runs": [],
+    "status": "pending",
+    "statuses": []
+  },
+  "latest_visible_actions": [
+    {
+      "sha": "77dea9bcc4c957cc44d8a85c40979e52fbf76020",
+      "created_at": "2026-03-09T19:28:06Z",
+      "conclusion": "failure",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/actions/runs/22870967930"
+    },
+    {
+      "sha": "19d45535f896d70d84a95737fa2fb55186427b11",
+      "created_at": "2026-03-06T19:49:20Z",
+      "conclusion": "failure",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/actions/runs/22779411757"
+    },
+    {
+      "sha": "b6e577f4fde78c511a188997309315c7cda4fbb9",
+      "created_at": "2026-03-06T14:49:55Z",
+      "conclusion": "failure",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/actions/runs/22768513006"
+    },
+    {
+      "sha": "0d3ba205093e137c587f803baacfc46bbb701dd7",
+      "created_at": "2026-02-27T00:53:10Z",
+      "conclusion": "failure",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/actions/runs/22467923055"
+    },
+    {
+      "sha": "966ee654dd1e3dd9a086357110de7343f6524137",
+      "created_at": "2026-02-25T08:08:47Z",
+      "conclusion": "success",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/actions/runs/22387937913"
+    }
+  ],
+  "inputs": [
+    {
+      "title": "Audit 2345961: close public vault-drain / accounting / protocol-swap holes",
+      "updated_at": "2026-09-21T14:04:44Z",
+      "url": "https://github.com/arwyn6969/STAMPYSWAP/pull/1"
+    }
+  ]
+}
