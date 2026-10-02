@@ -114,6 +114,28 @@ app.use((req, res, next) => {
 app.get('/api/status', (_req, res) => res.json({ service: MAINTENANCE ? 'maintenance' : 'live', maintenance: MAINTENANCE,
   message: MAINTENANCE ? 'Security hardening in progress — deposits, mints, moves, redemptions and pool operations are temporarily disabled. Existing balances + Uniswap trading are unaffected.' : 'live' }))
 
+// DEPLOYMENT EVIDENCE (public, no secrets): lets an auditor independently confirm which revision is
+// ACTUALLY running and the effective gating flags — serving changed static files and restarting the
+// backend are separate events, so this reports the live PROCESS, not the checked-out tree. Values are
+// booleans + the commit SHA; no tokens, keys or addresses. `operator_configured` is a boolean only.
+let DEPLOYED_SHA = 'unknown'
+try { DEPLOYED_SHA = require('child_process').execSync('git rev-parse HEAD', { cwd: __dirname, timeout: 4000 }).toString().trim() }
+catch (_) { try { DEPLOYED_SHA = require('fs').readFileSync(require('path').join(__dirname, '.deployed-sha'), 'utf8').trim() } catch (_2) {} }
+app.get('/api/version', (_req, res) => {
+  let operatorConfigured = !!process.env.OPERATOR_TOKEN
+  try { if (require('fs').existsSync(require('path').join(__dirname, '.operator-token'))) operatorConfigured = true } catch (_) {}
+  res.json({
+    sha: DEPLOYED_SHA,
+    schema_ok: SCHEMA_OK,            // writes stay contained until the schema+constraint gates pass
+    maintenance: MAINTENANCE,        // true = all value/accounting routes 503 for non-operators
+    custody_live: custody.isLive(),  // false = vault RELEASE gated (deposits still recorded)
+    preview: PREVIEW,                // false = no sandbox sim hooks
+    operator_configured: operatorConfigured,
+    instance_id: INSTANCE_ID,        // changes per process start — compare across calls to detect >1 worker
+    now: now(),
+  })
+})
+
 const PORT = process.env.PORT || 3000
 const STAMP = 'https://stampchain.io/api/v2'
 const DASH = `http://localhost:${process.env.DASHBOARD_PORT || 4000}`
