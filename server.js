@@ -1855,6 +1855,17 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
     const out = await withAssetLock(asset.id, async () => {
       let confirmations = CONFIRMS, ledgerKey = txid ? String(txid) : null
       if (asset.source_protocol === 'counterparty') {
+        // Older balance-based credits used xcp:<asset>:<amount>, so a real send hash does
+        // not collide with their unique key. Until those historical claims are bound to
+        // durable consumed identities, refuse further claims for this asset, including
+        // operator claims. Do not infer an unused deposit from aggregate vault balance.
+        const legacyCredits = await dbQuery(`SELECT id FROM collateral_ledger
+          WHERE canonical_id=? AND direction='deposit' AND status='confirmed'
+          AND btc_txid LIKE 'xcp:%:%' LIMIT 1`, [asset.id])
+        if (legacyCredits.length) return { status: 409, body: {
+          error: 'historical Counterparty deposit identities require reconciliation before further deposit claims',
+          reconcile: true
+        } }
         // F04 (audit): PER-TX attribution — the old balance-delta let a past sender claim leftover
         // uncredited vault balance, and couldn't split multiple senders. Counterparty exposes /sends
         // (tx_hash/source/destination/quantity/block), so we now verify a SPECIFIC send by txid, bound

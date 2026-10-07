@@ -92,6 +92,10 @@ For every representation, bind observed chain supply to its exact token address,
 
 The known Solana-devnet mismatches are 1500 $BALD and 0.1 PUDSEC. A ledger-wide release cap and allegedly lost wallet keys do not exclude specific tokens. Historical eligibility must have an enforced policy before releases reopen. Report any mismatch and required policy decision; do not silently edit baselines, reset supply, choose a duplicate token identity or clear uncertain deployment claims.
 
+### Historical Counterparty deposit claims
+
+The historical database contains balance-based deposit keys in the form `xcp:<asset>:<amount>`. These do not collide with current `xcp:<transaction-hash>` keys. Current code refuses further deposit claims for an asset with any confirmed synthetic Counterparty credit, including operator claims, before adding credit or invoking a mint. Do not bypass this gate or rewrite balances. Map the old credits to independently verified public sends and durable consumed-claim records in a private proposal, preserve the historical rows, and send the concrete reconciliation plan for review before any production write or reopening.
+
 ## 4. Isolated staging acceptance
 
 Inventory a separate database, test assets and signer/wallet authority first. Use worthless test assets and explicitly authorized test operations. Cover deposit -> owner-bound mint -> burn -> owner-bound redeem, plus chain moves and replay rejection. Verify the current composer produces the supported OLGA format and the managed signer preserves the validated transaction and valid vault signatures. Record actual transaction IDs and both chain/indexer confirmations before asserting success.
