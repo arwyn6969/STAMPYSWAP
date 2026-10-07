@@ -1,0 +1,31 @@
+name: ci
+
+# Current-application CI (audit item): clean install, lint, the full prevention/test suite, and a
+# reproducible mainnet contract build — for THIS server app (not the legacy Vite frontend).
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'        # node:sqlite + node:test (pinned runtime)
+      - name: Install (locked)
+        run: npm ci --no-audit --no-fund
+      - name: Lint
+        run: npm run lint
+      - name: Test (prevention suite + handlers)
+        run: npm test
+      - name: Reproducible mainnet contract build
+        run: |
+          node gen-erc20-mainnet.js
+          git diff --exit-code -- erc20-mainnet-artifact.json \
+            || (echo "mainnet artifact is not reproducible from source" && exit 1)
+      - name: Dependency advisory snapshot (non-blocking triage record)
+        run: npm audit --omit=dev || true

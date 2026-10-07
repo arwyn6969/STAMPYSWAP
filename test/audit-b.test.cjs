@@ -420,3 +420,51 @@ test('D02: concurrent redeems cannot over-release past circulating', async t => 
   assert.ok(r1r.code !== 200 || r2.code !== 200) // not both succeed
   assert.ok((await a.context.repCirculatingBase(1)) >= 0n)
 })
+
+// C05 residual (audit 7-Oct): the SRC-20 guard must reject a composed tx that pays a DIFFERENT recipient
+// than requested (a dust output to the wrong address previously passed the mere presence check).
+test('C05-residual: a composed tx that pays a different recipient than requested is refused', async () => {
+  const bitcoin = dep('bitcoinjs-lib'); const from = btcSource
+  const other = bitcoin.payments.p2wpkh({ hash: Buffer.alloc(20, 7) }).address   // where the tx actually pays
+  const requested = bitcoin.payments.p2wpkh({ hash: Buffer.alloc(20, 8) }).address // what the caller asked for
+  const p = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin })
+  p.addInput({ hash: '11'.repeat(32), index: 0, witnessUtxo: { script: bitcoin.address.toOutputScript(from), value: 10000 } })
+  p.addOutput({ address: other, value: 330 })      // dust to the WRONG recipient
+  p.addOutput({ address: from, value: 9000 })       // change to vault; small fee
+  const signed = { n: 0 }
+  const c = loadCustody(signed, p.toHex(), [{ index: 0, sighashType: 1 }])
+  await assert.rejects(c.redeem({ tick: 'COIN', amount: '10', toAddress: requested }))
+  assert.equal(signed.n, 0) // recipient binding failed → never signed
+})
+
+// and the matching positive: when the composed tx DOES pay the requested recipient, it still signs.
+test('C05-residual: a composed tx that pays the requested recipient still signs', async () => {
+  const bitcoin = dep('bitcoinjs-lib'); const from = btcSource
+  const requested = bitcoin.payments.p2wpkh({ hash: Buffer.alloc(20, 8) }).address
+  const p = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin })
+  p.addInput({ hash: '11'.repeat(32), index: 0, witnessUtxo: { script: bitcoin.address.toOutputScript(from), value: 10000 } })
+  p.addOutput({ address: requested, value: 330 })   // dust to the REQUESTED recipient
+  p.addOutput({ address: from, value: 9000 })
+  const signed = { n: 0 }
+  const c = loadCustody(signed, p.toHex(), [{ index: 0, sighashType: 1 }])
+  const r = await c.redeem({ tick: 'COIN', amount: '10', toAddress: requested })
+  assert.equal(r.released, true); assert.equal(signed.n, 1)
+})
+
+// H4 (audit 7-Oct): a failed op-completion write must NOT be reported as a clean success, and must not
+// enable a re-mint. The on-chain mint + accounting event are durable (non-insolvent); the response is
+// truthful (op_completed:false, reconcile) and the op stays 'reserved' so a retry reconciles, never re-mints.
+test('H4: a failed opComplete returns a truthful non-clean success and does not re-mint', async t => {
+  const f = await fixture(t, { collateral: '100', circulating: '0',
+    beforeExec(sql) { if (sql.startsWith("UPDATE operations SET state='completed'")) throw Error('op-complete persist down') } })
+  const r = await f.call('/api/mint', mint('oc-A'), op)
+  assert.equal(r.code, 200)              // the mint + accounting DID happen
+  assert.equal(r.body.op_completed, false) // but completion did not persist — reported truthfully
+  assert.equal(r.body.reconcile, true)
+  assert.equal(f.state.mints.length, 1)
+  assert.equal(f.db.prepare("SELECT state FROM operations WHERE op_key='oc-A'").get().state, 'reserved')
+  assert.equal(await f.context.repCirculatingBase(1), 10n * 10n ** 18n) // accounting event is durable
+  const retry = await f.call('/api/mint', mint('oc-A'), op) // same op_key
+  assert.notEqual(retry.code, 200)       // reconcile, NOT a second mint
+  assert.equal(f.state.mints.length, 1)
+})

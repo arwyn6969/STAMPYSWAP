@@ -213,7 +213,8 @@ async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20
     if (v == null || !Number.isFinite(v)) throw new Error('refusing to sign SRC-20 redeem: input #' + i + ' has no verifiable value (fail-closed) — cannot establish the miner fee')
     inSum += v
   })
-  let nonVaultTotal = 0, outSum = 0, hasData = false, hasRecipient = false
+  const SRC20_REQUIRE_RECIPIENT = String(process.env.SRC20_REQUIRE_RECIPIENT || '1') === '1'
+  let nonVaultTotal = 0, outSum = 0, hasData = false, hasRecipient = false, paidRequested = false
   for (const o of _psbt.txOutputs) {
     const val = Number(o.value || 0)
     outSum += val
@@ -233,6 +234,7 @@ async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20
     if (addr === from) continue // change back to the vault — unbounded is fine
     // a known recipient OR an unknown/non-standard spendable script: both count toward the caps
     hasRecipient = true
+    if (addr && toAddress && addr === toAddress) paidRequested = true
     nonVaultTotal += val
     if (val > SRC20_DUST) throw new Error(`refusing to sign SRC-20 redeem: output of ${val} sats to ${addr || 'a non-standard/unspendable-looking but spendable script'} exceeds the dust cap (${SRC20_DUST}) — the tx must not move real BTC value off the vault (recipient included)`)
   }
@@ -246,6 +248,13 @@ async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20
   if (impliedFeeRate > SRC20_MAX_FEE_RATE) throw new Error(`refusing to sign SRC-20 redeem: implied fee rate ${impliedFeeRate.toFixed(1)} sat/vB exceeds the cap (${SRC20_MAX_FEE_RATE})`)
   // require an actual transfer payload — an empty sweep (only vault change, no data/recipient) is refused
   if (!hasData && !hasRecipient) throw new Error('refusing to sign SRC-20 redeem: the PSBT carries no transfer payload or recipient output (only vault change) — nothing to transfer')
+  // C05 RESIDUAL (audit 7-Oct): bind the recipient. The composed tx MUST actually pay the requested
+  // destination — otherwise a dust output to a DIFFERENT address slipped through the mere presence check.
+  // This is NOT full SRC-20 semantic validation (tick/amount/dest are inside the protocol payload and are
+  // still decoded only by the indexer — an acknowledged open release gate); it only asserts the requested
+  // recipient address appears as an output. Env-overridable for composers that omit a dust-to-recipient.
+  if (SRC20_REQUIRE_RECIPIENT && toAddress && !paidRequested)
+    throw new Error('refusing to sign SRC-20 redeem: the composed transaction does not pay the requested recipient ' + toAddress + ' (no matching output) — recipient binding failed')
   const toSignInputs = (built.inputsToSign || []).map(i => ({ index: i.index, address: from, sighashType: i.sighashType }))
   const signer = await btcSigner()
   const signedResp = await signer.signPsbt(psbtHex, { transactionType: 'p2wpkh', toSignInputs })

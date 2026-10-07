@@ -1104,14 +1104,20 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
   // op COMPLETED only AFTER the accounting is written (audit): so a retry that finds 'completed'
   // truly has consistent accounting. A crash/throw before here leaves the op 'reserved' → a retry
   // reconciles (never re-mints) and surfaces the incomplete accounting rather than hiding it.
-  if (opKey) await opComplete(opKey, signature, { minted: true, real, chain, tick: asset.exact_ticker, amount_minted: mintAmt, mint_address: mintAddr, receive_address, signature, explorer })
+  const oc = opKey ? await opComplete(opKey, signature, { minted: true, real, chain, tick: asset.exact_ticker, amount_minted: mintAmt, mint_address: mintAddr, receive_address, signature, explorer }) : { ok: true }
 
+  // audit (7-Oct): if the completion record did not persist, say so truthfully instead of a clean success.
+  // The on-chain mint + accounting event ARE durable (events are authoritative, solvency already counts
+  // them), so this is NOT insolvent and NOT a re-mint risk — but the op is still 'reserved' and needs
+  // reconciliation, so the response must not claim a fully-completed operation.
+  const baseNote = real ? (chain === 'solana' ? 'Real SPL token minted on Solana devnet; solvency-checked.' : `Real ERC-20 minted on ${chain} testnet; solvency-checked.`) : 'accounting real; on-chain step unavailable.'
   return { status: 200, body: { minted: true, real, chain, network: chain === 'solana' ? 'devnet' : 'testnet',
     tick: asset.exact_ticker, amount_requested: String(amount), amount_minted: mintAmt, rounded: mintAmt !== String(amount),
     dest_decimals: destDec, mint_address: mintAddr, receive_address, signature, explorer,
     circulating: fromBaseUnits(newCirc), total_circulating: fromBaseUnits(totalCirculating + mintBase),
     collateral: fromBaseUnits(availableCollateral),
-    note: real ? (chain === 'solana' ? 'Real SPL token minted on Solana devnet; solvency-checked.' : `Real ERC-20 minted on ${chain} testnet; solvency-checked.`) : 'accounting real; on-chain step unavailable.' } }
+    op_completed: oc.ok, reconcile: !oc.ok || undefined,
+    note: oc.ok ? baseNote : baseNote + ' NOTE: the operation-completion record did not persist — on-chain mint + accounting are durable, but the operation is left for reconciliation (not a clean completion).' } }
 }
 app.post('/api/mint', async (req, res) => {
   // Direct mint = minting a rep against the protocol's collateral to an ARBITRARY recipient. That
@@ -1198,10 +1204,20 @@ async function opReserve(op_key, meta) {
   } catch (_) { return { fresh: false, row: (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0] || null } }
 }
 async function opComplete(op_key, tx_id, result) {
-  // audit: do NOT silently swallow a persistence failure. If this UPDATE fails the op stays 'reserved'
-  // → a retry reconciles (never re-mints), but we must surface it loudly for reconciliation.
-  try { await dbExec(`UPDATE operations SET state='completed', tx_id=?, result_json=?, updated_at=? WHERE op_key=?`, [tx_id || null, JSON.stringify(result || {}), now(), op_key]) }
-  catch (e) { console.error(`opComplete PERSIST FAILED for ${op_key} (tx ${tx_id}) — on-chain effect done, op stuck 'reserved', RECONCILE: ${e.message || e}`) }
+  // audit (7-Oct): do NOT silently swallow a persistence failure AND still report a clean success. The
+  // on-chain effect + accounting event are already durable (events are authoritative), so a failed
+  // completion write is non-insolvent — but the op would stay 'reserved' and the response must say so.
+  // Retry the write (idempotent; read back to resolve an ambiguous response), and RETURN whether it
+  // persisted so the caller can be truthful. A completed op never re-mints on retry regardless.
+  for (let i = 0; i < 4; i++) {
+    try { await dbExec(`UPDATE operations SET state='completed', tx_id=?, result_json=?, updated_at=? WHERE op_key=?`, [tx_id || null, JSON.stringify(result || {}), now(), op_key]); return { ok: true } }
+    catch (e) {
+      const row = (await dbQuery('SELECT state FROM operations WHERE op_key=?', [op_key]).catch(() => []))[0]
+      if (row && row.state === 'completed') return { ok: true } // committed despite the lost response
+      if (i === 3) { console.error(`opComplete PERSIST FAILED for ${op_key} (tx ${tx_id}) — on-chain effect + accounting done, op stays 'reserved', RECONCILE: ${e.message || e}`); return { ok: false, reason: String(e.message || e) } }
+    }
+  }
+  return { ok: false, reason: 'unknown' }
 }
 async function opFail(op_key) { await dbExec('DELETE FROM operations WHERE op_key=?', [op_key]).catch(() => {}) } // proven pre-send failure → retryable
 async function opReconcile(op_key) { await dbExec(`UPDATE operations SET state='reconcile', updated_at=? WHERE op_key=?`, [now(), op_key]).catch(() => {}) }
@@ -2720,6 +2736,24 @@ async function migrateSchema() {
   SCHEMA_OK = true // granted ONLY after schema verified AND historical backfill both succeed
   console.log('schema verified + burn backfill complete — SCHEMA_OK=true')
 }
-migrateSchema()
+// Self-healing schema gate (audit 7-Oct): if the Dashboard DB API is briefly unreachable at process
+// start, the schema probe throws `fetch failed` and SCHEMA_OK stays false — previously until a MANUAL
+// restart, even though the tables are intact and the DB came back seconds later. migrateSchema is
+// entirely idempotent (CREATE IF NOT EXISTS + read-only gate checks + INSERT OR IGNORE backfill/baseline),
+// so re-running it is safe. Retry on a background interval until it succeeds, then stop. setInterval is a
+// no-op in the test fixture, so the prevention tests still observe only the synchronous result.
+async function ensureSchema() {
+  await migrateSchema().catch(e => console.error('migrateSchema threw: ' + (e && (e.message || e))))
+  if (SCHEMA_OK) return
+  let tries = 0
+  const h = setInterval(async () => {
+    if (SCHEMA_OK) { clearInterval(h); return }
+    if (++tries > 120) { clearInterval(h); console.error('schema still not verified after many retries — writes remain contained; apply the migration (see migrations/)'); return }
+    await migrateSchema().catch(() => {})
+    if (SCHEMA_OK) { clearInterval(h); console.log('schema verified on retry #' + tries + ' — SCHEMA_OK=true') }
+  }, 15000)
+  if (h && typeof h.unref === 'function') h.unref()
+}
+ensureSchema()
 app.use(express.static(path.join(__dirname, 'public')))
 app.listen(PORT, () => console.log(`StampySwap Phase 0-9 on ${PORT}`))

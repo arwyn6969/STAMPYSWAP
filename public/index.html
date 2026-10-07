@@ -1055,15 +1055,19 @@ async function loadHero(){
 loadHero()
 // Maintenance mode (audit containment): show banner + disable value-action controls. The server
 // enforces this regardless; the UI must reflect it so nothing looks operable when it isn't.
+// The value-moving action buttons bind their handlers via addEventListener (not inline onclick), so the
+// old handler-name matcher never caught them and they appeared enabled during maintenance (audit 7-Oct —
+// a display defect, not a backend bypass; the server already 503s these routes). Disable them by an
+// EXPLICIT id list so the display matches enforcement. Read-only quote/route/inspect buttons stay enabled.
+const MAINT_ACTION_BTNS = ['rd-verify','rr-redeem','mv-go','m-mint','m-redeem','p-create','b-create','s-swap','sb-exec']
 async function loadStatus(){
   try{
     const s = await fetch('api/status').then(r=>r.json())
     if(!s || !s.maintenance) return
     const b=document.getElementById('maint-banner'); if(b) b.style.display='block'
-    const RISK=/verifyAndMint|doRealRedeem|doRedeem|createPool|doSwap|Swap\(|doMove|Move\(|Mint\(|Intent|confirmDeposit|execStampBridge|quoteStampBridge|deployMock|Simulate/i
-    document.querySelectorAll('button, a.btn2').forEach(el=>{
-      const h=(el.getAttribute('onclick')||'')+' '+(el.id||'')+' '+(el.textContent||'')
-      if(RISK.test(h)){ el.setAttribute('disabled','true'); el.style.opacity='.4'; el.style.pointerEvents='none'; el.title='Disabled during maintenance' }
+    MAINT_ACTION_BTNS.forEach(id=>{
+      const el=document.getElementById(id)
+      if(el){ el.setAttribute('disabled','true'); el.style.opacity='.4'; el.style.pointerEvents='none'; el.title='Disabled during maintenance' }
     })
   }catch(e){}
 }
