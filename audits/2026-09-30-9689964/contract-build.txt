@@ -1,0 +1,22 @@
+node:fs:443
+    return binding.readFileUtf8(path, stringToFlags(options.flag));
+                   ^
+
+Error: ENOENT: no such file or directory, open '/private/tmp/stampyswap-review-20260930/node_modules/@openzeppelin/contracts/utils/Context.sol'
+    at Object.readFileSync (node:fs:443:20)
+    at /private/tmp/stampyswap-review-20260930/gen-erc20-mainnet.js:23:145
+    at Array.map (<anonymous>)
+    at Object.<anonymous> (/private/tmp/stampyswap-review-20260930/gen-erc20-mainnet.js:23:86)
+    at Module._compile (node:internal/modules/cjs/loader:1566:14)
+    at Object..js (node:internal/modules/cjs/loader:1718:10)
+    at Module.load (node:internal/modules/cjs/loader:1305:32)
+    at Function._load (node:internal/modules/cjs/loader:1119:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:220:24) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/private/tmp/stampyswap-review-20260930/node_modules/@openzeppelin/contracts/utils/Context.sol'
+}
+
+Node.js v23.4.0

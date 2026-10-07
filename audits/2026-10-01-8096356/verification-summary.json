@@ -1,0 +1,51 @@
+{
+  "review_date": "2026-10-01",
+  "reviewed_sha": "80963563fc7eb3ce1b30bd87d2c1dcb096393418",
+  "baseline_sha": "9689964dac19f4b45c5532a744bd3fd8dfe0daea",
+  "locked_install": "pass",
+  "lint": "pass",
+  "repository_tests": {
+    "pass": 37,
+    "fail": 0
+  },
+  "independent_tests": {
+    "pass": 39,
+    "fail": 0,
+    "positive_checks": 31,
+    "defect_or_residual_reproductions": 8
+  },
+  "prior_suite": {
+    "positive_regressions_pass": 6,
+    "open_tests_fail": 12,
+    "qualification": "Old B08 fails due to missing new UI fixture fields; separate new integrations verify actual authorization."
+  },
+  "root_js_mjs_syntax": {
+    "pass": 20,
+    "fail": 0
+  },
+  "contract_build": {
+    "artifact_matches_tracked": true,
+    "artifact_sha256": "7eb4573fcde476ccc98b6945ecb6f8485df82fbd2c9258a881a53faa67d3ea13",
+    "openzeppelin_installed": "4.9.6",
+    "syntax_files": 20,
+    "syntax_failures": 0
+  },
+  "B_status": {
+    "B01": "partial, C01 open",
+    "B02": "original response-loss defect fixed, C03 regression open",
+    "B03": "original false success fixed, recovery and C04 open",
+    "B04": "partial, C02 open",
+    "B05": "partial, C06 recovery gap",
+    "B06": "verified specified burn-history fixes",
+    "B07": "verified specified malformed-schema cases",
+    "B08": "verified local authorization flow",
+    "B09": "original fee example blocked, C05 regression and semantic/input validation open"
+  },
+  "live_public_UI": {
+    "maintenance_reported": true,
+    "release_gated_reported": true,
+    "backend_sha_or_effective_configuration_verified": false
+  },
+  "release_verdict": "not ready for a limited release candidate",
+  "production_mutations": false
+}

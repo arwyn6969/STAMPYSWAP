@@ -1,0 +1,14 @@
+[
+  {
+    "requested": "https://arwyn.party/stampyswap/app/",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "requested": "https://arwyn.party/stampyswap/app/api/status",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "requested": "https://arwyn.party/stampyswap/app/api/custody/status",
+    "error": "HTTP Error 403: Forbidden"
+  }
+]

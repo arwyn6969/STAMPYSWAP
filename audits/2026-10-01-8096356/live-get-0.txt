@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⚠ Stampy Swap — DANGER / read before entering</title>
+<meta name="robots" content="noindex">
+<meta property="og:title" content="Stampy Swap — experimental, unaudited, probably broken">
+<meta property="og:description" content="Unfinished, untested tech. Do NOT use unless you are prepared to lose everything.">
+<meta property="og:url" content="https://arwyn.party/stampyswap">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0a0505;color:#f4e9e9;font-family:'Inter',system-ui,sans-serif;line-height:1.6;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px;
+    background-image:radial-gradient(60% 50% at 50% 0%, rgba(255,40,40,.16), transparent 70%);}
+  .box{max-width:620px;width:100%;background:#160a0a;border:1px solid rgba(255,80,80,.35);
+    border-radius:18px;padding:36px 34px;box-shadow:0 24px 70px -30px rgba(255,0,0,.5)}
+  .skull{font-size:52px;text-align:center;line-height:1}
+  h1{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:26px;text-align:center;
+    color:#ff6b6b;margin:14px 0 6px;letter-spacing:-.01em}
+  .sub{text-align:center;color:#c9a3a3;font-size:14px;margin-bottom:22px}
+  .warn{background:rgba(255,40,40,.09);border:1px solid rgba(255,80,80,.4);border-left:4px solid #ff4d4d;
+    border-radius:12px;padding:18px 20px;margin:18px 0;font-size:15px}
+  .warn strong{color:#ff8080}
+  .warn ul{margin:10px 0 0 18px;color:#e3c9c9}
+  .warn li{margin:6px 0}
+  .big{font-size:16px;font-weight:600;color:#ffd0d0;text-align:center;margin:20px 0 4px}
+  .btns{display:flex;gap:12px;margin-top:26px;flex-wrap:wrap}
+  a.btn{flex:1;text-align:center;text-decoration:none;padding:14px 18px;border-radius:11px;font-weight:600;font-size:14.5px;white-space:nowrap}
+  .leave{background:#1f2630;color:#cfe;border:1px solid rgba(255,255,255,.14)}
+  .leave:hover{background:#273040}
+  .enter{background:linear-gradient(180deg,#b91c1c,#7f1010);color:#ffdede;border:1px solid rgba(255,90,90,.5)}
+  .enter:hover{filter:brightness(1.12)}
+  .fine{margin-top:18px;font-size:12px;color:#8a6b6b;text-align:center}
+</style>
+</head>
+<body>
+  <div class="box">
+    <div class="skull">☠️</div>
+    <h1>Stampy Swap</h1>
+    <div class="sub">experimental · unaudited · single-operator testnet</div>
+
+    <div class="big">STOP. Read this before you touch anything.</div>
+
+    <div class="warn">
+      This is <strong>unfinished and untested</strong> technology. You should <strong>NOT use it under any
+      circumstances</strong> unless you are fully prepared to <strong>lose all of your money and tokens</strong>.
+      <ul>
+        <li>There is <strong>NO help and NO support</strong> — you are entirely on your own.</li>
+        <li>It is <strong>unaudited</strong> and is <strong>probably broken</strong> in ways that can destroy funds.</li>
+        <li>Nothing here is financial advice, a product, or a promise that anything works.</li>
+        <li>By entering you accept <strong>100% of the risk</strong> and hold no one responsible for any loss.</li>
+      </ul>
+    </div>
+
+    <div class="btns">
+      <a class="btn leave" href="/">← Get me out of here</a>
+      <a class="btn enter" href="app/">I understand the risk — enter anyway</a>
+    </div>
+    <div class="fine">You have been warned. Do not send anything you are not ready to lose forever.</div>
+  </div>
+
+<script src="/__nanoclaw/toolbar.js"></script>
+</body>
+</html>

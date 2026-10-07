@@ -1,0 +1,37 @@
+
+> stampyswap@0.1.0 test
+> node --experimental-sqlite --test test/*.test.js test/*.test.cjs
+
+(node:6580) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ A01: repeated release reconciliation decrements circulation at most once (49.160375ms)
+✔ A01: a transient DB failure during the release decrement is retried, never doubled (10.759542ms)
+✔ A03: a completed deposit-mint op resolves as done and never deletes the backing (24.408333ms)
+✔ A05: a move whose source-debit is unconfirmed does NOT mint on resume (6.380417ms)
+✔ A05: a move with a confirmed source-debit resumes ONLY the destination mint (6.724291ms)
+✔ A06: operator mint without an op_key is rejected before any effect (6.694375ms)
+✔ P0: a live cross-process asset lock blocks a concurrent mint (fail-closed, no mint) (557.166541ms)
+✔ P0: an expired asset lease is stolen and the mint proceeds (13.377583ms)
+✔ F04: Counterparty deposit is credited by PER-TX attribution (txid-idempotent, exact, no operator) (70.95825ms)
+✔ ACME deposit exact-amount rejects a partial claim cleanly (no 500 from quantity_base) (27.439125ms)
+✔ F05: a non-operator move requires the burn-owner signature (front-run resistant) (19.450459ms)
+✔ SRC-20 provenance anchors on the deploy tx (0.45575ms)
+✔ ACME provenance names the ACME protocol (no deploy tx, no double-prefix) (0.058084ms)
+✔ Counterparty provenance names counterparty (not src-20) (0.045209ms)
+✔ missing protocol defaults to src-20 (back-compat) (0.048791ms)
+✔ op keys are deterministic and identity-scoped (not recipient-scoped) (0.48525ms)
+✔ resolveDepositOp: no prior op → proceed (0.067625ms)
+✔ resolveDepositOp: completed op → done (idempotent, never re-mint) (0.09775ms)
+✔ resolveDepositOp: in-flight op, different recipient → retarget (deposit spoken for) (0.047708ms)
+✔ resolveDepositOp: in-flight op, same recipient → reconcile (outcome unknown, no auto-retry) (0.048833ms)
+✔ resolveMoveBurn: no burn row → start (0.049083ms)
+✔ resolveMoveBurn: burn consumed by a move of THIS asset → resume (dest-mint only) (0.037875ms)
+✔ resolveMoveBurn: burn consumed by a redeem, or a move of ANOTHER asset → reject (0.048917ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1358.029625

@@ -1,0 +1,53 @@
+
+> stampyswap@0.1.0 test
+> node --experimental-sqlite --test test/*.test.js test/*.test.cjs
+
+(node:6469) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ B01: an expired-lease steal cannot overissue — the stolen-lock worker is blocked by the reservation (46.7315ms)
+✔ B02: a committed-then-lost decrement is not re-applied (9.668917ms)
+✔ B03: a failed new-representation insert does not report a phantom completed mint (7.759875ms)
+✔ B04: an uncertain mint reserves backing so a different op cannot reuse it (8.087584ms)
+✔ B05: a persistent decrement failure does not report a finalized release (10.323792ms)
+✔ B05: a failed source debit is not marked decremented and the move does not mint (6.940417ms)
+✔ B06: an explicitly aborted move burn is not reconsumed on restart (3.945959ms)
+✔ B06: a NULL-status historical redemption burn is preserved and cannot be reused (9.385667ms)
+✔ B07: an asset_locks table without uniqueness keeps writes contained (2.99525ms)
+✔ B07: a partial unique index does not satisfy the operation uniqueness gate (2.634458ms)
+✔ B08: the redeem form sends burn_txid + chain + an owner signature and is authorized (9.425875ms)
+✔ B08: the move form signs the burn-owner binding and is authorized (7.967667ms)
+✔ B09: a PSBT with an excessive implied fee and no transfer payload is refused before signing (4.011541ms)
+✔ B09: a well-formed SRC-20 transfer (payload + dust recipient + small fee) still signs (2.140125ms)
+(node:6470) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ A01: repeated release reconciliation decrements circulation at most once (47.557959ms)
+✔ A01: a transient DB failure during the release decrement is retried, never doubled (11.551042ms)
+✔ A03: a completed deposit-mint op resolves as done and never deletes the backing (24.105625ms)
+✔ A05: a move whose source-debit is unconfirmed does NOT mint on resume (7.070708ms)
+✔ A05: a move with a confirmed source-debit resumes ONLY the destination mint (6.222666ms)
+✔ A06: operator mint without an op_key is rejected before any effect (4.758167ms)
+✔ P0: a live cross-process asset lock blocks a concurrent mint (fail-closed, no mint) (476.444334ms)
+✔ P0: an expired asset lease is stolen and the mint proceeds (7.945625ms)
+✔ F04: Counterparty deposit is credited by PER-TX attribution (txid-idempotent, exact, no operator) (44.205458ms)
+✔ ACME deposit exact-amount rejects a partial claim cleanly (no 500 from quantity_base) (16.859541ms)
+✔ F05: a non-operator move requires the burn-owner signature (front-run resistant) (13.232333ms)
+✔ SRC-20 provenance anchors on the deploy tx (0.527083ms)
+✔ ACME provenance names the ACME protocol (no deploy tx, no double-prefix) (0.058791ms)
+✔ Counterparty provenance names counterparty (not src-20) (0.04625ms)
+✔ missing protocol defaults to src-20 (back-compat) (0.05075ms)
+✔ op keys are deterministic and identity-scoped (not recipient-scoped) (0.422334ms)
+✔ resolveDepositOp: no prior op → proceed (0.061125ms)
+✔ resolveDepositOp: completed op → done (idempotent, never re-mint) (0.137583ms)
+✔ resolveDepositOp: in-flight op, different recipient → retarget (deposit spoken for) (0.045542ms)
+✔ resolveDepositOp: in-flight op, same recipient → reconcile (outcome unknown, no auto-retry) (0.044084ms)
+✔ resolveMoveBurn: no burn row → start (0.042959ms)
+✔ resolveMoveBurn: burn consumed by a move of THIS asset → resume (dest-mint only) (0.035125ms)
+✔ resolveMoveBurn: burn consumed by a redeem, or a move of ANOTHER asset → reject (0.043791ms)
+ℹ tests 37
+ℹ suites 0
+ℹ pass 37
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1239.112125

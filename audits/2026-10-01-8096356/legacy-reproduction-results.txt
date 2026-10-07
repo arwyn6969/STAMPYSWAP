@@ -1,0 +1,297 @@
+TAP version 13
+# (node:6765) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: OPEN B01: expired lease can be stolen from a still-running mint and overissue backing
+not ok 1 - OPEN B01: expired lease can be stolen from a still-running mint and overissue backing
+  ---
+  duration_ms: 83.606958
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:14:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    409 !== 200
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 200
+  actual: 409
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:23:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:297:3)
+  ...
+# Subtest: OPEN B02: committed debit plus lost DB response is retried and decrements twice
+not ok 2 - OPEN B02: committed debit plus lost DB response is retried and decrements twice
+  ---
+  duration_ms: 13.914583
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:30:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    '90' !== '80'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: '80'
+  actual: '90'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:39:41)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:633:7)
+  ...
+# Subtest: OPEN B03: failed new representation insert is swallowed and mint is marked completed
+not ok 3 - OPEN B03: failed new representation insert is swallowed and mint is marked completed
+  ---
+  duration_ms: 7.333875
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:44:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    500 !== 200
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 200
+  actual: 500
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:50:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:633:7)
+  ...
+# Subtest: OPEN B04: uncertain mint does not reserve its potential issuance against a different operation
+not ok 4 - OPEN B04: uncertain mint does not reserve its potential issuance against a different operation
+  ---
+  duration_ms: 9.032
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:58:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    409 !== 200
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 200
+  actual: 409
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:66:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:633:7)
+  ...
+# Subtest: OPEN B05: persistent decrement failure reports successful terminal reconciliation
+not ok 5 - OPEN B05: persistent decrement failure reports successful terminal reconciliation
+  ---
+  duration_ms: 5.780166
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:70:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    500 !== 200
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 200
+  actual: 500
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:74:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:633:7)
+  ...
+# Subtest: OPEN B05: failed source debit can still be marked decremented and move reports success
+not ok 6 - OPEN B05: failed source debit can still be marked decremented and move reports success
+  ---
+  duration_ms: 7.238292
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:80:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    500 !== 200
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 200
+  actual: 500
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:85:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:633:7)
+  ...
+# Subtest: OPEN B06: restart reconsumes an explicitly aborted move burn
+not ok 7 - OPEN B06: restart reconsumes an explicitly aborted move burn
+  ---
+  duration_ms: 7.011083
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:90:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:97:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:633:7)
+  ...
+# Subtest: OPEN B07: asset_locks without uniqueness is accepted and admits two holders
+not ok 8 - OPEN B07: asset_locks without uniqueness is accepted and admits two holders
+  ---
+  duration_ms: 4.341416
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:101:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    false !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:105:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:633:7)
+  ...
+# Subtest: OPEN B07: irrelevant partial unique index passes the operation uniqueness gate
+not ok 9 - OPEN B07: irrelevant partial unique index passes the operation uniqueness gate
+  ---
+  duration_ms: 5.102083
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:110:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    false !== true
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:116:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:633:7)
+  ...
+# Subtest: OPEN B06: NULL-status historical redemption is omitted from burn backfill
+not ok 10 - OPEN B06: NULL-status historical redemption is omitted from burn backfill
+  ---
+  duration_ms: 3.296
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:122:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    1 !== 0
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 0
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:126:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:633:7)
+  ...
+# Subtest: OPEN B08: withdrawal and move UI omit required authorizations
+not ok 11 - OPEN B08: withdrawal and move UI omit required authorizations
+  ---
+  duration_ms: 4.103333
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:131:1'
+  failureType: 'testCodeFailure'
+  error: "Cannot read properties of undefined (reading 'value')"
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    doRealRedeem (evalmachine.<anonymous>:3:29)
+    evalmachine.<anonymous>:1:1
+    Script.runInContext (node:vm:149:12)
+    Object.runInContext (node:vm:301:6)
+    TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:141:12)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:633:7)
+  ...
+# Subtest: OPEN B09: SRC-20 output guard permits an excessive miner fee and no transfer payload
+not ok 12 - OPEN B09: SRC-20 output guard permits an excessive miner fee and no transfer payload
+  ---
+  duration_ms: 4.095042
+  location: '/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:150:1'
+  failureType: 'testCodeFailure'
+  error: 'refusing to sign SRC-20 redeem: implied miner fee 999454 sats exceeds the cap (50000) — would drain vault BTC'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    Object.redeem (custody.js:234:34)
+    process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    async TestContext.<anonymous> (/Users/arwynhughes/Documents/STAMPYSWAP/audits/2026-10-01-8096356/release-readiness.test.cjs:167:11)
+    async Test.run (node:internal/test_runner/test:935:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:633:7)
+  ...
+# Subtest: FIXED A02: legacy mint key blocks a possibly repeated deposit mint
+ok 13 - FIXED A02: legacy mint key blocks a possibly repeated deposit mint
+  ---
+  duration_ms: 25.094917
+  ...
+# Subtest: FIXED A04: successful failed-redeem reconciliation stays freed across startup
+ok 14 - FIXED A04: successful failed-redeem reconciliation stays freed across startup
+  ---
+  duration_ms: 4.735084
+  ...
+# Subtest: FIXED A07: ambiguous stamp broadcast retains reservation and blocks second release
+ok 15 - FIXED A07: ambiguous stamp broadcast retains reservation and blocks second release
+  ---
+  duration_ms: 6.592959
+  ...
+# Subtest: FIXED R04 and F10: partial representation and stamp claims rejected without consuming entitlement
+ok 16 - FIXED R04 and F10: partial representation and stamp claims rejected without consuming entitlement
+  ---
+  duration_ms: 8.274042
+  ...
+# Subtest: FIXED containment: path variants, schema failure and retired routes remain closed
+ok 17 - FIXED containment: path variants, schema failure and retired routes remain closed
+  ---
+  duration_ms: 41.769375
+  ...
+# Subtest: FIXED F09 and ACME regression: exact indivisible claim succeeds, extra precision fails before mint
+ok 18 - FIXED F09 and ACME regression: exact indivisible claim succeeds, extra precision fails before mint
+  ---
+  duration_ms: 26.544459
+  ...
+# Error: Test "OPEN B01: expired lease can be stolen from a still-running mint and overissue backing" at audits/2026-10-01-8096356/release-readiness.test.cjs:14:1 generated asynchronous activity after the test ended. This activity created the error "TypeError: fetch failed" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+1..18
+# tests 18
+# suites 0
+# pass 6
+# fail 12
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 596.601042

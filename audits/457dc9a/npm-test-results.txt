@@ -1,0 +1,45 @@
+
+> stampyswap@0.1.0 test
+> node --test
+
+{
+  "lookup_ACME": null,
+  "lookup_SOAP": null,
+  "lookup_missing": null,
+  "fromBase_div": "702927555",
+  "toBase_div": "70292755500000000",
+  "roundtrip_ok": true,
+  "balance_issuer_ACME": "0",
+  "checkDeposit_1_ACME": {
+    "arrived": false,
+    "balance_base": "0",
+    "balance": "0"
+  },
+  "sentToVault_known": false,
+  "sentToVault_bogus": false,
+  "chainHeight": null,
+  "composeSend": {
+    "expected_error": "fetch failed"
+  }
+}
+✔ test-acme.js (77.9285ms)
+✔ SRC-20 provenance anchors on the deploy tx (0.423083ms)
+✔ ACME provenance names the ACME protocol (no deploy tx, no double-prefix) (0.110208ms)
+✔ Counterparty provenance names counterparty (not src-20) (0.04825ms)
+✔ missing protocol defaults to src-20 (back-compat) (0.055042ms)
+✔ op keys are deterministic and identity-scoped (not recipient-scoped) (0.454959ms)
+✔ resolveDepositOp: no prior op → proceed (0.060875ms)
+✔ resolveDepositOp: completed op → done (idempotent, never re-mint) (0.088958ms)
+✔ resolveDepositOp: in-flight op, different recipient → retarget (deposit spoken for) (0.0435ms)
+✔ resolveDepositOp: in-flight op, same recipient → reconcile (outcome unknown, no auto-retry) (0.045667ms)
+✔ resolveMoveBurn: no burn row → start (0.043541ms)
+✔ resolveMoveBurn: burn consumed by a move of THIS asset → resume (dest-mint only) (0.034792ms)
+✔ resolveMoveBurn: burn consumed by a redeem, or a move of ANOTHER asset → reject (0.042459ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 86.416625

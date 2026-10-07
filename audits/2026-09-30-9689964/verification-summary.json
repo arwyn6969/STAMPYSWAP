@@ -1,0 +1,36 @@
+{
+  "review_date": "2026-09-30",
+  "sha": "9689964dac19f4b45c5532a744bd3fd8dfe0daea",
+  "source_checkout_clean": true,
+  "new_commits_since_previous_review": 9,
+  "checks": {
+    "locked_install": "pass, scripts disabled",
+    "lint": "pass",
+    "repository_tests": {
+      "pass": 23,
+      "fail": 0
+    },
+    "independent_tests": {
+      "pass": 18,
+      "fail": 0,
+      "defect_reproductions": 12,
+      "positive_checks": 6
+    },
+    "root_js_mjs_syntax": {
+      "pass": 20,
+      "fail": 0
+    },
+    "mainnet_contract_build": "fail, missing OpenZeppelin source"
+  },
+  "dependency_entries": {
+    "info": 0,
+    "low": 5,
+    "moderate": 11,
+    "high": 5,
+    "critical": 0,
+    "total": 21
+  },
+  "release_verdict": "not ready for public custody or full mainnet release",
+  "production_verified": false,
+  "no_application_changes_or_live_transactions": true
+}

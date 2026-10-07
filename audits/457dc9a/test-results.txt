@@ -1,0 +1,26 @@
+(node:21214) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+schema verified + burn backfill complete — SCHEMA_OK=true
+✔ COUNTEREXAMPLE A: released reconcile can decrement twice after final write fails (7.999875ms)
+✔ COUNTEREXAMPLE A: failed reconcile swallows burn deletion failure and makes it terminal (1.363666ms)
+✔ COUNTEREXAMPLE A: startup backfill re-consumes successfully freed failed redeem (1.397791ms)
+✔ COUNTEREXAMPLE B: parent deposit op is ignored and a possibly completed mint repeats (1.351625ms)
+✔ COUNTEREXAMPLE B: parent move op is ignored on burn resume (1.270084ms)
+✔ COUNTEREXAMPLE B: two workers first deposit; credit creator deletes backing after peer mint (1.295583ms)
+✔ COUNTEREXAMPLE B: consumed move marker survives failed source decrement; retry is stranded (0.848459ms)
+✔ COUNTEREXAMPLE B: completed move retry reports failure before consulting cached operation (0.847625ms)
+✔ PASS: normal failed destination mint resumes without a second decrement or burn claim (1.156209ms)
+✔ PASS: same-worker concurrent first deposits mint and credit once (1.64925ms)
+✔ PASS: receive_address is in the verified message before credit/resume (0.903417ms)
+✔ PASS: definite first mint failure deletes new credit; uncertainty preserves credit and op (1.590333ms)
+✔ PASS: first over-circulating attempt frees burn and does not decrement (0.503208ms)
+✔ PASS: safeEqual rejects unequal UTF-8 byte lengths and missing operator token (0.509875ms)
+✔ PASS: vault lock serializes across asset locks and continues after rejection (0.542792ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 90.046875

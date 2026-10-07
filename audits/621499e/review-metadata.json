@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/arwyn6969/STAMPYSWAP",
+  "commit": "621499e6c6ac2a1e4e2f2e1b3ea7489da187b66a",
+  "previous_audit": "2345961119c001d8cd286ab0ca6a108258d7c200",
+  "review_date": "2026-09-21",
+  "checks": 26,
+  "checks_satisfied": 26,
+  "syntax_files": 19,
+  "real_express_and_signature_verification": true,
+  "production_effects": false,
+  "production_schema_verified": false,
+  "warning": "Passing OPEN/NEW checks reproduces defects; it is not security clearance."
+}

@@ -1,0 +1,102 @@
+[
+  {
+    "file": "acme.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "amm.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "counterparty.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "custody.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "evm-mint.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "evm-signer.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "gen-amm.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "gen-erc20-mainnet.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "gen-erc20.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "gen-og.mjs",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "labels.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "prices.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "recovery.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "safe.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "server.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "sol-mint.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "soljson.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "squads.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "test-acme.js",
+    "exit_code": 0,
+    "output": ""
+  },
+  {
+    "file": "uniswap.js",
+    "exit_code": 0,
+    "output": ""
+  }
+]
