@@ -35,3 +35,4 @@ audit-harness/
 .emblem_build/
 .snapshot-*/
 __pycache__/
+.scratch-manifest-prep/

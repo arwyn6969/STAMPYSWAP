@@ -52,6 +52,27 @@ The preparer requires all eleven application accounting/configuration tables, in
 
 For any metadata-only registration on the existing artifact, use a copy of the existing live package as the source and review that only `emblem_build` changes. Do not replace the live package with a newer dependency/script configuration just to enable a backup. Send the generated package diff and schema evidence for review before registration. Private backup output is gitignored. Confirm backup consistency separately and rehearse its actual restore semantics in isolation.
 
+## Single-statement application snapshot alternative
+
+If the platform backup tool's transaction consistency is undocumented, `scripts/application-snapshot.py` prepares one read-only SELECT for all declared application tables. SQLite documents that a SELECT starts a read transaction and concurrent committed writes on other connections remain invisible until it ends: [transactions](https://www.sqlite.org/lang_transaction.html), [isolation](https://www.sqlite.org/isolation.html). The host read-only probe reports SQLite 3.49.2, JSON1 available and read_uncommitted=0. This establishes capability; execution and restore evidence are still required. A shared connection must not interleave writes while stepping this statement.
+
+In private scratch with the reviewed helper files and actual schema evidence:
+
+```sh
+python3 scripts/application-snapshot.py query schema-export.json application-snapshot.sql
+```
+
+Inspect that this is exactly one SELECT, then submit it once through the supported read-only database query tool. The query is approximately 31 KiB for the observed schema; if the transport rejects its size, report that limitation instead of splitting it into multiple requests. Save the exact complete result envelope privately as `application-snapshot-envelope.json`. Require HTTP success, one row, rowCount=1, truncated=false and the full snapshot_hex string. Do not paste/export the private row data into chat or commit it. No manifest registration or served-package change is needed for this SELECT.
+
+```sh
+python3 scripts/application-snapshot.py restore application-snapshot-envelope.json restored-private-copy.db
+python3 scripts/prepare-migration.py restored-private-copy.db migrated-private-copy.db
+```
+
+Both destinations must be new private files. The restore helper accepts only the eleven application tables plus an optional migration log, excludes authentication/session tables, preserves actual DDL/indexes, typed values, integer precision, rowids and autoincrement sequences, and verifies every imported cell/count and all seven gates plus integrity/foreign keys. Unsupported schema objects, changed columns, dirty-read isolation, incomplete envelopes or invalid rows fail closed. The snapshot is application-scoped, not a complete platform/authentication backup. File/engine settings outside that scope are not captured.
+
+Return only the captured UTC time, snapshot/file checksums, complete table row counts and restore/migration validation results. Report transport/storage errors honestly. A private local restore does not prove the supported host restore path or isolated Dashboard DB API behavior; those still need their own rehearsal. Authoritative replica inventory and custody eligibility remain separate release requirements.
+
 ## 2. Copy migration, restore and API compatibility
 
 Use an isolated copy of the immutable snapshot:

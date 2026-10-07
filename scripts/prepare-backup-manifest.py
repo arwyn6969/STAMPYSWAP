@@ -1,5 +1,6 @@
 """Prepare a NEW package.json copy with Emblem backup metadata from actual read-only schema evidence."""
 import argparse
+from contextlib import closing
 import copy
 import importlib.util
 import json
@@ -55,7 +56,7 @@ def generate(package, evidence):
     spec = importlib.util.spec_from_file_location('migration', Path(__file__).with_name('prepare-migration.py'))
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
-    with sqlite3.connect(':memory:') as db:
+    with closing(sqlite3.connect(':memory:')) as db:
         for sql in tables.values():
             db.execute(sql)
         for sql in indexes:

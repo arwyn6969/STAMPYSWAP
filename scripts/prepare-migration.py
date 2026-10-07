@@ -1,5 +1,6 @@
 """Prepare and validate a migrated COPY of a supplied SQLite snapshot. Never alters the source."""
 import argparse
+from contextlib import closing
 import hashlib
 from pathlib import Path
 import sqlite3
@@ -58,7 +59,7 @@ def prepare(source, destination):
         pass
     db = None
     try:
-        with sqlite3.connect(source.as_uri() + '?mode=ro', uri=True) as src:
+        with closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True)) as src:
             db = sqlite3.connect(destination)
             src.backup(db)
         db.execute('BEGIN IMMEDIATE')
