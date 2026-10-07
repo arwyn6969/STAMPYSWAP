@@ -171,6 +171,7 @@ function loadCustody(signedCounter, psbtHex, inputsToSign) {
   return load('custody.js', n => {
     if (n === '@emblemvault/auth-sdk/signers/bitcoin') return { fetchBitcoinVaultInfo: async () => ({ btcAddresses: { p2wpkh: btcSource } }), toBitcoinSigner: async () => ({ signPsbt: async () => { signedCounter.n++; return { signedTxHex: '00' } } }) }
     if (n === 'bitcoinjs-lib') return bitcoin
+    if (n === './src20-validator') return dep('./src20-validator')
     if (n === 'fs') return { existsSync: () => false }
     if (n === 'path') return require('node:path')
     if (n === './acme') return null
@@ -192,7 +193,7 @@ test('B09: a PSBT with an excessive implied fee and no transfer payload is refus
   assert.equal(signed.n, 0) // never signed
 })
 
-test('B09: synthetic data + dust + small fee passes structural checks (not semantic proof)', async () => {
+test('B09: synthetic OP_RETURN data is refused before signing', async () => {
   const bitcoin = dep('bitcoinjs-lib'); const from = btcSource
   const recipient = bitcoin.payments.p2wpkh({ hash: Buffer.alloc(20, 9) }).address
   const p = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin })
@@ -202,9 +203,8 @@ test('B09: synthetic data + dust + small fee passes structural checks (not seman
   p.addOutput({ address: from, value: 9000 }) // change back to vault; implied fee 670
   const signed = { n: 0 }
   const c = loadCustody(signed, p.toHex(), [{ index: 0, sighashType: 1 }])
-  const r = await c.redeem({ tick: 'COIN', amount: '10', toAddress: recipient })
-  assert.equal(r.released, true)
-  assert.equal(signed.n, 1) // signed exactly once
+  await assert.rejects(c.redeem({ tick: 'COIN', amount: '10', toAddress: recipient }))
+  assert.equal(signed.n, 0)
 })
 
 // ============================================================================
@@ -443,11 +443,11 @@ test('C05-residual: requested-recipient dust without a data payload is refused',
   const requested = bitcoin.payments.p2wpkh({ hash: Buffer.alloc(20, 8) }).address
   const p = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin })
   p.addInput({ hash: '11'.repeat(32), index: 0, witnessUtxo: { script: bitcoin.address.toOutputScript(from), value: 10000 } })
-  p.addOutput({ address: requested, value: 330 })   // dust to the REQUESTED recipient
+  p.addOutput({ address: requested, value: 333 })   // dust to the REQUESTED recipient
   p.addOutput({ address: from, value: 9000 })
   const signed = { n: 0 }
   const c = loadCustody(signed, p.toHex(), [{ index: 0, sighashType: 1 }])
-  await assert.rejects(c.redeem({ tick: 'COIN', amount: '10', toAddress: requested }), /both a data output and a recipient/);
+  await assert.rejects(c.redeem({ tick: 'COIN', amount: '10', toAddress: requested }), /missing OLGA transfer data/);
   assert.equal(signed.n, 0)
 })
 

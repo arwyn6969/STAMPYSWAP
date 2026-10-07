@@ -1,0 +1,7 @@
+{
+  "name": "@stampyswap/bigint-buffer",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "license": "UNLICENSED"
+}

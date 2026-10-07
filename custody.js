@@ -8,6 +8,7 @@
 // CUSTODY_LIVE (default off) + an audited go-ahead. Nothing here moves value on its own.
 const bitcoin = require('@emblemvault/auth-sdk/signers/bitcoin')
 const bitcoinjs = require('bitcoinjs-lib')
+const src20 = require('./src20-validator')
 const fs = require('fs')
 const path = require('path')
 const CP = process.env.COUNTERPARTY_API || 'https://api.counterparty.io:4000/v2'
@@ -184,85 +185,16 @@ async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20
   const built = await r.json()
   const psbtHex = built.hex
   if (!psbtHex) throw new Error('no PSBT (hex) returned by stampchain')
-  // grok: DECODE the stampchain-composed PSBT and refuse to sign anything that could leak vault BTC.
-  // A legit SRC-20 TRANSFER spends the vault's UTXOs into tiny dust/data outputs + change BACK to the
-  // vault; the recipient gets only a dust marker (SRC-20 balances are address-indexed, not sat-bound).
-  // So: (1) FAIL CLOSED if the PSBT can't be decoded (can't verify → don't sign); (2) NO non-vault
-  // output may exceed the dust cap — INCLUDING the recipient (they should never receive real BTC value);
-  // (3) the SUM of all non-vault output value must stay under a small cap (blocks many-small-output
-  // leaks and a vault sweep). Full SRC-20 tick/amt semantic assertion still awaits a real sample, but
-  // these bounds already refuse unexpected BTC value regardless of destination. All env-overridable.
-  const SRC20_DUST = parseInt(process.env.SRC20_DUST_SATS || '1000', 10)
-  const SRC20_MAX_NONVAULT = parseInt(process.env.SRC20_MAX_NONVAULT_SATS || '5000', 10)
-  // B09 (audit): bound the MINER FEE and require a real transfer payload before signing. The old guard
-  // only capped non-vault OUTPUT values, so a PSBT whose inputs vastly exceed its outputs (change back
-  // to the vault) passed — a 1,000,000-sat input with 546-sat vault change and no SRC-20 payload implied
-  // a ~999,454-sat fee that would drain vault BTC to miners. We now establish the declared input value,
-  // compute fee = inputs − outputs, and enforce an ABSOLUTE fee cap AND a fee-RATE cap; and we require a
-  // transfer payload (a data/OP_RETURN output plus a non-vault recipient) so an empty sweep is rejected.
-  const SRC20_MAX_FEE = parseInt(process.env.SRC20_MAX_FEE_SATS || '50000', 10)
-  const SRC20_MAX_FEE_RATE = parseInt(process.env.SRC20_MAX_FEE_RATE || '200', 10) // sat/vB
-  let _psbt
-  try { _psbt = bitcoinjs.Psbt.fromHex(psbtHex) } catch (_) { throw new Error('refusing to sign SRC-20 redeem: could not decode the composed PSBT to verify its outputs (fail-closed)') }
-  // declared input value (fail-closed if any input lacks a witness/non-witness UTXO value we can read)
-  let inSum = 0
-  _psbt.data.inputs.forEach((inp, i) => {
-    let v = null
-    if (inp.witnessUtxo) v = Number(inp.witnessUtxo.value)
-    else if (inp.nonWitnessUtxo) { try { const prev = bitcoinjs.Transaction.fromBuffer(inp.nonWitnessUtxo); v = Number(prev.outs[_psbt.txInputs[i].index].value) } catch (_) { v = null } }
-    if (v == null || !Number.isFinite(v)) throw new Error('refusing to sign SRC-20 redeem: input #' + i + ' has no verifiable value (fail-closed) — cannot establish the miner fee')
-    inSum += v
-  })
-  const SRC20_REQUIRE_RECIPIENT = String(process.env.SRC20_REQUIRE_RECIPIENT || '1') === '1'
-  let nonVaultTotal = 0, outSum = 0, hasData = false, hasRecipient = false, paidRequested = false
-  for (const o of _psbt.txOutputs) {
-    const val = Number(o.value || 0)
-    outSum += val
-    // C05 (audit): ONLY a true OP_RETURN (script opcode 0x6a) is unspendable "data" and exempt from the
-    // value caps — and it must carry NO value. Everything else moves (or could move) real BTC and MUST be
-    // bounded, INCLUDING scripts that fail standard-address conversion (e.g. a bare pay-to-pubkey, which
-    // is spendable). The previous guard treated any unconvertible script as 0-value data → a spendable
-    // bare-pubkey output slipped 999k sats past the caps. Fail closed on unknown spendable scripts.
-    const script = o.script
-    const isOpReturn = script && script.length > 0 && script[0] === 0x6a
-    if (isOpReturn) {
-      if (val !== 0) throw new Error(`refusing to sign SRC-20 redeem: an OP_RETURN output carries ${val} sats (must be zero)`)
-      hasData = true; continue
-    }
-    let addr = null
-    try { addr = bitcoinjs.address.fromOutputScript(script, bitcoinjs.networks.bitcoin) } catch (_) { addr = null }
-    if (addr === from) continue // change back to the vault — unbounded is fine
-    // a known recipient OR an unknown/non-standard spendable script: both count toward the caps
-    hasRecipient = true
-    if (addr && toAddress && addr === toAddress) paidRequested = true
-    nonVaultTotal += val
-    if (val > SRC20_DUST) throw new Error(`refusing to sign SRC-20 redeem: output of ${val} sats to ${addr || 'a non-standard/unspendable-looking but spendable script'} exceeds the dust cap (${SRC20_DUST}) — the tx must not move real BTC value off the vault (recipient included)`)
-  }
-  if (nonVaultTotal > SRC20_MAX_NONVAULT) throw new Error(`refusing to sign SRC-20 redeem: ${nonVaultTotal} sats total go to non-vault outputs, over the cap (${SRC20_MAX_NONVAULT}) — possible vault BTC leak`)
-  // miner fee = declared inputs − outputs; enforce absolute + rate caps
-  const fee = inSum - outSum
-  if (fee < 0) throw new Error(`refusing to sign SRC-20 redeem: outputs (${outSum}) exceed declared inputs (${inSum}) — malformed`)
-  const vbytes = Math.max(1, Math.ceil(10.5 + _psbt.data.inputs.length * 68 + _psbt.txOutputs.length * 31)) // p2wpkh estimate
-  const impliedFeeRate = fee / vbytes
-  if (fee > SRC20_MAX_FEE) throw new Error(`refusing to sign SRC-20 redeem: implied miner fee ${fee} sats exceeds the cap (${SRC20_MAX_FEE}) — would drain vault BTC`)
-  if (impliedFeeRate > SRC20_MAX_FEE_RATE) throw new Error(`refusing to sign SRC-20 redeem: implied fee rate ${impliedFeeRate.toFixed(1)} sat/vB exceeds the cap (${SRC20_MAX_FEE_RATE})`)
-  // require an actual transfer payload — an empty sweep (only vault change, no data/recipient) is refused
-  if (!hasData || !hasRecipient) throw new Error('refusing to sign SRC-20 redeem: the PSBT must contain both a data output and a recipient output — dust alone does not establish a transfer payload')
-  // C05 RESIDUAL (audit 7-Oct): bind the recipient. The composed tx MUST actually pay the requested
-  // destination — otherwise a dust output to a DIFFERENT address slipped through the mere presence check.
-  // This is NOT full SRC-20 semantic validation (tick/amount/dest are inside the protocol payload and are
-  // still decoded only by the indexer — an acknowledged open release gate); it only asserts the requested
-  // recipient address appears as an output. Env-overridable for composers that omit a dust-to-recipient.
-  if (SRC20_REQUIRE_RECIPIENT && toAddress && !paidRequested)
-    throw new Error('refusing to sign SRC-20 redeem: the composed transaction does not pay the requested recipient ' + toAddress + ' (no matching output) — recipient binding failed')
-  const toSignInputs = (built.inputsToSign || []).map(i => ({ index: i.index, address: from, sighashType: i.sighashType }))
+  const validated = await src20.validateTransfer({ psbtHex, from, toAddress, tick, amount: String(amount), env: process.env }, fetch)
+  const toSignInputs = validated.toSignInputs
   const signer = await btcSigner()
   const signedResp = await signer.signPsbt(psbtHex, { transactionType: 'p2wpkh', toSignInputs })
   const txHex = signedResp && signedResp.signedTxHex
   if (!txHex) throw new Error('vault signer returned no signedTxHex')
+  const expectedTxid = src20.validateSigned(validated, txHex)
   const b = await fetch('https://mempool.space/api/tx', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: txHex })
   const txid = (await b.text()).trim()
-  if (!/^[0-9a-f]{64}$/.test(txid)) throw new Error('broadcast failed: ' + txid.slice(0, 160))
+  if (!b.ok || txid !== expectedTxid) throw new Error('broadcast failed: ' + txid.slice(0, 160))
   return { released: true, tick, amount: String(amount), to: toAddress, txid, explorer: `https://mempool.space/tx/${txid}` }
 }
 
