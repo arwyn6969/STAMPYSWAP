@@ -192,7 +192,7 @@ test('B09: a PSBT with an excessive implied fee and no transfer payload is refus
   assert.equal(signed.n, 0) // never signed
 })
 
-test('B09: a well-formed SRC-20 transfer (payload + dust recipient + small fee) still signs', async () => {
+test('B09: synthetic data + dust + small fee passes structural checks (not semantic proof)', async () => {
   const bitcoin = dep('bitcoinjs-lib'); const from = btcSource
   const recipient = bitcoin.payments.p2wpkh({ hash: Buffer.alloc(20, 9) }).address
   const p = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin })
@@ -437,8 +437,8 @@ test('C05-residual: a composed tx that pays a different recipient than requested
   assert.equal(signed.n, 0) // recipient binding failed → never signed
 })
 
-// and the matching positive: when the composed tx DOES pay the requested recipient, it still signs.
-test('C05-residual: a composed tx that pays the requested recipient still signs', async () => {
+// Recipient dust alone does not demonstrate any SRC-20 transfer payload.
+test('C05-residual: requested-recipient dust without a data payload is refused', async () => {
   const bitcoin = dep('bitcoinjs-lib'); const from = btcSource
   const requested = bitcoin.payments.p2wpkh({ hash: Buffer.alloc(20, 8) }).address
   const p = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin })
@@ -447,8 +447,8 @@ test('C05-residual: a composed tx that pays the requested recipient still signs'
   p.addOutput({ address: from, value: 9000 })
   const signed = { n: 0 }
   const c = loadCustody(signed, p.toHex(), [{ index: 0, sighashType: 1 }])
-  const r = await c.redeem({ tick: 'COIN', amount: '10', toAddress: requested })
-  assert.equal(r.released, true); assert.equal(signed.n, 1)
+  await assert.rejects(c.redeem({ tick: 'COIN', amount: '10', toAddress: requested }), /both a data output and a recipient/);
+  assert.equal(signed.n, 0)
 })
 
 // H4 (audit 7-Oct): a failed op-completion write must NOT be reported as a clean success, and must not

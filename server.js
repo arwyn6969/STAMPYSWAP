@@ -148,7 +148,15 @@ async function dbQuery(sql, params = []) {
   const r = await fetch(u, { headers: { Authorization: `Bearer ${TOKEN}` } })
   if (!r.ok) throw new Error(`db query ${r.status}`)
   const j = await r.json()
-  return j.rows || j.result || j.data || []
+  if (!j || typeof j !== 'object' || Array.isArray(j) || j.error || j.success === false)
+    throw new Error('db query returned an error or malformed envelope')
+  for (const key of ['rows', 'result', 'data']) {
+    if (!Object.prototype.hasOwnProperty.call(j, key)) continue
+    if (!Array.isArray(j[key]) || j[key].some(row => !row || typeof row !== 'object' || Array.isArray(row)))
+      throw new Error('db query returned malformed rows')
+    return j[key]
+  }
+  throw new Error('db query response is missing rows')
 }
 async function dbExec(sql, params = []) {
   const r = await fetch(`${DASH}/api/db/${GROUP}/database/execute`, {
@@ -157,7 +165,10 @@ async function dbExec(sql, params = []) {
     body: JSON.stringify({ sql, params })
   })
   if (!r.ok) throw new Error(`db exec ${r.status}`)
-  return r.json()
+  const j = await r.json()
+  if (!j || typeof j !== 'object' || Array.isArray(j) || j.error || j.success === false)
+    throw new Error('db execute returned an error or malformed envelope')
+  return j
 }
 
 const now = () => Math.floor(Date.now() / 1000)
@@ -612,8 +623,10 @@ custody.depositAddress().then(a => { if (a) { VAULT_ADDR = a; console.log('custo
 function toBaseUnits(s, decimals = 18) {
   let str = String(s == null ? '0' : s).trim()
   if (!str) return 0n
+  if (!/^-?\d+(?:\.\d+)?$/.test(str)) throw new Error('invalid decimal amount')
   const neg = str.startsWith('-'); if (neg) str = str.slice(1)
   let [i, f = ''] = str.split('.')
+  if (/[1-9]/.test(f.slice(decimals))) throw new Error('amount exceeds base-unit precision')
   i = i.replace(/[^0-9]/g, '') || '0'
   f = (f.replace(/[^0-9]/g, '') + '0'.repeat(decimals)).slice(0, decimals)
   const v = BigInt(i + f)
@@ -827,13 +840,19 @@ function mintAddressFor(canonicalId, chain) {
 }
 async function collateralBase(canonicalId) {
   const rows = await dbQuery(`SELECT amount FROM collateral_ledger WHERE canonical_id=? AND direction='deposit' AND status='confirmed'`, [canonicalId])
-  return rows.reduce((a, r) => a + toBaseUnits(r.amount), 0n)
+  return sumLiabilityAmounts(rows)
+}
+function sumLiabilityAmounts(rows) {
+  return rows.reduce((sum, row) => {
+    if (row.amount == null || !/^\d+(?:\.\d+)?$/.test(String(row.amount))) throw new Error('invalid ledger amount row')
+    return sum + toBaseUnits(row.amount)
+  }, 0n)
 }
 async function redeemedBase(canonicalId) {
   // count released + in-flight (pending) redeems; EXCLUDE 'failed' (a reserved-then-aborted release
   // must not permanently reduce collateral). NULL status = legacy released rows → counted.
   const rows = await dbQuery(`SELECT amount FROM collateral_ledger WHERE canonical_id=? AND direction='redeem' AND (status IS NULL OR status != 'failed')`, [canonicalId])
-  return rows.reduce((a, r) => a + toBaseUnits(r.amount), 0n)
+  return sumLiabilityAmounts(rows)
 }
 // Is a broadcast BTC tx confirmed? true=confirmed, false=in mempool (unconfirmed), null=unknown/dropped.
 async function btcTxConfirmed(txid) {
@@ -966,7 +985,7 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
   const mintBase = toBaseUnits(mintAmt)
   if (mintBase <= 0n) return { status: 400, body: { error: `amount below ${chain} precision (${destDec} dp)` } }
 
-  const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
+  let rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
   const maxSupply = toBaseUnits(asset.max_supply || '0')
 
   // ---- R05 durable op guard (F07) — A03 (audit): the op MUST be consulted/RESERVED BEFORE the solvency
@@ -1027,6 +1046,29 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
   if (maxSupply > 0n && totalCirculating + reserved + mintBase > maxSupply) {
     if (opKey) await opFail(opKey)
     return { status: 409, body: { error: 'exceeds source max supply', max_supply: asset.max_supply } }
+  }
+
+  // Re-read identity AFTER the reservation and solvency reads: a peer may have registered it
+  // while this worker waited. New identities have a separate durable, unique deployment claim.
+  // The claim is never automatically freed: an uncertain deployment must be reconciled, never
+  // repeated as a different token. Existing identities do not need a new deployment claim.
+  let deploymentKey = null
+  try {
+    const identities = await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain])
+    if (identities.length > 1) throw new Error('multiple registered representation identities')
+    rep = identities[0]
+    if (rep && !rep.dest_address) throw new Error('registered representation has no token address')
+    if (!rep) {
+      deploymentKey = `representation-deploy:${asset.id}:${chain}`
+      const claim = await opReserve(deploymentKey, { action: 'representation-deploy', canonical_id: asset.id, amount: '0', chain })
+      if (!claim.fresh) {
+        if (opKey) await opFail(opKey)
+        return { status: 409, body: { error: 'representation deployment already claimed — reconcile its token identity before retrying', reconcile: true, deployment_op: deploymentKey } }
+      }
+    }
+  } catch (e) {
+    if (opKey) await opFail(opKey)
+    return { status: 503, body: { error: 'could not establish representation identity: ' + String(e.message || e), retryable: true } }
   }
 
   // ---- execute on-chain FIRST, then record ----
@@ -1093,17 +1135,25 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
       return { status: 500, body: { error: 'representation row could not be created after an on-chain mint — reconciliation required (backing stays reserved, mint NOT marked complete)', reconcile: true, mint_address: mintAddr, signature } }
     }
   }
+  if (!repRow.dest_address || (chain === 'solana' ? repRow.dest_address !== mintAddr : repRow.dest_address.toLowerCase() !== mintAddr.toLowerCase())) {
+    if (opKey) await opReconcile(opKey)
+    return { status: 500, body: { error: 'minted token differs from the registered identity — reconciliation required', reconcile: true, mint_address: mintAddr, signature } }
+  }
   // once-only increment keyed to this logical mint (opKey if present, else the on-chain tx signature)
   const mintEventKey = `mint:${opKey || ('tx:' + signature)}`
   const inc = await applyCirculatingDelta(repRow.id, mintBase, mintEventKey).catch(e => ({ ok: false, reason: String(e.message || e) }))
   if (!inc || !inc.ok) { if (opKey) await opReconcile(opKey); return { status: 500, body: { error: 'mint accounting write failed — on-chain mint done, op kept for reconciliation: ' + (inc && inc.reason), reconcile: true } } }
-  await dbExec('UPDATE representations SET status=?, dest_address=?, updated_at=? WHERE id=?', ['CANONICAL', mintAddr, now(), repRow.id]).catch(() => {})
+  await dbExec('UPDATE representations SET status=?, updated_at=? WHERE id=?', ['CANONICAL', now(), repRow.id]).catch(() => {})
   await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, dest_tx, status, created_at)
     VALUES (?, 'mint', ?, ?, ?, ?, ?)`, [asset.id, mintAmt, chain, signature, real ? 'minted' : 'simulated', now()])
 
   // op COMPLETED only AFTER the accounting is written (audit): so a retry that finds 'completed'
   // truly has consistent accounting. A crash/throw before here leaves the op 'reserved' → a retry
   // reconciles (never re-mints) and surfaces the incomplete accounting rather than hiding it.
+  if (deploymentKey && !(await opComplete(deploymentKey, signature, { mint_address: mintAddr, rep_id: repRow.id })).ok) {
+    if (opKey) await opReconcile(opKey)
+    return { status: 500, body: { error: 'representation deployment completion could not be persisted', reconcile: true, op_completed: false, mint_address: mintAddr, signature } }
+  }
   const oc = opKey ? await opComplete(opKey, signature, { minted: true, real, chain, tick: asset.exact_ticker, amount_minted: mintAmt, mint_address: mintAddr, receive_address, signature, explorer }) : { ok: true }
 
   // audit (7-Oct): if the completion record did not persist, say so truthfully instead of a clean success.
@@ -1130,6 +1180,7 @@ app.post('/api/mint', async (req, res) => {
     // that lands on-chain but whose accounting write fails can be duplicated on retry (two mint effects,
     // one accounted). Reject omission rather than silently passing null (which bypassed the op guard).
     if (!op_key || typeof op_key !== 'string') return res.status(400).json({ error: 'op_key required — supply a stable idempotency key so a retried mint cannot double-issue' })
+    if (op_key.startsWith('representation-deploy:')) return res.status(400).json({ error: 'reserved internal operation key prefix' })
     const r = await performMint(tick, amount, receive_address, chain, null, op_key)
     res.status(r.status).json(r.body)
   } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
@@ -1198,26 +1249,31 @@ function redeemBindingMsg({ burn_txid, to, amount }) { return `StampySwap redeem
 // re-executes a completed/uncertain effect. Uses the DB PRIMARY KEY for cross-process atomicity. ----
 async function opReserve(op_key, meta) {
   try {
-    await dbExec(`INSERT INTO operations (op_key, action, canonical_id, amount, chain, recipient, state, created_at, updated_at) VALUES (?,?,?,?,?,?,'reserved',?,?)`,
+    const result = await dbExec(`INSERT INTO operations (op_key, action, canonical_id, amount, chain, recipient, state, created_at, updated_at) VALUES (?,?,?,?,?,?,'reserved',?,?)`,
       [op_key, meta.action, meta.canonical_id, String(meta.amount), meta.chain, meta.recipient || null, now(), now()])
+    if (result && result.changes === 0) throw new Error('operation reservation was not inserted')
+    const row = (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0]
+    if (!row || row.state !== 'reserved' || row.action !== meta.action || String(row.canonical_id) !== String(meta.canonical_id) || row.chain !== meta.chain || String(row.amount) !== String(meta.amount) || row.recipient !== (meta.recipient || null))
+      throw new Error('operation reservation could not be verified')
     return { fresh: true }
   } catch (_) { return { fresh: false, row: (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0] || null } }
 }
 async function opComplete(op_key, tx_id, result) {
-  // audit (7-Oct): do NOT silently swallow a persistence failure AND still report a clean success. The
-  // on-chain effect + accounting event are already durable (events are authoritative), so a failed
-  // completion write is non-insolvent — but the op would stay 'reserved' and the response must say so.
-  // Retry the write (idempotent; read back to resolve an ambiguous response), and RETURN whether it
-  // persisted so the caller can be truthful. A completed op never re-mints on retry regardless.
+  // An HTTP acknowledgement is not durability evidence. Verify the entire completion record
+  // after both acknowledged and ambiguous writes; retries never repeat the chain effect.
+  const expectedTx = tx_id || null, expectedResult = JSON.stringify(result || {})
+  let reason = 'completion record absent or different after write'
   for (let i = 0; i < 4; i++) {
-    try { await dbExec(`UPDATE operations SET state='completed', tx_id=?, result_json=?, updated_at=? WHERE op_key=?`, [tx_id || null, JSON.stringify(result || {}), now(), op_key]); return { ok: true } }
-    catch (e) {
-      const row = (await dbQuery('SELECT state FROM operations WHERE op_key=?', [op_key]).catch(() => []))[0]
-      if (row && row.state === 'completed') return { ok: true } // committed despite the lost response
-      if (i === 3) { console.error(`opComplete PERSIST FAILED for ${op_key} (tx ${tx_id}) — on-chain effect + accounting done, op stays 'reserved', RECONCILE: ${e.message || e}`); return { ok: false, reason: String(e.message || e) } }
-    }
+    try {
+      await dbExec(`UPDATE operations SET state='completed', tx_id=?, result_json=?, updated_at=? WHERE op_key=?`, [expectedTx, expectedResult, now(), op_key])
+    } catch (e) { reason = String(e.message || e) }
+    try {
+      const row = (await dbQuery('SELECT state, tx_id, result_json FROM operations WHERE op_key=?', [op_key]))[0]
+      if (row && row.state === 'completed' && row.tx_id === expectedTx && row.result_json === expectedResult) return { ok: true }
+    } catch (e) { reason = String(e.message || e) }
   }
-  return { ok: false, reason: 'unknown' }
+  console.error(`opComplete PERSIST FAILED for ${op_key} (tx ${tx_id}) — RECONCILE: ${reason}`)
+  return { ok: false, reason }
 }
 async function opFail(op_key) { await dbExec('DELETE FROM operations WHERE op_key=?', [op_key]).catch(() => {}) } // proven pre-send failure → retryable
 async function opReconcile(op_key) { await dbExec(`UPDATE operations SET state='reconcile', updated_at=? WHERE op_key=?`, [now(), op_key]).catch(() => {}) }
@@ -1238,6 +1294,8 @@ async function reservedBase(canonicalId, excludeOpKey) {
   const rows = await dbQuery(`SELECT op_key, amount FROM operations WHERE canonical_id=? AND action='mint' AND state IN ('reserved','reconcile')`, [canonicalId])
   let sum = 0n
   for (const r of rows) {
+    if (typeof r.op_key !== 'string' || !r.op_key || r.amount == null || toBaseUnits(r.amount) <= 0n)
+      throw new Error('invalid reservation liability row')
     if (r.op_key === excludeOpKey) continue
     const ev = await dbQuery('SELECT 1 FROM accounting_events WHERE event_key=?', [`mint:${r.op_key}`])
     if (ev.length) continue // already materialized into circulating (events) — don't double-count
@@ -1256,8 +1314,18 @@ async function repCirculatingBase(repId) {
   return s < 0n ? 0n : s
 }
 async function assetCirculatingBase(canonicalId) {
-  const reps = await dbQuery('SELECT id FROM representations WHERE canonical_id=?', [canonicalId])
-  let s = 0n; for (const rep of reps) s += await repCirculatingBase(rep.id)
+  // A single query snapshots ALL representations and their events together. Separate per-rep
+  // reads can straddle a move, seeing its debit but missing its destination credit.
+  const rows = await dbQuery(`SELECT r.id AS rep_id, e.event_key, e.delta_base FROM representations r LEFT JOIN accounting_events e ON e.rep_id=r.id WHERE r.canonical_id=?`, [canonicalId])
+  const totals = new Map()
+  for (const row of rows) {
+    if (!Number.isSafeInteger(row.rep_id) || row.rep_id <= 0 || !Object.prototype.hasOwnProperty.call(row, 'event_key') || !Object.prototype.hasOwnProperty.call(row, 'delta_base'))
+      throw new Error('invalid accounting snapshot row')
+    if (row.event_key != null && (typeof row.event_key !== 'string' || row.delta_base == null || !/^-?\d+$/.test(String(row.delta_base))))
+      throw new Error('invalid accounting event')
+    totals.set(row.rep_id, (totals.get(row.rep_id) || 0n) + (row.event_key == null ? 0n : BigInt(row.delta_base)))
+  }
+  let s = 0n; for (const total of totals.values()) s += total < 0n ? 0n : total
   return s
 }
 // Sync the display cache column to the authoritative event sum (idempotent; safe to call anytime).
@@ -1276,14 +1344,18 @@ async function rematerialize(repId) {
 // is convergent, so a lost response is resolved by READING state (does the target value hold?), never by
 // reapplying arithmetic. A seeded `baseline:<repId>` event (migrateSchema) preserves pre-existing supply.
 async function recordAccountingEvent(repId, eventKey, deltaBase) {
-  try { await dbExec('INSERT INTO accounting_events (event_key, rep_id, delta_base, created_at) VALUES (?,?,?,?)', [eventKey, repId, deltaBase.toString(), now()]); return { fresh: true } }
+  let fresh = true, writeError = null
+  try { await dbExec('INSERT INTO accounting_events (event_key, rep_id, delta_base, created_at) VALUES (?,?,?,?)', [eventKey, repId, deltaBase.toString(), now()]) }
   catch (e) {
-    // ambiguous: a UNIQUE(event_key) conflict means it is ALREADY recorded (idempotent); any other error
-    // might have failed to persist. Resolve by reading the event's identity, not by assuming.
-    const ev = (await dbQuery('SELECT delta_base FROM accounting_events WHERE event_key=?', [eventKey]))[0]
-    if (!ev) throw new Error('accounting event could not be recorded: ' + (e.message || e))
-    return { fresh: false }
+    fresh = false; writeError = e
   }
+  // Verify durability after BOTH an acknowledged write and an ambiguous write. A duplicate key
+  // is idempotent only when it identifies the SAME representation and SAME signed delta.
+  const ev = (await dbQuery('SELECT rep_id, delta_base FROM accounting_events WHERE event_key=?', [eventKey]))[0]
+  if (!ev) throw new Error('accounting event could not be recorded: ' + (writeError ? writeError.message || writeError : 'event absent after write'))
+  if (String(ev.rep_id) !== String(repId) || String(ev.delta_base) !== deltaBase.toString())
+    throw new Error('accounting event identity or amount conflicts with the requested effect')
+  return { fresh }
 }
 // Write an ABSOLUTE circulating value. Because the value is a full recompute (not current+delta), the
 // write is idempotent — so a transient failure can be safely RETRIED with the same target (never
@@ -1678,7 +1750,7 @@ app.get('/api/wrap/route', async (req, res) => {
     let coll = 0n, circ = 0n
     if (asset.id != null) {
       coll = (await collateralBase(asset.id)) - (await redeemedBase(asset.id)); if (coll < 0n) coll = 0n
-      for (const r of repRows) circ += toBaseUnits(r.circulating_supply || '0')
+      circ = await assetCirculatingBase(asset.id)
     }
     const reserves = { collateral: fromBaseUnits(coll), circulating: fromBaseUnits(circ), solvent: circ <= coll, as_of: new Date().toISOString() }
 
@@ -1944,7 +2016,7 @@ app.post('/api/custody/redeem', async (req, res) => {
       let inflightBase, circNow
       try {
         const inflight = await dbQuery(`SELECT amount FROM collateral_ledger WHERE canonical_id=? AND dest_chain=? AND direction='redeem' AND status IN ('pending','reconcile')`, [asset.id, chain])
-        inflightBase = inflight.reduce((a, r) => a + toBaseUnits(r.amount), 0n)
+        inflightBase = sumLiabilityAmounts(inflight)
         circNow = rep ? await repCirculatingBase(rep.id) : 0n
       } catch (e) {
         await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
@@ -2662,7 +2734,23 @@ async function tableEnforcesUnique(table, col) {
     return false
   } catch (_) { return false }
 }
+async function representationIdentityIsUnique() {
+  const rows = await dbQuery(`SELECT sql FROM sqlite_master WHERE (type='table' AND name='representations') OR (type='index' AND tbl_name='representations' AND sql IS NOT NULL)`)
+  const matches = cols => cols.length === 2 && cols.includes('canonical_id') && cols.includes('dest_chain')
+  for (const row of rows) {
+    const ddl = row.sql || ''
+    if (/\bCREATE\s+TABLE\b/i.test(ddl)) {
+      for (const m of ddl.matchAll(/\b(?:UNIQUE|PRIMARY KEY)\s*\(([^)]*)\)/ig))
+        if (matches(_colsInParen(m[1]))) return true
+    } else if (/\bUNIQUE\b/i.test(ddl) && !/\bWHERE\b/i.test(ddl)) {
+      const m = ddl.match(/\bON\b[^(]*\(([^)]*)\)/i)
+      if (m && matches(_colsInParen(m[1]))) return true
+    }
+  }
+  return false
+}
 async function migrateSchema() {
+  SCHEMA_OK = false
   // B02/B05 (audit): the once-only accounting-events table. The app normally can't DDL (Dashboard API
   // blocks CREATE), so in production it is applied out-of-band (agent MCP); this IF-NOT-EXISTS attempt
   // is a harmless no-op there and creates it for self-contained test fixtures. Verified + gated below.
@@ -2697,6 +2785,12 @@ async function migrateSchema() {
       console.error(`SCHEMA CONSTRAINT CHECK FAILED — ${tbl}.${c} must be UNIQUE on that column ALONE (no composite/partial index). Writes stay contained (SCHEMA_OK false) until the constraint is in place.`)
       return
     }
+  }
+  try {
+    if (!(await representationIdentityIsUnique())) throw new Error('UNIQUE(canonical_id,dest_chain) is missing')
+  } catch (e) {
+    console.error('REPRESENTATION IDENTITY CHECK FAILED — writes stay contained: ' + (e.message || e))
+    return
   }
   try {
     // B02/B05: seed a baseline accounting event for LEGACY representations whose circulating_supply was
@@ -2741,16 +2835,20 @@ async function migrateSchema() {
 // restart, even though the tables are intact and the DB came back seconds later. migrateSchema is
 // entirely idempotent (CREATE IF NOT EXISTS + read-only gate checks + INSERT OR IGNORE backfill/baseline),
 // so re-running it is safe. Retry on a background interval until it succeeds, then stop. setInterval is a
-// no-op in the test fixture, so the prevention tests still observe only the synchronous result.
+// no-op in handler fixtures; the retry tests explicitly exercise its callback and slow probes.
 async function ensureSchema() {
   await migrateSchema().catch(e => console.error('migrateSchema threw: ' + (e && (e.message || e))))
   if (SCHEMA_OK) return
-  let tries = 0
+  let tries = 0, probing = false
   const h = setInterval(async () => {
     if (SCHEMA_OK) { clearInterval(h); return }
-    if (++tries > 120) { clearInterval(h); console.error('schema still not verified after many retries — writes remain contained; apply the migration (see migrations/)'); return }
-    await migrateSchema().catch(() => {})
-    if (SCHEMA_OK) { clearInterval(h); console.log('schema verified on retry #' + tries + ' — SCHEMA_OK=true') }
+    if (probing) return // a slow Dashboard API must not start overlapping baseline/backfill probes
+    probing = true
+    tries++
+    try {
+      await migrateSchema().catch(() => {})
+      if (SCHEMA_OK) { clearInterval(h); console.log('schema verified on retry #' + tries + ' — SCHEMA_OK=true') }
+    } finally { probing = false }
   }, 15000)
   if (h && typeof h.unref === 'function') h.unref()
 }

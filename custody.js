@@ -247,7 +247,7 @@ async function redeem({ tick, amount, toAddress, feeRate = 2, protocol = 'src-20
   if (fee > SRC20_MAX_FEE) throw new Error(`refusing to sign SRC-20 redeem: implied miner fee ${fee} sats exceeds the cap (${SRC20_MAX_FEE}) — would drain vault BTC`)
   if (impliedFeeRate > SRC20_MAX_FEE_RATE) throw new Error(`refusing to sign SRC-20 redeem: implied fee rate ${impliedFeeRate.toFixed(1)} sat/vB exceeds the cap (${SRC20_MAX_FEE_RATE})`)
   // require an actual transfer payload — an empty sweep (only vault change, no data/recipient) is refused
-  if (!hasData && !hasRecipient) throw new Error('refusing to sign SRC-20 redeem: the PSBT carries no transfer payload or recipient output (only vault change) — nothing to transfer')
+  if (!hasData || !hasRecipient) throw new Error('refusing to sign SRC-20 redeem: the PSBT must contain both a data output and a recipient output — dust alone does not establish a transfer payload')
   // C05 RESIDUAL (audit 7-Oct): bind the recipient. The composed tx MUST actually pay the requested
   // destination — otherwise a dust output to a DIFFERENT address slipped through the mere presence check.
   // This is NOT full SRC-20 semantic validation (tick/amount/dest are inside the protocol payload and are

@@ -23,7 +23,6 @@
   },
   "devDependencies": {
     "@openzeppelin/contracts": "^4.9.6",
-    "eslint": "^8.57.0",
-    "solc": "^0.8.26"
+    "eslint": "^8.57.0"
   }
 }
