@@ -27,6 +27,31 @@ SELECT 1 AS probe WHERE 0;
 
 Also capture the envelope for an intentionally invalid, read-only SELECT. Do not execute write probes on production. The implementation uses `accounting_events`, `collateral_ledger.btc_txid` for deposit uniqueness, and durable deployment claims inside `operations` with `representation-deploy:` keys. There are no separate `ledger_events`, `consumed_deposits` or `representation_deployments` tables in this candidate.
 
+## Backup-manifest preparation
+
+The host confirms its tools read `package.json.emblem_build.tables`, an array of `{name,schema}` objects. Each schema must be one `CREATE TABLE IF NOT EXISTS` definition; the backup tool separately dumps explicit indexes. Its description does not establish transaction consistency.
+
+Export actual table and explicit-index definitions with one read-only query:
+
+```sql
+SELECT type,name,tbl_name,sql FROM sqlite_master
+WHERE sql IS NOT NULL AND type IN ('table','index')
+AND tbl_name IN ('canonical_assets','representations','collateral_ledger','operations',
+ 'consumed_burns','asset_locks','accounting_events','bridge_ops','stamp_bridges',
+ 'pools','supported_chains','schema_migrations')
+ORDER BY type DESC,name;
+```
+
+In a private scratch checkout, save the exact response as `schema-export.json` and prepare a new package copy:
+
+```sh
+python3 scripts/prepare-backup-manifest.py package.json schema-export.json package.backup-manifest.json
+```
+
+The preparer requires all eleven application accounting/configuration tables, includes the migration log if present, refuses wallet-session/authentication tables, rejects truncated/error responses, parses actual DDL in an empty in-memory database and verifies all seven financial uniqueness gates. It preserves the supplied package and refuses output overwrite. It never registers a manifest or mutates production. No schema is guessed from the limited logical export.
+
+For any metadata-only registration on the existing artifact, use a copy of the existing live package as the source and review that only `emblem_build` changes. Do not replace the live package with a newer dependency/script configuration just to enable a backup. Send the generated package diff and schema evidence for review before registration. Private backup output is gitignored. Confirm backup consistency separately and rehearse its actual restore semantics in isolation.
+
 ## 2. Copy migration, restore and API compatibility
 
 Use an isolated copy of the immutable snapshot:

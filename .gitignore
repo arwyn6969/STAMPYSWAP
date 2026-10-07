@@ -30,3 +30,8 @@ app.log
 *.seed
 StampyRepMainnet.flat.sol
 audit-harness/
+
+# Private backup evidence and generated Python caches
+.emblem_build/
+.snapshot-*/
+__pycache__/
