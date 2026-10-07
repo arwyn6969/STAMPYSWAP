@@ -1,8 +1,7 @@
-// Independent 30 September 2026 audit fixture, adapted from the checked-in handler fixture.
-// Loads the whole hash-pinned 9689964 server. Real Express, EIP-191/BIP-322 and local SQLite;
-// chain/indexer/signer effects are mocked. Fixed test keys only; no vault keys or live transactions.
-// Adds shared-worker state and faults before AND after SQLite commits to model ambiguous responses.
-// Run release-readiness.test.cjs; OPEN checks pass when the documented defect is reproduced.
+// Whole-application offline repair fixture, derived from the 1 October custody audit.
+// Loads the current candidate (or STAMPY_AUDIT_SOURCE override). Real SQLite, HTTP and
+// signatures; all external chain effects are mocked and only fixed test keys are used.
+// Shared-worker state and faults before/after commits model ambiguous DB responses.
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
@@ -14,9 +13,6 @@ const { DatabaseSync } = require('node:sqlite')
 
 const ROOT = process.env.STAMPY_AUDIT_SOURCE || path.join(__dirname, '..')
 const crypto = require('node:crypto')
-// NOTE: source-sha256 pinning intentionally removed — this is a LOCAL verification
-// harness pointed at the working tree so fixes can be driven red→green. The pinned
-// auditor harness stays in audits/2026-09-30-9689964/ unchanged.
 const dep = createRequire(path.join(ROOT, 'package.json'))
 const expressReal = dep('express')
 const { ethers } = dep('ethers')
@@ -53,8 +49,8 @@ async function fixture(t, options = {}) {
     CREATE TABLE bridge_ops(id INTEGER PRIMARY KEY, src20_tick TEXT, stamp_asset TEXT, amount TEXT, burn_txid TEXT UNIQUE, user_address TEXT, release_txid TEXT, status TEXT, created_at INTEGER);
     CREATE TABLE operations(op_key TEXT PRIMARY KEY, action TEXT, canonical_id INTEGER, amount TEXT, chain TEXT, recipient TEXT, state TEXT, created_at INTEGER, updated_at INTEGER, tx_id TEXT, result_json TEXT);
     CREATE TABLE asset_locks(asset_id INTEGER PRIMARY KEY, holder TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
-    CREATE UNIQUE INDEX representation_identity ON representations(canonical_id,dest_chain);
     CREATE TABLE pools(id INTEGER PRIMARY KEY, canonical_a INTEGER, canonical_b INTEGER);
+    CREATE UNIQUE INDEX representation_identity ON representations(canonical_id,dest_chain);
   `)
   db.prepare('INSERT INTO canonical_assets VALUES (1,?,?,?,?,1,?)').run('COIN', protocol, '1000000', decimals, 'deploy')
   db.prepare("INSERT INTO representations(id,canonical_id,dest_chain,dest_address,circulating_supply,status) VALUES(1,1,'base',?,?,'CANONICAL')").run(token, circulating)
@@ -93,7 +89,7 @@ async function fixture(t, options = {}) {
   const dependencies = { express, path, crypto: require('node:crypto'), tweetnacl: dep('tweetnacl'),
     bs58: dep('bs58'), './sol-mint': {}, './evm-mint': evm, './amm': {}, './custody': custody,
     './recovery': require(path.join(ROOT, 'recovery.js')), './labels': require(path.join(ROOT, 'labels.js')),
-    './counterparty': cp, './acme': acme, './prices': {}, './squads': null, './safe': null,
+    './counterparty': cp, './acme': acme, './prices': {btcUsd: async()=>null, indicativeUsd: async()=>null}, './squads': null, './safe': null,
     'bip322-js': bip, fs: { existsSync: () => false }, ethers }
   const query = async (sql, params = []) => { if(options.beforeQuery) await options.beforeQuery(sql,params,state); const rows=db.prepare(sql).all(...params); if(options.afterQuery) await options.afterQuery(sql,params,rows,state); return rows }
   const exec = async (sql, params = []) => {
@@ -105,9 +101,9 @@ async function fixture(t, options = {}) {
   }
   const { context } = load('server.js', n => {
     if (!(n in dependencies)) throw Error('Unexpected import: ' + n); return dependencies[n]
-  }, { fetch: fetchFixture, Date: options.clock ? class extends Date { static now() { return options.clock.now } } : Date, process: { env: { OPERATOR_TOKEN: op['x-operator-token'], STAMPY_MAINTENANCE: maintenance ? '1' : '0', STAMPY_PREVIEW: '0', ASSET_LOCK_TIMEOUT_MS: '400', ASSET_LOCK_LEASE_MS: String(options.leaseMs || 30000) } },
-    setInterval: () => ({ unref() {} }), __query: query, __exec: exec })
-  vm.runInContext('dbQuery = __query; dbExec = __exec', context)
+  }, { fetch: fetchFixture, Date: options.clock ? class extends Date { static now() { return options.clock.now } } : Date, process: { env: { OPERATOR_TOKEN: op['x-operator-token'], STAMPY_MAINTENANCE: maintenance ? '1' : '0', STAMPY_PREVIEW: '0', ASSET_LOCK_TIMEOUT_MS: '400', ASSET_LOCK_LEASE_MS: String(options.leaseMs || 30000), ...(options.env || {}) } },
+    setInterval: options.setInterval || (() => ({ unref() {} })), clearInterval: options.clearInterval || (() => {}), __query: query, __exec: exec })
+  vm.runInContext('globalThis.originalDbQuery = dbQuery; dbQuery = __query; dbExec = __exec', context)
   await new Promise(setImmediate) // let the (intentionally disconnected) startup schema check settle
   await vm.runInContext('migrateSchema()', context)
   const server = http.createServer(app)
@@ -131,7 +127,7 @@ async function fixture(t, options = {}) {
   }
   const circ = () => db.prepare('SELECT circulating_supply c FROM representations WHERE id=1').get().c
   const move = extra => ({ tick: 'COIN', amount: '10', from_chain: 'base', to_chain: 'ethereum', burn_txid: burnId, to_address: owner.address, ...extra })
-  return { db, state, call, redeem, claim, move, circ, context, evm, custody }
+  return { db, state, call, redeem, claim, move, circ, context, evm, custody, sol: dependencies['./sol-mint'] }
 }
 
 

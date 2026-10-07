@@ -1,0 +1,96 @@
+{
+  "rows": [
+    {
+      "type": "table",
+      "name": "accounting_events",
+      "tbl_name": "accounting_events",
+      "sql": "CREATE TABLE accounting_events (event_key TEXT PRIMARY KEY, rep_id INTEGER, delta_base TEXT, created_at INTEGER)"
+    },
+    {
+      "type": "table",
+      "name": "asset_locks",
+      "tbl_name": "asset_locks",
+      "sql": "CREATE TABLE asset_locks (asset_id INTEGER PRIMARY KEY, holder TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "bridge_ops",
+      "tbl_name": "bridge_ops",
+      "sql": "CREATE TABLE bridge_ops (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  src20_tick TEXT NOT NULL,\n  stamp_asset TEXT NOT NULL,\n  amount TEXT NOT NULL,\n  burn_txid TEXT NOT NULL UNIQUE,\n  user_address TEXT NOT NULL,\n  release_txid TEXT,\n  status TEXT NOT NULL DEFAULT 'pending',\n  created_at INTEGER\n)"
+    },
+    {
+      "type": "table",
+      "name": "canonical_assets",
+      "tbl_name": "canonical_assets",
+      "sql": "CREATE TABLE canonical_assets (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  source_chain TEXT NOT NULL DEFAULT 'bitcoin',\n  source_protocol TEXT NOT NULL DEFAULT 'src-20',\n  exact_ticker TEXT NOT NULL,\n  tick_hash TEXT,\n  deploy_tx TEXT,\n  deploy_block INTEGER,\n  max_supply TEXT,\n  mint_limit TEXT,\n  decimals INTEGER DEFAULT 18,\n  minted_supply TEXT,\n  holder_count INTEGER,\n  deployer_address TEXT,\n  verification_status TEXT NOT NULL DEFAULT 'unverified',\n  canonical_status TEXT NOT NULL DEFAULT 'indexed',\n  whitelisted INTEGER NOT NULL DEFAULT 0,\n  metadata_json TEXT,\n  first_seen_at INTEGER,\n  updated_at INTEGER,\n  UNIQUE(source_chain, source_protocol, deploy_tx)\n)"
+    },
+    {
+      "type": "table",
+      "name": "collateral_ledger",
+      "tbl_name": "collateral_ledger",
+      "sql": "CREATE TABLE collateral_ledger (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  canonical_id INTEGER NOT NULL,\n  direction TEXT NOT NULL,\n  amount TEXT NOT NULL,\n  btc_txid TEXT,\n  dest_chain TEXT,\n  dest_tx TEXT,\n  vault_address TEXT,\n  confirmations INTEGER DEFAULT 0,\n  status TEXT NOT NULL DEFAULT 'pending',\n  created_at INTEGER, burn_txid TEXT,\n  FOREIGN KEY (canonical_id) REFERENCES canonical_assets(id),\n  UNIQUE(direction, btc_txid, dest_tx)\n)"
+    },
+    {
+      "type": "table",
+      "name": "consumed_burns",
+      "tbl_name": "consumed_burns",
+      "sql": "CREATE TABLE consumed_burns (burn_txid TEXT PRIMARY KEY, chain TEXT, canonical_id INTEGER, purpose TEXT, owner TEXT, amount TEXT, created_at INTEGER)"
+    },
+    {
+      "type": "table",
+      "name": "operations",
+      "tbl_name": "operations",
+      "sql": "CREATE TABLE operations (op_key TEXT PRIMARY KEY, action TEXT, canonical_id INTEGER, amount TEXT, chain TEXT, recipient TEXT, state TEXT, tx_id TEXT, result_json TEXT, created_at INTEGER, updated_at INTEGER)"
+    },
+    {
+      "type": "table",
+      "name": "pools",
+      "tbl_name": "pools",
+      "sql": "CREATE TABLE pools (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  chain TEXT NOT NULL,\n  pair_address TEXT NOT NULL,\n  canonical_a INTEGER NOT NULL,\n  canonical_b INTEGER NOT NULL,\n  token_a TEXT NOT NULL,\n  token_b TEXT NOT NULL,\n  symbol_a TEXT,\n  symbol_b TEXT,\n  created_at INTEGER, kind_a TEXT DEFAULT 'rep', kind_b TEXT DEFAULT 'rep',\n  UNIQUE(chain, canonical_a, canonical_b)\n)"
+    },
+    {
+      "type": "table",
+      "name": "representations",
+      "tbl_name": "representations",
+      "sql": "CREATE TABLE representations (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  canonical_id INTEGER NOT NULL,\n  dest_chain TEXT NOT NULL,\n  dest_address TEXT,\n  dest_symbol TEXT,\n  dest_name TEXT,\n  authority_model TEXT,\n  status TEXT NOT NULL DEFAULT 'NOT_DEPLOYED',\n  deploy_tx TEXT,\n  deployed_at INTEGER,\n  initiator_address TEXT,\n  circulating_supply TEXT DEFAULT '0',\n  notes TEXT,\n  updated_at INTEGER,\n  FOREIGN KEY (canonical_id) REFERENCES canonical_assets(id),\n  UNIQUE(canonical_id, dest_chain)\n)"
+    },
+    {
+      "type": "table",
+      "name": "stamp_bridges",
+      "tbl_name": "stamp_bridges",
+      "sql": "CREATE TABLE stamp_bridges (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  src20_tick TEXT NOT NULL,\n  stamp_asset TEXT NOT NULL,\n  stamp_protocol TEXT NOT NULL DEFAULT 'counterparty',\n  ratio TEXT NOT NULL DEFAULT '1',\n  burn_address TEXT NOT NULL,\n  enabled INTEGER NOT NULL DEFAULT 0,\n  note TEXT,\n  created_at INTEGER\n)"
+    },
+    {
+      "type": "table",
+      "name": "supported_chains",
+      "tbl_name": "supported_chains",
+      "sql": "CREATE TABLE supported_chains (\n  chain TEXT PRIMARY KEY,\n  display_name TEXT NOT NULL,\n  kind TEXT NOT NULL,\n  release_gate INTEGER NOT NULL DEFAULT 0,\n  live INTEGER NOT NULL DEFAULT 0,\n  sort_order INTEGER DEFAULT 0\n)"
+    },
+    {
+      "type": "index",
+      "name": "idx_accounting_events_rep",
+      "tbl_name": "accounting_events",
+      "sql": "CREATE INDEX idx_accounting_events_rep ON accounting_events(rep_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_ca_ticker",
+      "tbl_name": "canonical_assets",
+      "sql": "CREATE INDEX idx_ca_ticker ON canonical_assets(exact_ticker)"
+    },
+    {
+      "type": "index",
+      "name": "idx_collateral_btc_txid",
+      "tbl_name": "collateral_ledger",
+      "sql": "CREATE UNIQUE INDEX idx_collateral_btc_txid ON collateral_ledger(btc_txid) WHERE btc_txid IS NOT NULL"
+    },
+    {
+      "type": "index",
+      "name": "idx_rep_canonical",
+      "tbl_name": "representations",
+      "sql": "CREATE INDEX idx_rep_canonical ON representations(canonical_id)"
+    }
+  ],
+  "rowCount": 15,
+  "truncated": false
+}

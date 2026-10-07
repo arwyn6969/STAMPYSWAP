@@ -1,43 +1,18 @@
-# StampySwap schema migrations
+# Contained custody/accounting migration preparation
 
-Versioned, idempotent DDL for the custody/accounting schema. The app server **cannot** run DDL (the
-Dashboard DB API blocks `CREATE`/`ALTER`), so migrations are applied **out of band**, then the running
-app **verifies** them at startup and only grants `SCHEMA_OK=true` once every object + uniqueness gate is
-present. Until then all value/accounting writes stay contained (fail-closed), independent of the
-maintenance flag.
+Migration 001 preserves the canonical custody/accounting DDL introduced with `110dc3c`. It assumes the base collateral, representation and canonical-asset tables exist. Migration 002 adds unqualified `UNIQUE(canonical_id,dest_chain)` and the event lookup index. Duplicate identities must be reconciled from evidence; the tool does not choose which token to keep.
 
-## Files
-- `001_custody_accounting.sql` — operations, consumed_burns, asset_locks, accounting_events (+ its
-  `rep_id` index), the `collateral_ledger.btc_txid` partial-unique index, and bridge_ops.
-
-## Apply procedure
-Apply each statement in order via the operator path (agent MCP `db_execute`, or the Dashboard DB API
-with CREATE privileges). All statements are `IF NOT EXISTS`, so re-running is safe.
+Keep maintenance enabled and custody closed. Obtain an internally consistent deployment snapshot and record its checksum. Preserve its bytes unchanged. Prepare a separate local copy:
 
 ```sh
-# example via the agent MCP path (one statement per db_execute call)
-# then confirm the running app re-verifies on its next schema check:
-curl -s https://<host>/pub/kevmart/stampyswap/api/version   # expect "schema_ok": true
+python3 scripts/prepare-migration.py snapshot.db migrated-copy.db
+python3 -m unittest discover -s test -p '*_test.py' -v
 ```
 
-The running app re-checks the schema on a background interval (`ensureSchema`), so after the DDL is
-applied `schema_ok` flips to true within ~15s without a restart.
+The preparer opens the source read-only, refuses an existing destination, applies each migration with a checksum in a single transaction, validates the six existing uniqueness gates plus representation identity, and checks SQLite integrity and foreign keys. It preserves accounting events and removes a failed output copy. It does not bootstrap arbitrary historical schemas or adjust balances/baselines. Its tests are synthetic rehearsal, not production snapshot acceptance.
 
-## The six uniqueness gates `migrateSchema` enforces (SCHEMA_OK stays false unless ALL hold)
-| object.column | required form |
-|---|---|
-| `operations.op_key` | PRIMARY KEY |
-| `consumed_burns.burn_txid` | PRIMARY KEY |
-| `collateral_ledger.btc_txid` | UNIQUE index, partial predicate `WHERE btc_txid IS NOT NULL` (the only accepted partial form) |
-| `bridge_ops.burn_txid` | inline UNIQUE |
-| `asset_locks.asset_id` | PRIMARY KEY |
-| `accounting_events.event_key` | PRIMARY KEY |
+The production Dashboard API cannot apply DDL. The deployment operator must use supported platform tooling, provide resulting DDL and migration evidence, and validate supported query/execute envelopes and the new accounting query. The candidate startup gate fails closed until the representation constraint is present. No production database was migrated by this review.
 
-The gate **rejects** composite uniqueness (e.g. `UNIQUE(a,col)`) and non-`IS NULL` partial indexes
-(e.g. `UNIQUE(op_key) WHERE state='completed'`) — those do not guarantee full-column uniqueness.
+Rollback requires custody to stay closed. With no intervening value operations, restore the untouched snapshot through the supported platform procedure, deploy prior contained code and verify status. If operations occurred since the snapshot, reconcile forward instead of discarding their events, burns and reservations. Never drop these records as a downgrade shortcut. Production restore rehearsal remains open.
 
-## Rollback / forward-repair
-These tables are additive and carry live custody accounting; **do not drop** them to "roll back". To
-forward-repair a bad constraint, create the correct index under a new name and drop the incorrect one in
-a dedicated, reviewed migration. Never drop `accounting_events` rows (they are the authoritative supply
-ledger and their keys must stay unique to remain idempotent against lost-response retries).
+First deployment owns a durable `representation-deploy:<asset-id>:<chain>` operation claim. An uncertain deployment intentionally remains claimed until its actual chain outcome and token identity are established. There is no automatic claim-reset endpoint. Existing verified identities continue using their registered token; a missing address blocks issuance.

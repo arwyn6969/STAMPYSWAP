@@ -22,10 +22,12 @@ jobs:
         run: npm run lint
       - name: Test (prevention suite + handlers)
         run: npm test
+      - name: Migration-copy checks
+        run: python3 -m unittest discover -s test -p '*_test.py' -v
       - name: Reproducible mainnet contract build
         run: |
           node gen-erc20-mainnet.js
           git diff --exit-code -- erc20-mainnet-artifact.json \
             || (echo "mainnet artifact is not reproducible from source" && exit 1)
-      - name: Dependency advisory snapshot (non-blocking triage record)
-        run: npm audit --omit=dev || true
+      - name: Runtime dependency release gate
+        run: npm audit --omit=dev --audit-level=high
