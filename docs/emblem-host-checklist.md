@@ -90,7 +90,7 @@ Run the candidate against an isolated Dashboard DB API wired to that copy. Confi
 
 For every representation, bind observed chain supply to its exact token address, chain/network, block/slot and decimals. Compare it with the append-only accounting-event sum, pending/uncertain mint reservations and confirmed backing less non-failed withdrawals. Cross-check Bitcoin deposit/release transactions, indexer amounts, consumed burns and operation outcomes. Keep exact integer/decimal quantities; do not round discrepancies away.
 
-The known Solana-devnet mismatches are 1500 $BALD and 0.1 PUDSEC. A ledger-wide release cap and allegedly lost wallet keys do not exclude specific tokens. Historical eligibility must have an enforced policy before releases reopen. Report any mismatch and required policy decision; do not silently edit baselines, reset supply, choose a duplicate token identity or clear uncertain deployment claims.
+The known Solana-devnet mismatches are 1500 $BALD and 0.1 PUDSEC. A ledger-wide or per-asset release cap and owner signatures do not distinguish excess fungible tokens. Current code holds the entire historical mint identities CRWA5RPKt4gqXhWTQ5J3y6zpxbX99JkbyLquw66sR5c5 and HnaXwTXhPXW9WX1ivuAJ7whrb7BYVK3P4UMZ9GGxCVPL: no deposit credit, further mint, redemption or source/destination move may use them, including operator requests. Proof of reserves exposes eligibility_hold and known_excess. There is no environment override. Preserve balances/history; clearing the identity holds requires a separately reviewed reconciliation and policy change. Do not silently edit baselines, reset supply, choose a duplicate token identity or clear uncertain deployment claims.
 
 ### Historical Counterparty deposit claims
 

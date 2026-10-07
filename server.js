@@ -811,6 +811,23 @@ setInterval(relayerSweep, 60000).unref?.()
 // Every mint rounds the amount DOWN to the destination chain's precision, so a
 // representation can never exceed its backing. Nothing here can over-issue.
 const DEST_DECIMALS = { solana: 9, base: 18, ethereum: 18, 'base-mainnet': 18 } // SPL conventionally ≤9; EVM 18
+
+// Public chain reconciliation found unburned excess at these historical devnet mints.
+// Fungible tokens cannot be separated by a ledger cap or a holder signature. Hold the
+// entire identity until a reviewed reconciliation replaces this policy; no env/operator bypass.
+const HISTORICAL_SOLANA_EXCESS = Object.freeze({
+  CRWA5RPKt4gqXhWTQ5J3y6zpxbX99JkbyLquw66sR5c5: '1500',
+  HnaXwTXhPXW9WX1ivuAJ7whrb7BYVK3P4UMZ9GGxCVPL: '0.1'
+})
+function representationEligibilityHold(rep) {
+  if (!rep || rep.dest_chain !== 'solana' || !Object.hasOwn(HISTORICAL_SOLANA_EXCESS, rep.dest_address)) return null
+  return { status: 409, body: {
+    error: 'historical representation is held pending supply and token eligibility reconciliation',
+    gated: true, reconcile: true, eligibility_hold: true,
+    representation: rep.dest_address, known_excess: HISTORICAL_SOLANA_EXCESS[rep.dest_address]
+  } }
+}
+
 // SPL token amounts are u64. Large-supply SRC-20 tokens overflow at 9 dp, so pick the
 // largest decimals ≤9 where the WHOLE max supply still fits in u64 (e.g. BOSHI 540B → 7dp).
 const U64_MAX = (1n << 64n) - 1n
@@ -986,6 +1003,8 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
   if (mintBase <= 0n) return { status: 400, body: { error: `amount below ${chain} precision (${destDec} dp)` } }
 
   let rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
+  const eligibilityHold = representationEligibilityHold(rep)
+  if (eligibilityHold) return eligibilityHold
   const maxSupply = toBaseUnits(asset.max_supply || '0')
 
   // ---- R05 durable op guard (F07) — A03 (audit): the op MUST be consulted/RESERVED BEFORE the solvency
@@ -1058,6 +1077,8 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
     if (identities.length > 1) throw new Error('multiple registered representation identities')
     rep = identities[0]
     if (rep && !rep.dest_address) throw new Error('registered representation has no token address')
+    const refreshedHold = representationEligibilityHold(rep)
+    if (refreshedHold) { if (opKey) await opFail(opKey); return refreshedHold }
     if (!rep) {
       deploymentKey = `representation-deploy:${asset.id}:${chain}`
       const claim = await opReserve(deploymentKey, { action: 'representation-deploy', canonical_id: asset.id, amount: '0', chain })
@@ -1445,6 +1466,11 @@ app.post('/api/move', async (req, res) => {
     if (!asset.whitelisted) return res.status(403).json({ error: 'asset not whitelisted' })
     const fromRep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, from_chain]))[0]
     if (!fromRep || !fromRep.dest_address) return res.status(404).json({ error: `no ${from_chain} representation for this asset` })
+    const fromHold = representationEligibilityHold(fromRep)
+    if (fromHold) return res.status(fromHold.status).json(fromHold.body)
+    const toRep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, to_chain]))[0]
+    const toHold = representationEligibilityHold(toRep)
+    if (toHold) return res.status(toHold.status).json(toHold.body)
     // verify the real on-chain burn (read-only — safe to run before the lock). Returns the burner.
     const burn = await verifyRepBurn(from_chain, burn_txid, fromRep.dest_address, amount, asset)
     if (!burn.valid) return res.status(409).json({ error: 'burn not verified', reason: burn.reason })
@@ -1538,6 +1564,8 @@ app.post('/api/redeem', async (req, res) => {
     const out = await withAssetLock(asset.id, async () => {
       const burnBase = toBaseUnits(amount)
       const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
+      const eligibilityHold = representationEligibilityHold(rep)
+      if (eligibilityHold) return eligibilityHold
       const circulating = rep ? toBaseUnits(rep.circulating_supply || '0') : 0n
       if (burnBase > circulating) return { status: 409, body: { error: 'cannot redeem more than circulating', circulating: fromBaseUnits(circulating) } }
       const newCirc = circulating - burnBase
@@ -1569,7 +1597,9 @@ app.get('/api/reserves', async (_req, res) => {
       const a = byAsset[r.canonical_id]
       const repCirc = await repCirculatingBase(r.id) // C03: PoR is authoritative from the event ledger, not the display cache
       a.circulating_base += repCirc
-      a.chains.push({ chain: r.dest_chain, address: r.dest_address, circulating: fromBaseUnits(repCirc) })
+      const eligibilityHold = representationEligibilityHold(r)
+      a.chains.push({ chain: r.dest_chain, address: r.dest_address, circulating: fromBaseUnits(repCirc),
+        eligibility_hold: !!eligibilityHold, ...(eligibilityHold ? { known_excess: eligibilityHold.body.known_excess } : {}) })
     }
     // indicative USD pricing (thin memecoin markets) — server-side, cached, honest
     const btc = await prices.btcUsd().catch(() => null)
@@ -1853,6 +1883,9 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
     // both credit+mint → double-credit → insolvency. We hold the lock and call mintCritical (the
     // UNLOCKED core) so we don't deadlock on the non-reentrant per-asset lock.
     const out = await withAssetLock(asset.id, async () => {
+      const depositRep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
+      const depositHold = representationEligibilityHold(depositRep)
+      if (depositHold) return depositHold
       let confirmations = CONFIRMS, ledgerKey = txid ? String(txid) : null
       if (asset.source_protocol === 'counterparty') {
         // Older balance-based credits used xcp:<asset>:<amount>, so a real send hash does
@@ -1996,6 +2029,8 @@ app.post('/api/custody/redeem', async (req, res) => {
     // The operator header is an audited back-office override (no burn required).
     const out = await withAssetLock(asset.id, async () => {
       const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
+      const eligibilityHold = representationEligibilityHold(rep)
+      if (eligibilityHold) return eligibilityHold
       const circ = rep ? await repCirculatingBase(rep.id) : 0n // C03: authoritative from the event ledger
       if (toBaseUnits(amt) > circ) return { status: 409, body: { error: 'cannot redeem more than circulating', circulating: fromBaseUnits(circ) } }
       const { burn_txid, auth_sig } = req.body || {}

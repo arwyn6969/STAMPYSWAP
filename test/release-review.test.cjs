@@ -73,3 +73,60 @@ test('schema retries continue after a prolonged outage and stop only after verif
   assert.equal(stopped, 1)
   assert.equal(vm.runInContext('SCHEMA_OK', f.context), true)
 })
+
+const historicalMints = [
+  'CRWA5RPKt4gqXhWTQ5J3y6zpxbX99JkbyLquw66sR5c5',
+  'HnaXwTXhPXW9WX1ivuAJ7whrb7BYVK3P4UMZ9GGxCVPL'
+]
+for (const mint of historicalMints) {
+  test('historical Solana excess identity blocks release, move and mint even for an operator: ' + mint, async t => {
+    const { op, owner } = require('./audit-e.fixture.cjs')
+    const f = await fixture(t)
+    f.db.prepare("UPDATE representations SET dest_chain='solana',dest_address=? WHERE id=1").run(mint)
+    f.sol.verifyBurn = async (_tx, _mint, amount) => ({ valid: true, burned: amount, owner: owner.address })
+    const before = f.db.prepare('SELECT * FROM collateral_ledger').all()
+    for (const [route, body] of [
+      ['/api/custody/redeem', await f.redeem({ chain: 'solana' })],
+      ['/api/redeem', { tick: 'COIN', chain: 'solana', amount: '10' }],
+      ['/api/move', f.move({ from_chain: 'solana' })],
+      ['/api/mint', { tick: 'COIN', chain: 'solana', amount: '1', receive_address: owner.address, op_key: 'held-mint' }],
+      ['/api/custody/verify-deposit', f.claim({ chain: 'solana' })]
+    ]) {
+      const r = await f.call(route, body, op)
+      if (route === '/api/redeem') { assert.equal(r.code, 410, route); continue } // legacy route is permanently disabled
+      assert.equal(r.code, 409, route)
+      assert.equal(r.body.eligibility_hold, true, route)
+    }
+    assert.equal(f.state.releases.length, 0)
+    assert.equal(f.state.mints.length, 0)
+    assert.deepEqual(f.db.prepare('SELECT * FROM collateral_ledger').all(), before)
+    assert.equal(f.db.prepare('SELECT count(*) n FROM consumed_burns').get().n, 0)
+    assert.equal(f.db.prepare('SELECT count(*) n FROM operations').get().n, 0)
+    assert.equal(f.circ(), '100')
+  })
+}
+
+test('held destination refuses a move before consuming or debiting its source burn', async t => {
+  const { op } = require('./audit-e.fixture.cjs')
+  const f = await fixture(t)
+  f.db.prepare("INSERT INTO representations(id,canonical_id,dest_chain,dest_address,circulating_supply,status) VALUES(2,1,'solana',?,'0','CANONICAL')").run(historicalMints[0])
+  const r = await f.call('/api/move', f.move({ to_chain: 'solana' }), op)
+  assert.equal(r.code, 409)
+  assert.equal(r.body.eligibility_hold, true)
+  assert.equal(f.db.prepare('SELECT count(*) n FROM consumed_burns').get().n, 0)
+  assert.equal(f.db.prepare("SELECT count(*) n FROM collateral_ledger WHERE direction='move-out'").get().n, 0)
+  assert.equal(f.state.mints.length, 0)
+  assert.equal(f.circ(), '100')
+})
+
+test('proof of reserves discloses historical representation holds without changing event liability', async t => {
+  const f = await fixture(t)
+  f.db.prepare("UPDATE representations SET dest_chain='solana',dest_address=? WHERE id=1").run(historicalMints[0])
+  vm.runInContext('prices.btcUsd=async()=>null;prices.priceAsset=async()=>null', f.context)
+  const r = await f.call('/api/reserves')
+  assert.equal(r.code, 200)
+  const chain = r.body.assets[0].chains[0]
+  assert.equal(chain.eligibility_hold, true)
+  assert.equal(chain.known_excess, '1500')
+  assert.equal(r.body.assets[0].circulating, '100')
+})
