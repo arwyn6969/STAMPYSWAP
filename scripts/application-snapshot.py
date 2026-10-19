@@ -26,10 +26,12 @@ def literal(value):
 
 
 def build_query(evidence):
-    manifest = module('prepare-backup-manifest').generate({'name': 'stampyswap'}, evidence)
+    manifest_helper = module('prepare-backup-manifest')
+    manifest = manifest_helper.generate({'name': 'stampyswap'}, evidence)
     definitions = manifest['emblem_build']['tables']
     names = [table['name'] for table in definitions]
     scope = ','.join(literal(name) for name in names)
+    approved_scope = ','.join(literal(name) for name in manifest_helper.TABLES + manifest_helper.OPTIONAL)
     terms = []
     with closing(sqlite3.connect(':memory:')) as db:
         for table in definitions:
@@ -57,6 +59,8 @@ def build_query(evidence):
         "'read_uncommitted',(SELECT read_uncommitted FROM pragma_read_uncommitted)," \
         "'omitted_consumed_deposits',(SELECT COUNT(*) FROM sqlite_master WHERE type='table' " \
         "AND name='consumed_deposits' AND name NOT IN (" + scope + "))," \
+        "'omitted_application_tables',(SELECT COUNT(*) FROM sqlite_master WHERE type='table' " \
+        "AND name IN (" + approved_scope + ") AND name NOT IN (" + scope + "))," \
         "'schema',json((SELECT json_group_array(json_object('type',type,'name',name,'tbl_name',tbl_name,'sql_hex'," \
         "hex(CAST(sql AS BLOB)))) FROM (SELECT type,name,tbl_name,sql FROM sqlite_master " \
         "WHERE sql IS NOT NULL AND tbl_name IN (" + scope + ") ORDER BY type DESC,name)))," \
@@ -97,8 +101,10 @@ def restore(envelope, destination):
         raise ValueError('invalid/oversized snapshot hex')
     raw = bytes.fromhex(encoded)
     snapshot = json.loads(raw)
-    if snapshot.get('format') != 'stampyswap-application-snapshot-v1' or snapshot.get('read_uncommitted') != 0 or snapshot.get('omitted_consumed_deposits', 0) != 0:
+    if snapshot.get('format') != 'stampyswap-application-snapshot-v1' or snapshot.get('read_uncommitted') != 0:
         raise ValueError('unsupported snapshot or dirty-read isolation')
+    if snapshot.get('omitted_consumed_deposits', 0) != 0 or snapshot.get('omitted_application_tables', 0) != 0:
+        raise ValueError('capture schema omits an existing approved application table')
     schema = [{'type': row['type'], 'name': row['name'], 'tbl_name': row['tbl_name'],
                'sql': bytes.fromhex(row['sql_hex']).decode('utf8')} for row in snapshot['schema']]
     manifest = module('prepare-backup-manifest').generate({'name': 'stampyswap'}, schema)

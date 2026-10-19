@@ -51,6 +51,22 @@ def alter(envelope, change):
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_stale_schema_export_cannot_silently_omit_existing_migration_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = populate(Path(tmp) / 'source.db')
+            try:
+                src.execute('CREATE TABLE schema_migrations(version TEXT PRIMARY KEY,sha256 TEXT NOT NULL)')
+                src.execute('INSERT INTO schema_migrations VALUES(?,?)', ('reviewed-migration', 'ab' * 32))
+                src.commit()
+                # EVIDENCE predates the optional migration registry. Its capture must fail
+                # acceptance instead of producing a superficially valid eleven-table copy.
+                destination = Path(tmp) / 'must-not-accept.db'
+                with self.assertRaises(ValueError):
+                    snapshot.restore(capture(src), destination)
+                self.assertFalse(destination.exists())
+            finally:
+                src.close()
+
     def test_exact_roundtrip_retains_integer_text_blob_unicode_rowids_indexes_and_sequences(self):
         with tempfile.TemporaryDirectory() as tmp:
             src = populate(Path(tmp) / 'source.db')

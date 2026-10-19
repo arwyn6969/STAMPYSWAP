@@ -221,6 +221,9 @@ class BindingTests(unittest.TestCase):
         self.assertFalse((self.folder / 'conflict.db').exists())
 
     def test_lossless_snapshot_preserves_aliases_immutability_and_high_sequences(self):
+        with closing(sqlite3.connect(self.src)) as db, db:
+            db.execute('CREATE TABLE schema_migrations(version TEXT PRIMARY KEY,sha256 TEXT NOT NULL)')
+            db.execute('INSERT INTO schema_migrations VALUES(?,?)', ('reviewed-migration', 'ab' * 32))
         self.prepare()
         with closing(sqlite3.connect(self.out)) as source:
             rows = [dict(zip(('type', 'name', 'tbl_name', 'sql'), row)) for row in source.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE sql IS NOT NULL AND name<>'sqlite_sequence' ORDER BY type,name")]
