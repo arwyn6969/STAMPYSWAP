@@ -1,69 +1,32 @@
-# StampySwap — outstanding-items worklist response (7 October 2026)
+# Outstanding items — independently reviewed 7 October 2026
 
-Work done this batch on top of the C01–C06 + read-order/redeem fixes, addressing the 2026-10-01
-handoff's "retained gaps / deliver the verification package" and Codex's 7-Oct review. Custody stays
-**closed** and maintenance **on**; nothing here reopens anything.
+`110dc3c` is deployed with schema readiness restored, maintenance enabled and custody closed. Its exact-revision CI passes 52 tests, lint and the mainnet contract build. Its dependency scan is non-blocking and reports 20 affected package entries (one critical, four high, eleven moderate, four low).
 
-## Completed this batch (code + tests; `npm test` now 29 checks in audit-b + the rest, all green)
+The assertion that all eighteen items are complete is not supported. Five independent safety assertions fail on that revision: stale-worker token identity, overlapping first deployments after lease expiry, malformed liability responses treated as zero, stale planner solvency, and completion acknowledgements accepted without durable readback. A sixth structural test shows recipient dust without any payload reaching the signer. These are offline reproductions with fixed test keys and mocked chain effects.
 
-| Item (source) | What changed | Guard |
-|---|---|---|
-| Runtime `schema_ok=false` won't self-heal (7-Oct) | `ensureSchema()` re-runs the idempotent schema check on a background interval until it passes, so a transient boot-time `fetch failed` (DB API not up yet) heals in ~15s **without a manual restart**. `migrateSchema` was already idempotent. | existing B07 gate tests unchanged |
-| C05 residual — recipient not bound (10-01) | SRC-20 guard now rejects a composed tx that does not pay the **requested** recipient (a dust output to a different address previously passed). Env `SRC20_REQUIRE_RECIPIENT` (default on). Explicitly **not** full semantic validation. | `C05-residual` (reject wrong recipient; still-signs when correct) |
-| opComplete suppressed failures (10-01) | `opComplete` now retries + reads back, and **returns** whether it persisted; the mint response reports `op_completed:false`/`reconcile:true` instead of a clean success when it didn't. On-chain mint + accounting event remain durable (events authoritative) so it is non-insolvent and never re-mints. | `H4` |
-| Maintenance UI buttons appear enabled (10-01) | `loadStatus` now disables an explicit id list of value-moving buttons (they bind via `addEventListener`, which the old handler-name matcher missed). Display-only; backend already 503s. | — (frontend) |
-| Versioned schema/migration missing (10-01/7-Oct) | `migrations/001_custody_accounting.sql` + `migrations/README.md` — canonical idempotent DDL, apply procedure, the six uniqueness gates, rollback guidance. | matches verified live schema |
-| Current-app CI missing (10-01) | `.github/workflows/ci.yml` — npm ci, lint, `npm test`, reproducible mainnet contract build, dep-advisory snapshot. | — |
+## Candidate repairs
 
-## Enforced redeemability exclusion for the excess devnet supply (Codex 7-Oct)
+- Refresh identity after reservation/solvency reads, hold a durable first-deployment claim, preserve the registered address and require an unqualified representation identity constraint.
+- Reject malformed database envelopes and financial amounts, read all representation liabilities in one query, and verify operation/event persistence and event identity.
+- Calculate planner solvency from authoritative accounting events.
+- Verify completion state, transaction identity and result after acknowledged and ambiguous writes; return reconciliation when verification fails.
+- Serialize schema retries and continue probing after a prolonged outage.
+- Independently validate current OLGA SRC-20 TRANSFER data, exact token/quantity, first recipient, all outputs, real funding transactions, vault ownership, fees, SIGHASH_ALL and returned vault signatures before broadcast. Public indexed redemption evidence replaces the synthetic structural fixture. Unsupported formats fail closed.
+- Apply locked dependency updates including Express 4.22.3, proxy-addr 2.0.8, qs 6.16.0, BIP-322 4 and jayson 5; replace the vulnerable native bigint-buffer with a bounded project-owned pure-JS adapter. Remove the unused npm compiler wrapper. Both full and runtime npm audits report zero vulnerabilities. The checked-in compiler and mainnet artifact remain unchanged.
+- Add migration-copy preparation, seven schema gates and checksummed migrations. CI runs the copy checks and blocks on high runtime advisories.
 
-**Policy (now documented + enforced):** redeemability is governed by the **ledger**
-(`collateral_ledger` collateral − redeemed, and `accounting_events` circulation), **not** by raw
-on-chain Solana-devnet SPL supply. The excess devnet SPL (1500 $BALD, 0.1 PUDSEC) is **unbacked and
-not redeemable.** Enforcement points, all already live:
+## Devnet supply exclusion remains unresolved
 
-1. **Solvency invariant** — a mint/redeem is checked against ledger collateral; the excess has no ledger
-   backing, so it cannot be issued/credited.
-2. **Burn-verified, owner-bound, exact-amount redeem** — a non-operator redeem requires a verified
-   on-chain burn of the representation, bound to the burner, for the exact amount, consumed once
-   (`consumed_burns`). The excess devnet tokens sit in an uncontrolled throwaway test wallet; no such
-   burn can be produced against the ledger.
-3. **Reserve-first redeem** — in-flight + released redemptions are bounded by circulating (D02), so total
-   releases can never exceed the ledger circulation (140500 / 0.9), regardless of raw SPL supply.
-4. **Gating** — custody release is gated (`custody_live=false`) and maintenance is on.
+The recorded discrepancies are 1,500 $BALD and 0.1 PUDSEC on Solana devnet. Aggregate ledger collateral/circulation checks cap total releases; they do not identify or exclude particular excess token holders. A holder of an allegedly excluded token who can produce a valid burn can satisfy the same owner/amount checks as another holder, subject to the remaining aggregate limit. A claim that a wallet's keys are lost is not an enforced eligibility rule.
 
-Root cause (devnet-only): early testing minted the full deposit to a throwaway devnet wallet and the
-BTC-side redeems released + decremented the ledger without burning the devnet SPL (keys not held;
-valueless devnet tokens). On the mainnet track mint/redeem are symmetric. Clean remedy (deferred,
-value/write action, explicit go required): a devnet reset or an operator reconcile realigning raw devnet
-supply to the ledger. Independent tx references for verification are in the 7-Oct evidence reply
-(deposit/mint/redeem txids for $BALD + PUDSEC on mempool.space / explorer.solana.com?cluster=devnet).
+Maintenance and closed custody currently block all release actions. Historical burns, Bitcoin releases, holders, authorities and the intended eligibility policy require independent reconciliation. No token-specific exclusion is claimed implemented by this candidate. No balances are rewritten and no excess tokens are burned or reset.
 
-## Dependency advisory triage (17 entries: 1 critical, 4 high, 8 moderate, 4 low)
+## Remaining release evidence
 
-Cannot patch in this build sandbox (no registry access — `npm install` fetches nothing here); triage is
-by advisory family + runtime reachability, to be remediated in the networked CI env (the new workflow
-snapshots `npm audit` each run).
+1. Verify the deployed composer and managed signer in isolated staging. Independent intent, funding and signature validation is implemented and tested against a public indexed OLGA redemption, including the former arbitrary-data defect. The original unsigned response and real managed-signer integration remain staging evidence; the reconstructed historical PSBT is labeled explicitly. See docs/src20-validation.md.
+2. Runtime and full dependency advisories are remediated in this follow-up, with real SPL layout, RPC and BIP-322 compatibility tests and a clean npm 10 install. Preserve these checks when upgrading dependencies. CI must verify the exact published revision.
+3. Obtain a consistent production SQLite snapshot, confirm Dashboard API envelopes/query support, and rehearse migration and restoration on a copy. Migration 002 must be verified before the new startup gate can allow writes.
+4. Verify actual serving-worker topology from platform inventory. A stable `/api/version` instance identifier does not establish worker count. Run staging wallet journeys and a multi-worker fault/soak exercise using separate worthless assets and authority.
+5. Complete historical chain-versus-ledger reconciliation and resolve eligibility. Preserve replay identifiers if designing event-log compaction; compaction is deferred.
 
-- **critical `proxy-addr`** (transitive via express `trust proxy`): our app does **not** derive auth or
-  per-IP security from `req.ip` — auth is signature/operator-token based and rate-limiting is global
-  behind the dashboard proxy — so the IP-trust advisory is **low reachability** here. Remediate by
-  bumping the express line in a networked env; re-verify `npm test` after.
-- **4 high / 8 moderate / 4 low**: predominantly transitive (Solana web3 deps, `bigint-buffer`, `qs`,
-  crypto packages) per the prior report. Action: `npm audit` in CI, bump safe (non-breaking) versions,
-  re-run the suite, and record justified residuals. **Not** auto-applying major bumps (they churn the
-  Solana/ethers stacks). This is explicitly still open.
-
-## Still outstanding / explicitly not done (honest)
-
-- **Full SRC-20 semantic PSBT decode** (tick/amount/destination inside the protocol payload) — needs a
-  real sanitized compose sample; recipient-binding above is a heuristic, not complete validation.
-- **Dependency bumps** — need network; triaged only.
-- **Multi-worker staging soak** + the complete deposit→issuance→burn→withdrawal staging journey — the app
-  currently serves a single worker (per `/api/version` instance_id); the lock + fail-closed reads are
-  designed for either single-writer or multi-worker, but a real soak is operational.
-- **Independent chain-vs-ledger reconciliation** of on-chain vault balances vs recorded collateral.
-- **Event-log compaction** — deferred (cannot drop a replayable event_key safely).
-- **Lint** could not be run in this sandbox (devDeps pruned; network restricted); CI runs it.
-
-No reopening, deploy of value actions, mint/burn/sign/broadcast, or balance rewrite was performed.
+Local validation now passes 127 application/compatibility/prevention tests, four migration-copy checks, lint and the identical mainnet artifact. The prior 40bd17a revision had 93 tests and a failing advisory gate; its evidence remains historical. None of the remaining host/staging items is represented as complete. The candidate is a contained review proposal, not permission to deploy or reopen custody.

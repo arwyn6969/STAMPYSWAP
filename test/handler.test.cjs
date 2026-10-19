@@ -51,6 +51,7 @@ async function fixture(t, options = {}) {
     CREATE TABLE bridge_ops(id INTEGER PRIMARY KEY, src20_tick TEXT, stamp_asset TEXT, amount TEXT, burn_txid TEXT UNIQUE, user_address TEXT, release_txid TEXT, status TEXT, created_at INTEGER);
     CREATE TABLE operations(op_key TEXT PRIMARY KEY, action TEXT, canonical_id INTEGER, amount TEXT, chain TEXT, recipient TEXT, state TEXT, created_at INTEGER, updated_at INTEGER, tx_id TEXT, result_json TEXT);
     CREATE TABLE asset_locks(asset_id INTEGER PRIMARY KEY, holder TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+    CREATE UNIQUE INDEX representation_identity ON representations(canonical_id,dest_chain);
     CREATE TABLE pools(id INTEGER PRIMARY KEY, canonical_a INTEGER, canonical_b INTEGER);
   `)
   db.prepare('INSERT INTO canonical_assets VALUES (1,?,?,?,?,1,?)').run('COIN', protocol, '1000000', decimals, 'deploy')
@@ -248,4 +249,33 @@ test('F05: a non-operator move requires the burn-owner signature (front-run resi
   const good = f.move(); good.auth_sig = await sig(owner)
   assert.equal((await f.call('/api/move', good)).code, 200)
   assert.equal(f.state.mints.length, 1)
+})
+
+test('historical synthetic Counterparty credit cannot be claimed again under its real transaction hash', async t => {
+  const f = await fixture(t, { protocol: 'counterparty', decimals: 0, collateral: '0', circulating: '1' })
+  f.db.prepare("INSERT INTO collateral_ledger(canonical_id,direction,amount,btc_txid,status) VALUES(1,'deposit','1','xcp:COIN:1','confirmed')").run()
+  const txid = '35'.repeat(32)
+  f.state.sends = [{ source: btcSource, destination: 'vault', status: 'valid', quantity: '1', tx_hash: txid, block_index: 10 }]
+  const before = f.db.prepare('SELECT * FROM collateral_ledger').all()
+  for (const headers of [{}, op]) {
+    const r = await f.call('/api/custody/verify-deposit', f.claim({ txid, amount: '1' }), headers)
+    assert.equal(r.code, 409)
+    assert.equal(r.body.reconcile, true)
+    assert.match(r.body.error, /historical.*Counterparty/i)
+  }
+  assert.equal(f.state.mints.length, 0)
+  assert.deepEqual(f.db.prepare('SELECT * FROM collateral_ledger').all(), before)
+  assert.equal(f.db.prepare('SELECT count(*) n FROM operations').get().n, 0)
+})
+
+test('historical Counterparty gate allows a fresh deposit with only failed or unrelated legacy credits', async t => {
+  const f = await fixture(t, { protocol: 'counterparty', decimals: 0, collateral: '0', circulating: '0' })
+  f.db.prepare("INSERT INTO collateral_ledger(canonical_id,direction,amount,btc_txid,status) VALUES(1,'deposit','1','xcp:COIN:1','failed')").run()
+  f.db.prepare("INSERT INTO collateral_ledger(canonical_id,direction,amount,btc_txid,status) VALUES(2,'deposit','1','xcp:OTHER:1','confirmed')").run()
+  const txid = '36'.repeat(32)
+  f.state.sends = [{ source: btcSource, destination: 'vault', status: 'valid', quantity: '1', tx_hash: txid, block_index: 10 }]
+  const r = await f.call('/api/custody/verify-deposit', f.claim({ txid, amount: '1' }))
+  assert.equal(r.code, 200)
+  assert.equal(f.state.mints.length, 1)
+  assert.equal(f.db.prepare('SELECT count(*) n FROM collateral_ledger WHERE btc_txid=?').get('xcp:' + txid).n, 1)
 })
