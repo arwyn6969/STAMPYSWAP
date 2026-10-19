@@ -4,7 +4,7 @@ Codex owns implementation, dependency remediation, independent protocol validati
 
 ## 1. Production inventory and backup
 
-Record the actual running SHA, Node/npm versions, process manager, entry point, number of serving workers/replicas and database instance boundaries. Public instance-ID sampling is corroboration, not a worker-count proof. The candidate requires Node >=22.12. Keep all credential values private.
+Record the actual running SHA, Node/npm versions, process manager, entry point, number of serving workers/replicas and database instance boundaries. Public instance-ID sampling and one registry port are corroboration, not an OS worker-count proof. Inventory every writer, including uploader, interactive/triggerless agents, schedules, auth/session traffic, schema/backfills and key/config writers. Maintenance alone does not freeze them. The candidate requires Node >=22.12. Keep all credential values private.
 
 Obtain a transaction-consistent snapshot/export with supported platform tooling. Record UTC time, SHA256, schema definitions and every accounting table's row count. Keep the original immutable in the host's private workspace. Do not share keys, tokens or authentication records. A series of independent SELECT exports is not necessarily a consistent snapshot. If SQLite file export is unavailable, identify the actual supported backup/restore mechanism and explain the boundary.
 
@@ -25,20 +25,26 @@ SELECT 1 AS probe;
 SELECT 1 AS probe WHERE 0;
 ```
 
-Also capture the envelope for an intentionally invalid, read-only SELECT. Do not execute write probes on production. The implementation uses `accounting_events`, `collateral_ledger.btc_txid` for deposit uniqueness, and durable deployment claims inside `operations` with `representation-deploy:` keys. There are no separate `ledger_events`, `consumed_deposits` or `representation_deployments` tables in this candidate.
+Also capture the envelope for an intentionally invalid, read-only SELECT. Do not execute write probes on production. The runtime uses `accounting_events`, `collateral_ledger.btc_txid` for deposit uniqueness, and durable deployment claims inside `operations` with `representation-deploy:` keys. The separate optional `consumed_deposits` table is prepared only in reviewed offline copies; it does not lift runtime reconciliation gates. See `historical-deposit-bindings.md`.
+
+## Private staging preflight
+
+Use tracked source from the exact reviewed Git commit; never copy the served directory with ignored signer files. Before any approved worker startup, run `node scripts/staging-scope-preflight.cjs /exact/reviewed/source` with an existing group-scoped credential and explicit closed staging configuration. The helper does not provision, start workers or write data. It checks source names without opening key files and refuses authority flags, key/config files, inherited signer/operator configuration and key-generation opt-in. Its only requests are `SELECT 1 AS scope_probe`: staging must return the exact result; production must explicitly deny the same credential with HTTP 401/403. No private production rows are requested.
+
+This has five local regressions; a host run has not been performed. It checks the supplied process environment and source root, not the supervisor's actual future launch, arbitrary child directories, filesystem/private-proxy isolation, or fee-key fixture identity. Agent-container environment logs do not establish app-worker inheritance. The app adapters currently load fee/deployer keys on import, so a clean keyless source cannot be started as the full app until a separately reviewed no-effect fixture/harness is specified; never solve that by copying production keys or enabling key generation. An environment name list and empty group configuration alone are insufficient host evidence.
 
 ## Backup-manifest preparation
 
-The host confirms its tools read `package.json.emblem_build.tables`, an array of `{name,schema}` objects. Each schema must be one `CREATE TABLE IF NOT EXISTS` definition; the backup tool separately dumps explicit indexes. Its description does not establish transaction consistency.
+The tool contract describes `package.json.emblem_build.tables`, an array of `{name,schema}` objects. Each schema must be one `CREATE TABLE IF NOT EXISTS` definition. Host implementation and rehearsal must establish snapshot consistency and preservation of explicit indexes, exact sequences and optional alias immutability triggers. These properties are not established by a table-only manifest or conflicting tool descriptions.
 
-Export actual table and explicit-index definitions with one read-only query:
+Export actual table, explicit-index and optional reviewed alias-trigger definitions with one read-only query:
 
 ```sql
 SELECT type,name,tbl_name,sql FROM sqlite_master
-WHERE sql IS NOT NULL AND type IN ('table','index')
+WHERE sql IS NOT NULL AND type IN ('table','index','trigger')
 AND tbl_name IN ('canonical_assets','representations','collateral_ledger','operations',
  'consumed_burns','asset_locks','accounting_events','bridge_ops','stamp_bridges',
- 'pools','supported_chains','schema_migrations')
+ 'pools','supported_chains','schema_migrations','consumed_deposits')
 ORDER BY type DESC,name;
 ```
 
