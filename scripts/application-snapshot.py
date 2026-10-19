@@ -55,6 +55,8 @@ def build_query(evidence):
     return "SELECT hex(CAST(json_object('format','stampyswap-application-snapshot-v1'," \
         "'captured_at',strftime('%Y-%m-%dT%H:%M:%fZ','now'),'sqlite_version',sqlite_version()," \
         "'read_uncommitted',(SELECT read_uncommitted FROM pragma_read_uncommitted)," \
+        "'omitted_consumed_deposits',(SELECT COUNT(*) FROM sqlite_master WHERE type='table' " \
+        "AND name='consumed_deposits' AND name NOT IN (" + scope + "))," \
         "'schema',json((SELECT json_group_array(json_object('type',type,'name',name,'tbl_name',tbl_name,'sql_hex'," \
         "hex(CAST(sql AS BLOB)))) FROM (SELECT type,name,tbl_name,sql FROM sqlite_master " \
         "WHERE sql IS NOT NULL AND tbl_name IN (" + scope + ") ORDER BY type DESC,name)))," \
@@ -95,7 +97,7 @@ def restore(envelope, destination):
         raise ValueError('invalid/oversized snapshot hex')
     raw = bytes.fromhex(encoded)
     snapshot = json.loads(raw)
-    if snapshot.get('format') != 'stampyswap-application-snapshot-v1' or snapshot.get('read_uncommitted') != 0:
+    if snapshot.get('format') != 'stampyswap-application-snapshot-v1' or snapshot.get('read_uncommitted') != 0 or snapshot.get('omitted_consumed_deposits', 0) != 0:
         raise ValueError('unsupported snapshot or dirty-read isolation')
     schema = [{'type': row['type'], 'name': row['name'], 'tbl_name': row['tbl_name'],
                'sql': bytes.fromhex(row['sql_hex']).decode('utf8')} for row in snapshot['schema']]
@@ -135,6 +137,10 @@ def restore(envelope, destination):
                 raise ValueError('restored row count mismatch')
         for row in schema:
             if row['type'] == 'index':
+                db.execute(row['sql'])
+        # Insert restored rows before installing the reviewed immutable alias triggers.
+        for row in schema:
+            if row['type'] == 'trigger':
                 db.execute(row['sql'])
         db.execute('DELETE FROM sqlite_sequence')
         seen_sequences = set()

@@ -11,7 +11,7 @@ import sqlite3
 TABLES = ('canonical_assets', 'representations', 'collateral_ledger', 'operations',
           'consumed_burns', 'asset_locks', 'accounting_events', 'bridge_ops',
           'stamp_bridges', 'pools', 'supported_chains')
-OPTIONAL = ('schema_migrations',)
+OPTIONAL = ('schema_migrations', 'consumed_deposits')
 
 
 def generate(package, evidence):
@@ -27,7 +27,7 @@ def generate(package, evidence):
         rows = evidence
     if not isinstance(rows, list):
         raise ValueError('schema evidence must contain rows')
-    tables, indexes = {}, []
+    tables, indexes, triggers = {}, [], []
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get('sql'), str):
             raise ValueError('invalid schema row')
@@ -46,8 +46,10 @@ def generate(package, evidence):
             if row.get('tbl_name') not in TABLES + OPTIONAL or not re.match(r'^CREATE\s+(?:UNIQUE\s+)?INDEX\s+', row['sql'].strip(), re.IGNORECASE):
                 raise ValueError('unexpected index DDL')
             indexes.append(row['sql'])
+        elif row.get('type') == 'trigger' and row.get('tbl_name') == 'consumed_deposits':
+            triggers.append(row['sql'])
         else:
-            raise ValueError('only table/index schema evidence is accepted')
+            raise ValueError('only application tables/indexes and reviewed alias triggers are accepted')
     missing = set(TABLES) - tables.keys()
     if missing:
         raise ValueError('missing application tables: ' + ', '.join(sorted(missing)))
@@ -61,6 +63,17 @@ def generate(package, evidence):
             db.execute(sql)
         for sql in indexes:
             db.execute(sql)
+        if 'consumed_deposits' in tables:
+            spec = importlib.util.spec_from_file_location('bindings', Path(__file__).with_name('prepare-deposit-bindings.py'))
+            bindings = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(bindings)
+            if sorted(triggers) != sorted(bindings.TRIGGERS):
+                raise ValueError('exact consumed-deposit immutability triggers required')
+            for sql in triggers:
+                db.execute(sql)
+            bindings.validate_schema(db)
+        elif triggers:
+            raise ValueError('alias triggers require their table')
         migration.validate(db)
     result = copy.deepcopy(package)
     existing = result.setdefault('emblem_build', {})
