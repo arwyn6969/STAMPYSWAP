@@ -2262,12 +2262,15 @@ app.get('/api/reconcile', async (req, res) => {
       stuck_stamps: stamps,
       orphan_burns: orphanBurns,
       stuck_ops: ops,
-      note: 'POST /api/reconcile after verifying the ON-CHAIN outcome. Kinds: '
-          + '{kind:"redeem", id, resolution:"released"|"failed", release_txid?} — released=BTC left the vault (decrement+keep burn); failed=nothing left (restore collateral+free burn). '
-          + '{kind:"move", burn_txid, resolution:"decremented"|"aborted"} — decremented=source debit CONFIRMED (lets the move resume its dest mint); aborted=debit did NOT happen (free the burn, mark aborted). '
-          + '{kind:"stamp", burn_txid, resolution:"released"|"failed", release_txid?} — released=stamp went out (mark released); failed=nothing broadcast (delete the reservation, retryable). '
-          + '{kind:"burn", burn_txid, chain, resolution:"free"} — free an ORPHAN consumed-burn with no downstream row. '
-          + '{kind:"mint", op_key, resolution:"completed"|"failed", release_txid?} — completed=mint confirmed on-chain (record supply, needs release_txid); failed=no mint happened (release the backing reservation).',
+      destructive_reconciliation_enabled: false,
+      independently_verified_recovery: false,
+      note: 'Destructive resolutions failed/aborted/free return 409 fencing_required and retain reservations/burn identities. '
+          + 'Mainnet operation/redeem/move rows remain held. Existing positive bookkeeping requires operator access and an externally verified outcome; it is not automated receipt recovery. '
+          + 'Legacy shapes: {kind:"redeem", id, resolution:"released", release_txid}; '
+          + '{kind:"move", burn_txid, resolution:"decremented"}; '
+          + '{kind:"stamp", burn_txid, resolution:"released", release_txid}; '
+          + '{kind:"mint", op_key, resolution:"completed", release_txid}. '
+          + 'Orphan consumed burns cannot currently be freed safely.',
     })
   } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
@@ -2275,8 +2278,8 @@ app.get('/api/reconcile', async (req, res) => {
 app.post('/api/reconcile', async (req, res) => {
   if (requireOperator(req, res)) return
   try {
-    const { kind, id, resolution, release_txid, burn_txid, chain } = req.body || {}
-    if (resolution === 'failed' || resolution === 'aborted' || resolution === 'free') {
+    const { kind, id, resolution, release_txid, burn_txid } = req.body || {}
+    if (kind === 'burn' || resolution === 'failed' || resolution === 'aborted' || resolution === 'free') {
       return res.status(409).json({ error: 'destructive reconciliation requires independently verified worker and transaction fencing; reservations and consumed identities remain retained',
         reconciled: false, fencing_required: true })
     }
@@ -2285,30 +2288,21 @@ app.post('/api/reconcile', async (req, res) => {
     // ---- kind:"move" — resolve a stuck move-out 'pending' (source-debit outcome uncertain) ----
     if (kind === 'move') {
       if (!burn_txid) return res.status(400).json({ error: 'burn_txid required' })
-      if (resolution !== 'decremented' && resolution !== 'aborted') return res.status(400).json({ error: 'resolution must be "decremented" (source debit confirmed → move can resume) or "aborted" (debit did NOT happen → free burn)' })
+      if (resolution !== 'decremented') return res.status(400).json({ error: 'resolution must be "decremented" (source debit confirmed → move can resume)' })
       const mrow = (await dbQuery(`SELECT * FROM collateral_ledger WHERE direction='move-out' AND btc_txid=?`, [burn_txid]))[0]
       if (!mrow) return res.status(404).json({ error: 'move-out row not found for that burn_txid' })
       const rowHold = mainnetWriteHold(mrow.dest_chain)
       if (rowHold) return res.status(rowHold.status).json(rowHold.body)
       if (mrow.status !== 'pending') return res.status(409).json({ error: `move-out is not pending (status=${mrow.status})` })
       const out = await withAssetLock(mrow.canonical_id, async () => {
-        if (resolution === 'decremented') {
-          // C06 (audit): advancing the phase is not enough — a failed source materialization must be
-          // REPAIRED. The debit event is authoritative, so re-materialize the source cache from the event
-          // ledger before marking decremented. (With events authoritative the dest mint already sees the
-          // reduced source; this also makes the display cache truthful.)
-          const srcRep = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [mrow.canonical_id, mrow.dest_chain]))[0]
-          if (srcRep) await rematerialize(srcRep.id).catch(() => {})
-          await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE id=? AND status='pending'`, [mrow.id])
-          return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, note: 'source debit re-materialized; resubmit the move with the same burn_txid to complete the destination mint' } }
-        }
-        // aborted: operator confirmed the debit never happened → free the burn + mark aborted (retryable)
-        const cbChain = mrow.dest_chain
-        await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(cbChain, burn_txid)]).catch(() => {})
-        const freed = !(await burnConsumed(cbChain, burn_txid))
-        if (!freed) return { status: 500, body: { error: 'could not free the burn — left pending; retry', reconciled: false } }
-        await dbExec(`UPDATE collateral_ledger SET status='aborted' WHERE id=?`, [mrow.id])
-        return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, freed_burn: true } }
+        // C06 (audit): advancing the phase is not enough — a failed source materialization must be
+        // REPAIRED. The debit event is authoritative, so re-materialize the source cache from the event
+        // ledger before marking decremented. (With events authoritative the dest mint already sees the
+        // reduced source; this also makes the display cache truthful.)
+        const srcRep = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [mrow.canonical_id, mrow.dest_chain]))[0]
+        if (srcRep) await rematerialize(srcRep.id).catch(() => {})
+        await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE id=? AND status='pending'`, [mrow.id])
+        return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, note: 'source debit re-materialized; resubmit the move with the same burn_txid to complete the destination mint' } }
       })
       return res.status(out.status).json(out.body)
     }
@@ -2316,38 +2310,23 @@ app.post('/api/reconcile', async (req, res) => {
     // ---- kind:"stamp" — resolve a stamp-bridge release whose broadcast outcome is unknown ----
     if (kind === 'stamp') {
       if (!burn_txid) return res.status(400).json({ error: 'burn_txid required' })
-      if (resolution !== 'released' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "released" (stamp went out) or "failed" (nothing broadcast → delete reservation)' })
+      if (resolution !== 'released') return res.status(400).json({ error: 'resolution must be "released" (stamp went out)' })
       const brow = (await dbQuery('SELECT * FROM bridge_ops WHERE burn_txid=?', [String(burn_txid)]))[0]
       if (!brow) return res.status(404).json({ error: 'bridge_ops row not found for that burn_txid' })
       if (brow.status !== 'reserving' && brow.status !== 'reconcile') return res.status(409).json({ error: `bridge op is terminal (status=${brow.status})` })
-      if (resolution === 'released') { await dbExec(`UPDATE bridge_ops SET status='released', release_txid=COALESCE(?, release_txid) WHERE burn_txid=?`, [release_txid || null, String(burn_txid)]); return res.status(200).json({ reconciled: true, kind, burn_txid, resolution }) }
-      await dbExec('DELETE FROM bridge_ops WHERE burn_txid=? AND status IN (?,?)', [String(burn_txid), 'reserving', 'reconcile']) // failed → retryable
-      return res.status(200).json({ reconciled: true, kind, burn_txid, resolution: 'failed', deleted: true })
-    }
-
-    // ---- kind:"burn" — free an ORPHAN consumed-burn (no downstream redeem/move row) ----
-    if (kind === 'burn') {
-      if (!burn_txid || !chain) return res.status(400).json({ error: 'burn_txid and chain required' })
-      if (resolution !== 'free') return res.status(400).json({ error: 'resolution must be "free"' })
-      const norm = normTxid(chain, burn_txid)
-      const cb = (await dbQuery('SELECT * FROM consumed_burns WHERE burn_txid=?', [norm]))[0]
-      if (!cb) return res.status(404).json({ error: 'consumed_burn not found' })
-      // safety: refuse to free a burn that still has a live downstream row (not actually an orphan)
-      const live = await dbQuery(`SELECT 1 FROM collateral_ledger WHERE (direction='redeem' AND (burn_txid=? OR lower(burn_txid)=?)) OR (direction='move-out' AND (btc_txid=? OR lower(btc_txid)=?) AND status!='aborted') LIMIT 1`, [burn_txid, norm, burn_txid, norm])
-      if (live.length) return res.status(409).json({ error: 'that burn still has a live redeem/move row — resolve THAT first (not an orphan)' })
-      await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [norm])
-      return res.status(200).json({ reconciled: true, kind, burn_txid, resolution: 'free' })
+      await dbExec(`UPDATE bridge_ops SET status='released', release_txid=COALESCE(?, release_txid) WHERE burn_txid=?`, [release_txid || null, String(burn_txid)])
+      return res.status(200).json({ reconciled: true, kind, burn_txid, resolution })
     }
 
     // ---- kind:"mint" — resolve an uncertain mint OP (B04 audit). An op left 'reserved'/'reconcile'
     // holds a durable backing reservation (reservedBase) so no other op can mint against it until the
     // operator establishes the on-chain outcome. 'completed' = the mint DID land (record its supply +
-    // mark the op complete); 'failed' = it did NOT (release the reservation). Immutable request binding:
+    // mark the op complete). Uncertain reservations cannot be released here. Immutable request binding:
     // the op row carries the canonical_id/chain/recipient/amount that were reserved; we act on those.
     if (kind === 'mint') {
       const { op_key } = req.body || {}
       if (!op_key) return res.status(400).json({ error: 'op_key required' })
-      if (resolution !== 'completed' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "completed" (mint confirmed on-chain → record supply) or "failed" (no mint happened → release the reservation)' })
+      if (resolution !== 'completed') return res.status(400).json({ error: 'resolution must be "completed" (mint confirmed on-chain → record supply)' })
       const op = (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0]
       if (!op) return res.status(404).json({ error: 'operation not found' })
       const rowHold = mainnetWriteHold(op.chain)
@@ -2357,10 +2336,6 @@ app.post('/api/reconcile', async (req, res) => {
       const out = await withAssetLock(op.canonical_id, async () => {
         const cur = (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0]
         if (!cur || (cur.state !== 'reserved' && cur.state !== 'reconcile')) return { status: 409, body: { error: 'operation no longer reconcilable' } }
-        if (resolution === 'failed') {
-          await dbExec('DELETE FROM operations WHERE op_key=?', [op_key]) // release the reservation (backing freed)
-          return { status: 200, body: { reconciled: true, kind, op_key, resolution: 'failed', note: 'reservation released — backing is available again' } }
-        }
         // completed: the operator verified the on-chain mint. Record its supply as a once-only event
         // (idempotent — if some accounting already landed, the event key makes this a no-op) + complete.
         if (!release_txid) return { status: 400, body: { error: 'release_txid (the on-chain mint signature/tx) required to record a completed mint' } }
@@ -2373,8 +2348,8 @@ app.post('/api/reconcile', async (req, res) => {
       return res.status(out.status).json(out.body)
     }
 
-    if (kind !== 'redeem') return res.status(400).json({ error: 'kind must be "redeem", "mint", "move", "stamp", or "burn"' })
-    if (resolution !== 'released' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "released" or "failed"' })
+    if (kind !== 'redeem') return res.status(400).json({ error: 'kind must be "redeem", "mint", "move", or "stamp"' })
+    if (resolution !== 'released') return res.status(400).json({ error: 'resolution must be "released"' })
     const row = (await dbQuery(`SELECT * FROM collateral_ledger WHERE id=? AND direction='redeem'`, [id]))[0]
     if (!row) return res.status(404).json({ error: 'redeem ledger row not found' })
     const rowHold = mainnetWriteHold(row.dest_chain)
@@ -2388,27 +2363,11 @@ app.post('/api/reconcile', async (req, res) => {
       if (!cur || (cur.status !== 'pending' && cur.status !== 'reconcile'))
         return { status: 409, body: { error: `row no longer reconcilable (status=${cur ? cur.status : 'gone'})` } }
       const chain = cur.dest_chain
-      if (resolution === 'released') {
-        // BTC left the vault → finalize through the SAME exactly-once finalizer as the success path
-        // (A01): the CAS terminal transition gates the decrement, so reconciling twice (or racing the
-        // success path) can never decrement circulation more than once.
-        const r = await finalizeReleaseOnce({ ledgerId: id, canonicalId: cur.canonical_id, chain, amountBase: toBaseUnits(cur.amount), releaseTxid: release_txid })
-        return { status: 200, body: { reconciled: true, id, resolution, finalized: !!r.finalized, already_finalized: !!r.alreadyFinalized } }
-      } else {
-        // resolution === 'failed': nothing left the vault → restore collateral (redeemedBase excludes
-        // 'failed') and FREE the consumed burn so the holder can retry. A04.1 (audit): free the burn
-        // FIRST and CONFIRM it is gone; only then mark the row terminal-failed. If the free fails, leave
-        // the row reconcilable and report truthfully — never claim freed_burn while the burn is stuck,
-        // which would strand the holder's entitlement behind a terminal row.
-        let freed_burn = true
-        if (cur.burn_txid) {
-          await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, cur.burn_txid)]).catch(() => {})
-          freed_burn = !(await burnConsumed(chain, cur.burn_txid)) // confirm it is actually gone
-          if (!freed_burn) return { status: 500, body: { error: 'could not free the consumed burn — row left reconcilable (not marked failed); retry', reconciled: false } }
-        }
-        await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [id])
-        return { status: 200, body: { reconciled: true, id, resolution, freed_burn } }
-      }
+      // BTC left the vault → finalize through the SAME exactly-once finalizer as the success path
+      // (A01): the CAS terminal transition gates the decrement, so reconciling twice (or racing the
+      // success path) can never decrement circulation more than once.
+      const r = await finalizeReleaseOnce({ ledgerId: id, canonicalId: cur.canonical_id, chain, amountBase: toBaseUnits(cur.amount), releaseTxid: release_txid })
+      return { status: 200, body: { reconciled: true, id, resolution, finalized: !!r.finalized, already_finalized: !!r.alreadyFinalized } }
     })
     res.status(out.status).json(out.body)
   } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
