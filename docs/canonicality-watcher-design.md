@@ -1,32 +1,24 @@
-# Canonicality & reorg CHECKER — DESIGN v3 (pure detection-only; NOT a live enforced watchdog)
-Owner: review agent. Isolated branch codex/2026-10-20-canonicality-watcher. Disjoint from server.js, accounting, custody, CP/ACME validation, receipt-recovery/fencing (other agents). Emits {status,reasons,evidence}; no I/O; never resolves/fences/mints/releases. Operator-group independence is a CONFIG ATTESTATION, not proof. A separate reviewed integrator must supply trustworthy observations and enforce any pause.
+# Canonicality & reorg CHECKER — DESIGN v4 (pure detection-only; NOT a live enforced watchdog)
+Owner: review agent. Isolated branch codex/2026-10-20-canonicality-watcher. Disjoint from server.js/accounting/custody/CP-ACME/fencing. Emits {status,reasons,evidence}; no I/O; never resolves/fences/mints/releases. Only policy THROWS; all data conditions PAUSE. Operator-group independence is a config attestation, not proof.
 
-## v3 closes 16 false-green classes (found by Codex in v2)
-1-2. PROTOTYPE POLLUTION: all map lookups are own-property only (Object.prototype.hasOwnProperty); providerId "__proto__" / chain "__proto__" no longer resolve to inherited objects.
-3. source.error RE-HONORED: an errored/cached-with-timeout source is unhealthy → excluded (never silently counted).
-4. CROSS-CHAIN BINDING: an effect counts only if source.chain === effect.chain === anchor.chain AND the provider is policy-authorized for that chain; operator-group dedup is PER CHAIN (valid multi-chain observations are not globally rejected).
-5. HEIGHT ORDERING: 0 <= anchor.height <= finalizedHeight <= tipHeight enforced; finalized>tip = impossible_finality; per-chain minConfirmations (finalized-height+1 >= minConfirmations).
-6. AMOUNTS: amountBase must be an actual bounded decimal STRING (/^\d{1,40}$/); numbers are rejected, never String()-coerced.
-7. CHAIN-SPECIFIC IDENTITY: idForm (tx/sig) validated SEPARATELY from hashForm (blockhash). Solana tx signature (64-byte base58, 64–90 chars) is distinct from a 32-byte blockhash/pubkey (32–45). evm/btc = 32-byte hex.
-8. EFFECT KIND included in matching + anchor dedupe signature.
-9-10. VERSIONED, BOUNDED POLICY: version===1; minIndependentSources int>=2; bounded now+maxObsAgeMs; non-empty chains/trustedProviders; trustedProviders authorize only known chains; expectedEffectIds = unique bounded non-empty strings. Malformed policy THROWS.
-11. EXACT COVERAGE: any anchor whose effect_id is not in the inventory → unexpected_anchor; every inventory id must be present (omitted → missing_expected_anchor).
-12. MALFORMED OBSERVATIONS/ANCHORS PAUSE, never crash (defensive guards; only policy throws).
-13. DISAGREEMENT AFTER QUORUM: any present-but-different trusted same-chain source → trusted_source_disagreement → pause even if the match count reached quorum.
-14. PROVIDER↔CHAIN AUTHORIZATION: a source on a chain its provider is not authorized for → provider_not_authorized_for_chain.
-15-16. positive multi-chain + confirmation-depth paths verified.
+## v4 closes the 6 v3 false-greens (Codex)
+1. BASE58 CASE-SENSITIVE: hex (evm/btc) compares case-insensitively; base58 (Solana) compares EXACTLY. Distinct-case base58 are distinct 32-byte values and no longer equated.
+2. DECODE, not regex: base58 is decoded and required to be EXACTLY 32 bytes (hash/pubkey) or 64 bytes (signature) AND canonical (encode(decode(x))===x). '1'*44 / '1'*88 / a 64-byte value as a hash are rejected.
+3. NO JSON.stringify of untrusted input: anchors/observations compared field-by-field; bigint/cyclic fields PAUSE (supplied_anchor_mismatch / malformed_anchor), never throw.
+4. ORDER-INDEPENDENT CONTRADICTION: every trusted same-chain observation is scanned; ANY disagreeing/omitting qualified source → trusted_source_disagreement → pause regardless of order or whether a quorum otherwise matched. (first-wins removed.)
+5. OMISSION = DISAGREEMENT: a healthy, authorized, completeness-complete same-chain source that OMITS an expected effect is an explicit disagreement (it attests the effect absent), not a silent skip.
+6. BOUNDED/VERSIONED/SCALAR POLICY: version===1; minIndependentSources int[2,64]; bounded now/maxObsAgeMs; chains config must be plain objects with non-empty SCALAR networkId/protocolVersion (empty string / boolean / array rejected); expectedAnchors size [1,256]; provider chains bounded; anchors/sources arrays bounded. No broad catch-to-success.
+7. CONTENT PINNED IN POLICY: policy.expectedAnchors is the TRUSTED manifest (kind/chain/identity/assetId/height/blockHash/amountBase) per effect. Supplied anchors must equal the manifest; labels alone (effect_id) do NOT pin content.
 
-## Policy (authoritative; validate-or-THROW)
-{ version:1, minIndependentSources:int>=2, now:int(ms), maxObsAgeMs:int>0,
-  chains:{<chain>:{ networkId, protocolVersion, idForm, hashForm, minConfirmations? }},
+## Policy
+{ version:1, minIndependentSources:int[2,64], now:int(ms), maxObsAgeMs:int(0,86400000],
+  chains:{<chain>:{ networkId:scalar, protocolVersion:scalar, idForm, hashForm, minConfirmations? }},
   trustedProviders:{<id>:{ operatorGroup, chains:[authorized...] }},
-  expectedEffectIds:[unique bounded strings] }
-idForm/hashForm ∈ { evm, btc, sol-sig, sol-hash }.
+  expectedAnchors:{<effect_id>:{ kind, chain, identity, assetId, height, blockHash, amountBase(string) }} }
+idForm/hashForm ∈ { evm, btc, sol-sig(64B), sol-hash(32B) }.
 
-## Anchor / effect (exact identity)
-anchor { effect_id, kind, chain, identity, assetId, height, blockHash, amountBase(string) }
-effect { kind, chain, identity, assetId, height, blockHash, amountBase(string) }
-Match requires kind + chain(bound to source) + identity + assetId + height + blockHash + amount(BigInt) ALL equal, finalized and >= minConfirmations, by >= minIndependentSources distinct operator groups on that chain, with no disagreeing trusted same-chain source.
+## Match rule (per manifest effect)
+qualified = healthy sources on the effect's chain (provider authorized). EVERY qualified source must positively attest and exactly match the manifest (kind+chain+identity+assetId+height+blockHash+amount, finalized within minConfirmations, 0<=height<=finalized<=tip); any omission/mismatch → disagreement → pause. Then require >= minIndependentSources distinct operator groups agreeing. Supplied anchor must equal the manifest. 21/21 adversarial tests (6 defect classes + order invariance both directions + content-pin + positives).
 
 ## Caveats
-Pure logic only. Operator-group/provider mappings are configuration attestations, not cryptographic proof of independence; a reviewed integrator must supply trustworthy observations and enforce the pause. 22/22 adversarial tests (all 16 classes + positives + multi-chain + confirmation depth).
+Pure logic. Provider/operator-group mappings and the manifest are trusted configuration supplied by a reviewed integrator, not cryptographic proof of independence; the integrator must supply trustworthy observations and enforce any pause. This is detection evidence, not a live watchdog.
