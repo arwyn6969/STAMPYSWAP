@@ -5,13 +5,10 @@ const { ethers } = require('ethers')
 const { toEthersWallet } = require('@emblemvault/auth-sdk/signers/ethers')
 const fs = require('fs')
 const path = require('path')
+const networks = require('./network-config')
 
 const KEYPATH = path.join(__dirname, '.evm-deployer.json')
-const RPC = {
-  base: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
-  ethereum: process.env.ETH_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com',
-  'base-mainnet': process.env.BASE_MAINNET_RPC || 'https://mainnet.base.org',
-}
+const RPC = Object.fromEntries(Object.entries(networks.EVM_CHAINS).map(([chain, config]) => [chain, process.env[config.rpcEnv] || config.defaultRpc]))
 
 function loadWallet() {
   try { if (fs.existsSync(KEYPATH)) return new ethers.Wallet(JSON.parse(fs.readFileSync(KEYPATH, 'utf8')).privateKey) } catch (_) {}
@@ -22,22 +19,26 @@ function loadWallet() {
   try { fs.writeFileSync(KEYPATH, JSON.stringify({ privateKey: w.privateKey, address: w.address }), { mode: 0o600 }) } catch (_) {}
   return new ethers.Wallet(w.privateKey)
 }
-const baseWallet = loadWallet()
+let baseWallet
+function wallet() { if (!baseWallet) baseWallet = loadWallet(); return baseWallet }
 const _providers = {}
 const _signers = {}
 
 function provider(chain) {
-  if (!_providers[chain]) _providers[chain] = new ethers.JsonRpcProvider(RPC[chain], undefined, { staticNetwork: true })
+  if (!_providers[chain]) _providers[chain] = new networks.CheckedEvmProvider(chain)
   return _providers[chain]
 }
 function signer(chain) {
-  if (!_signers[chain]) _signers[chain] = new ethers.NonceManager(baseWallet.connect(provider(chain)))
+  networks.requireIndependentSigning(chain)
+  if (!_signers[chain]) _signers[chain] = new ethers.NonceManager(wallet().connect(provider(chain)))
   return _signers[chain]
 }
 // Emblem-managed EVM signer (the vault's EVM address, signed via Emblem — no raw key).
 // Can sign contract CALLS (mint) but NOT deploys (Emblem ethers signer rejects null `to`).
 const _emblem = {}
 async function emblemSigner(chain) {
+  networks.requireIndependentSigning(chain)
+  await networks.assertEvmNetwork(provider(chain), chain)
   if (!_emblem[chain]) _emblem[chain] = await toEthersWallet({ apiKey: process.env.EMBLEM_API_KEY }, provider(chain))
   return _emblem[chain]
 }
@@ -55,4 +56,5 @@ function serialize(chain, fn) {
   return next
 }
 
-module.exports = { provider, signer, emblemSigner, emblemAddress, serialize, address: baseWallet.address, RPC }
+async function checkedProvider(chain) { const rpc = provider(chain); await networks.assertEvmNetwork(rpc, chain); return rpc }
+module.exports = { provider, checkedProvider, signer, emblemSigner, emblemAddress, serialize, get address() { return wallet().address }, RPC }

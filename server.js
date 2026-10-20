@@ -15,12 +15,106 @@ const acme = (() => { try { return require('./acme') } catch (_) { return null }
 const prices = require('./prices') // indicative USD/BTC pricing (SRC-20 market + XCP dispensers)
 const recovery = require('./recovery') // durable-recovery decision logic (audit R05/F06) — pure, unit-tested
 const labels = require('./labels') // on-chain provenance labels (canonical cross-protocol identity) — pure, unit-tested
+const intentBindings = require('./intent-bindings') // versioned, exact action/chain/asset/transaction signing domains
+const claimsReport = require('./claims-report') // bounded read-only accounting claims; never chain solvency evidence
 const squads = (() => { try { return require('./squads') } catch (_) { return null } })() // Squads v4 multisig (Solana authority upgrade)
 const safe = (() => { try { return require('./safe') } catch (_) { return null } })() // Safe multisig (EVM authority upgrade)
 const { Verifier: Bip322Verifier } = require('bip322-js') // Phase 5: real BIP-322 proof verification
 
 const app = express()
 app.use(express.json({ limit: '64kb' })) // bound request bodies
+
+// Upstream exceptions can contain paid RPC URLs, headers and API tokens. Never return
+// their messages, even for an apparently familiar error code. Public text is fixed here;
+// hand-authored request validation responses below remain useful and unchanged.
+const PUBLIC_ERRORS = Object.freeze({
+  SERVICE_UNAVAILABLE: 'service temporarily unavailable — request refused; retry later or contact the operator',
+  UNFUNDED: 'chain fee payer is unfunded — check the public authority status',
+  BADADDR: 'recipient is not a valid nonzero address',
+  GATED: 'custody release is gated — audited go-ahead required',
+  LOCKED: 'another operation holds the asset lock — retry later',
+  NETWORK_MISMATCH: 'RPC network identity mismatch — request refused',
+  CHAIN_IDENTITY_MISMATCH: 'RPC network identity mismatch — request refused',
+  INDEPENDENT_SIGNING_REQUIRED: 'mainnet signing requires independently reviewed approvals',
+  RPC_UNCERTAIN: 'RPC service unavailable — request refused',
+  MINT_MISSING: 'registered mint is missing — reconciliation required',
+  MINT_IDENTITY_MISMATCH: 'registered mint identity does not match — reconciliation required',
+  MINT_SUPPLY_OVERFLOW: 'requested mint exceeds token supply capacity'
+})
+function publicErrorCode(error) {
+  const code = error && error.code
+  return typeof code === 'string' && Object.hasOwn(PUBLIC_ERRORS, code) ? code : 'SERVICE_UNAVAILABLE'
+}
+function publicError(error) { return PUBLIC_ERRORS[publicErrorCode(error)] }
+function publicFundingAddress(address, chain) {
+  if (typeof address !== 'string') return null
+  if (isSolanaChain(chain)) {
+    try { return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address) && bs58.decode(address).length === 32 ? address : null } catch (_) { return null }
+  }
+  return /^0x[0-9a-fA-F]{40}$/.test(address) ? address : null
+}
+const PUBLIC_BURN_REASONS = new Set([
+  'tx not found', 'tx failed', 'burn receipt is not bound to its canonical block', 'burn block is not finalized',
+  'burn amount must be positive', 'no matching exact burn (Transfer→0x0) of that contract/amount',
+  'burn amount must be an exact integer', 'burn amount outside SPL u64 capacity', 'mint metadata is not supported',
+  'on-chain mint decimals differ from the requested decimals', 'tx not found or not yet FINALIZED',
+  'tx failed or execution result unavailable', 'no matching burn of that mint/amount'
+])
+function publicBurnReason(reason) {
+  return typeof reason === 'string' && PUBLIC_BURN_REASONS.has(reason) ? reason : 'burn verification unavailable or invalid — request refused'
+}
+// Status adapters are not an exception boundary: custody.status(), for example, can
+// return an error as data. Project only public status fields, omit endpoints/debug/notes,
+// and replace nested diagnostic strings. Bounds fail closed rather than return a partial view.
+const PUBLIC_STATUS_FIELDS = new Set(('provider managed vault_id address addresses live deposits_live configured multisig vault threshold members owners '
+  + 'fee_payer fee_payer_sol network model signing_available authority_model gas_deployer balance decimals chain genesis rpc_configured '
+  + 'chainId explorer writes_enabled independent_signing_required signer_independence_verified executor_deployer deployer_eth code error reason '
+  + 'p2pkh p2wpkh p2sh p2tr p2wsh p2shP2wpkh').split(' '))
+function publicStatus(status) {
+  let remaining = 1024
+  function visit(value, depth = 0) {
+    if (--remaining < 0 || depth > 6) throw new Error('status exceeds public response bounds')
+    if (value == null || typeof value === 'boolean' || typeof value === 'number') return value
+    if (typeof value === 'string') return value.length <= 512 && !/[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : undefined
+    if (Array.isArray(value)) {
+      if (value.length > 128) throw new Error('status array exceeds public response bounds')
+      return value.map(item => visit(item, depth + 1)).filter(item => item !== undefined)
+    }
+    if (typeof value !== 'object') return undefined
+    const result = {}
+    for (const [key, item] of Object.entries(value)) {
+      if (!PUBLIC_STATUS_FIELDS.has(key)) continue
+      if (key === 'error' || key === 'reason') { result[key] = publicError(value); continue }
+      if (key === 'code') { result[key] = publicErrorCode(value); continue }
+      const safe = visit(item, depth + 1)
+      if (safe !== undefined) result[key] = safe
+    }
+    return result
+  }
+  try { return visit(status) || {} }
+  catch (_) { return { available: false, live: false, deposits_live: false, signing_available: false, error: publicError(), code: 'SERVICE_UNAVAILABLE' } }
+}
+
+const MAINNET_CHAINS = new Set(['solana-mainnet', 'base-mainnet', 'ethereum-mainnet'])
+function isSolanaChain(chain) { return chain === 'solana' || chain === 'solana-mainnet' }
+function mainnetWriteHold(chain) {
+  return MAINNET_CHAINS.has(chain) ? { status: 503, body: {
+    error: 'mainnet financial operations are closed pending independently controlled signing and release verification',
+    release_hold: true, independent_signing_required: true, chain
+  } } : null
+}
+// No environment/operator override. Adding an RPC endpoint must never arm real-value writes.
+app.use((req, res, next) => {
+  if (!['GET', 'HEAD'].includes(req.method) && normPath(req.path).startsWith('/api/')) {
+    const body = req.body || {}
+    for (const chain of [body.chain, body.from_chain, body.to_chain]) {
+      const hold = mainnetWriteHold(chain)
+      if (hold) return res.status(hold.status).json(hold.body)
+    }
+  }
+  next()
+})
+
 
 // ============================================================================
 // MAINTENANCE CONTAINMENT — audit 2345961 (repair plan PR1). ONE enforcement point,
@@ -242,7 +336,7 @@ app.get('/api/chains', async (_req, res) => {
   try {
     const rows = await dbQuery('SELECT chain, display_name, kind, release_gate, live, sort_order FROM supported_chains ORDER BY sort_order')
     res.json({ chains: rows })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // ---- discovery: look up a ticker by PROVENANCE, not treat ticker as identity ----
@@ -426,7 +520,7 @@ app.get('/api/discover', async (req, res) => {
 
     res.json({ found: true, query: raw, asset })
   } catch (e) {
-    res.status(500).json({ error: String(e.message || e) })
+    res.status(500).json({ error: publicError(e), code: publicErrorCode(e) })
   }
 })
 
@@ -437,12 +531,12 @@ app.get('/api/registry', async (_req, res) => {
       holder_count, verification_status, whitelisted FROM canonical_assets
       ORDER BY whitelisted DESC, holder_count DESC LIMIT 100`)
     res.json({ assets: rows })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 app.get('/api/health', async (_req, res) => {
   try { const h = await stamp('/health'); res.json({ ok: true, indexer: h.status }) }
-  catch (e) { res.json({ ok: false, error: String(e.message || e) }) }
+  catch (e) { res.json({ ok: false, error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // ============================================================================
@@ -481,12 +575,12 @@ function authMessage(nonce) {
 // made the on-chain deposit), authorizing the mint to a specific receive address. Verifying it
 // (BIP-322) + matching the on-chain source closes deposit front-running: an observer who merely
 // sees the deposit can't produce this signature, so they can't claim the mint to their own address.
-function depositBindingMessage({ source, receive, tick, amount }) {
-  return `StampySwap deposit authorization\nSource: ${source}\nReceive: ${receive}\nAsset: ${tick}\nAmount: ${amount}\nI control the source Bitcoin address and authorize minting this deposit to the receive address above.`
+function depositBindingMessage({ asset, source, receive, amount, txid, chain }) {
+  return intentBindings.depositMessage({ group: GROUP, asset, vault: VAULT_ADDR, amount,
+    sourceAddress: source, depositTxid: txid, destinationChain: chain, destinationAddress: receive })
 }
-// Optional back-office override so the operator can credit deposits without a user signature during
-// the current single-operator phase. From env OPERATOR_TOKEN or a local .operator-token file
-// (server-side, not web-served). Unset → binding is REQUIRED for everyone (the secure default).
+// Operator authentication controls access to back-office endpoints only. Ownership proofs
+// and burn consumption are required for every caller, including operators.
 const _fs = require('fs')
 function operatorToken() {
   try { const f = path.join(__dirname, '.operator-token'); if (_fs.existsSync(f)) return _fs.readFileSync(f, 'utf8').trim() } catch (_) {}
@@ -544,7 +638,7 @@ app.post('/api/auth/verify-solana', async (req, res) => {
         VALUES (?, 'solana', ?, ?, 1, ?, ?)`, [n.role, wallet || null, address, nonce, now()])
     } catch (_) {}
     res.json({ verified: true, address, chain: 'solana', role: n.role })
-  } catch (e) { res.status(500).json({ verified: false, error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ verified: false, error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Bitcoin / deposit side — Wonder Wallet returns a BIP-322 proof at connect.
@@ -574,7 +668,7 @@ app.post('/api/auth/verify-bitcoin', async (req, res) => {
     } catch (_) {}
     res.json({ verified, method, address, chain: 'bitcoin',
       note: verified ? 'Bitcoin address ownership verified via BIP-322.' : ('not verified' + (reason ? ': ' + reason : '')) })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // EVM (Base/Ethereum) address ownership — verify a personal_sign of the nonce via ethers.
@@ -592,7 +686,7 @@ app.post('/api/auth/verify-evm', async (req, res) => {
         [wallet || 'evm', address, verified ? 1 : 0, nonce || null, now()])
     } catch (_) {}
     res.json({ verified, address, chain: 'evm', note: verified ? 'EVM address ownership verified (personal_sign).' : 'not verified: signature does not match address' })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // ============================================================================
@@ -605,13 +699,19 @@ app.post('/api/auth/verify-evm', async (req, res) => {
 // confirm-deposit hook (which fabricated collateral) is disabled so it can't inject fake
 // backing into real assets. Set STAMPY_PREVIEW=1 only to re-enable the sandbox sim hooks.
 const PREVIEW = String(process.env.STAMPY_PREVIEW || process.env.STAMPY_DEVNET || '0') !== '0'
-const CONFIRMS = parseInt(process.env.DEPOSIT_CONFIRMATIONS || '2', 10)
+function confirmationPolicy(name, fallback = 6) {
+  const raw = process.env[name] == null ? String(fallback) : process.env[name]
+  if (!/^[0-9]+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 6 || Number(raw) > 100000)
+    throw new Error(`${name} must be an integer between 6 and 100000; Bitcoin custody requires at least six confirmations`)
+  return Number(raw)
+}
+const CONFIRMS = confirmationPolicy('DEPOSIT_CONFIRMATIONS')
 // The stamp bridge burns SRC-20 IRREVERSIBLY and releases a stamp — a reorg that un-burns after
 // release would be a double-spend, so it requires deeper burial than a normal (reversible) deposit.
-const STAMP_BRIDGE_CONFIRMS = parseInt(process.env.STAMP_BRIDGE_CONFIRMATIONS || '6', 10) // grok: irreversible one-way bridge needs deep burial vs a BTC reorg (was 3)
+const STAMP_BRIDGE_CONFIRMS = confirmationPolicy('STAMP_BRIDGE_CONFIRMATIONS') // grok: irreversible one-way bridge needs deep burial vs a BTC reorg (was 3)
 // ACME (acme.pics) deposit finality — acme.pics surfaces confirmed sends only, but we still gate
 // on N confirmations to be reorg-safe (CORTEX reorgs undo affected ops). Configurable.
-const ACME_CONFIRMS = parseInt(process.env.ACME_CONFIRMATIONS || '3', 10) // P1 (audit): ≥3 on mainnet wraps
+const ACME_CONFIRMS = confirmationPolicy('ACME_CONFIRMATIONS') // P1 (audit): ≥3 on mainnet wraps
 // Custody deposit address = the Emblem vault's managed BTC address (resolved at startup).
 // Real, managed, no raw key. Deposit SOLICITATION stays gated (custody.CUSTODY_LIVE) until audit.
 let VAULT_ADDR = process.env.VAULT_DEPOSIT_ADDRESS || null
@@ -673,7 +773,7 @@ app.get('/api/bridge/inspect', async (req, res) => {
     const amt = String(req.query.amount || '0')
     if (!tick || !addr) return res.status(400).json({ error: 'tick and addr required' })
     res.json({ tick, addr, expected: amt, threshold: CONFIRMS, result: await checkDeposit(tick, addr, amt, req.query.txid) })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Precise, txid-attributed deposit verification (Phase 5). Deterministic per deposit —
@@ -704,7 +804,7 @@ app.get('/api/bridge/inspect-txid', async (req, res) => {
     const txid = String(req.query.txid || ''), tick = String(req.query.tick || '').replace(/^\$+/, '')
     if (!txid || !tick) return res.status(400).json({ error: 'txid and tick required' })
     res.json({ txid, threshold: CONFIRMS, result: await verifyDepositTxid(txid, tick, String(req.query.amount || '0'), req.query.addr || null) })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 app.get('/api/bridge/config', (_req, res) => {
@@ -738,7 +838,7 @@ app.post('/api/bridge/intent', async (req, res) => {
         ? 'PREVIEW: custody address not provisioned — do not send. The relayer is verifiable via /api/bridge/inspect.'
         : `Send exactly ${amount} ${asset.exact_ticker} to ${VAULT_ADDR}. The relayer will credit it after ${CONFIRMS} confirmations.`
     })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Poll a deposit intent — runs the live relayer check.
@@ -764,7 +864,7 @@ app.get('/api/bridge/intent/:id', async (req, res) => {
     }
     res.json({ intent_id: it.id, tick: it.exact_ticker, amount: it.amount, status: it.status, txid: it.btc_txid || null,
       vault_address: it.vault_address, preview: PREVIEW, confirmations_required: CONFIRMS, check })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Record the broadcast txid of a deposit. IDEMPOTENT: a txid can credit only ONE intent
@@ -777,7 +877,7 @@ app.post('/api/bridge/intent/:id/txid', async (req, res) => {
     if (dup.length) return res.status(409).json({ error: 'txid already used to credit another deposit', other_intent: dup[0].id })
     const r = await dbExec('UPDATE collateral_ledger SET btc_txid=? WHERE id=? AND direction=\'deposit\'', [String(txid), req.params.id])
     res.json({ updated: r.changes > 0, txid })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Lightweight background sweep — only touches PENDING/DETECTED intents; no-op when idle.
@@ -810,7 +910,7 @@ setInterval(relayerSweep, 60000).unref?.()
 //        circulating(representation)  ≤  confirmed collateral  ≤  source max supply
 // Every mint rounds the amount DOWN to the destination chain's precision, so a
 // representation can never exceed its backing. Nothing here can over-issue.
-const DEST_DECIMALS = { solana: 9, base: 18, ethereum: 18, 'base-mainnet': 18 } // SPL conventionally ≤9; EVM 18
+const DEST_DECIMALS = { solana: 9, 'solana-mainnet': 9, base: 18, ethereum: 18, 'base-mainnet': 18, 'ethereum-mainnet': 18 } // SPL conventionally ≤9; EVM 18
 
 // Public chain reconciliation found unburned excess at these historical devnet mints.
 // Fungible tokens cannot be separated by a ledger cap or a holder signature. Hold the
@@ -914,13 +1014,17 @@ app.post('/api/preview/confirm-deposit', async (req, res) => {
       VALUES (?, 'deposit', ?, 'confirmed', ?)`, [asset.id, String(amount), now()])
     res.json({ simulated: true, tick: asset.exact_ticker, amount: String(amount),
       collateral: fromBaseUnits(await collateralBase(asset.id)), note: 'PREVIEW: simulated confirmed deposit (no real value).' })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Solana mint authority (interim single-key stand-in for the production multisig).
-app.get('/api/mint/authority', async (_req, res) => {
-  try { res.json(await solMint.authorityInfo()) }
-  catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+app.get('/api/mint/authority', async (req, res) => {
+  try {
+    const chain = String(req.query.chain || 'solana')
+    if (!isSolanaChain(chain)) return res.status(400).json({ error: 'unsupported Solana chain identity' })
+    res.json(publicStatus(await solMint.authorityInfo(chain)))
+  }
+  catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 // One-time migration: hand existing raw-key-authority Solana mints to the Emblem vault.
 app.post('/api/mint/migrate-authority', async (req, res) => {
@@ -937,7 +1041,7 @@ app.post('/api/mint/migrate-authority', async (req, res) => {
       const results = []
       for (const r of reps) {
         try { results.push({ contract: r.dest_address, ...(await evmMint.transferOwnershipTo(chain, r.dest_address, safeAddr)) }) }
-        catch (e) { results.push({ contract: r.dest_address, error: String(e.message || e) }) }
+        catch (e) { results.push({ contract: r.dest_address, error: publicError(e), code: publicErrorCode(e) }) }
       }
       return res.json({ target, chain, safe: safeAddr, migrated: results })
     }
@@ -953,10 +1057,10 @@ app.post('/api/mint/migrate-authority', async (req, res) => {
       try {
         const out = target === 'squads' ? await solMint.setMintAuthority(r.dest_address, squadsVault) : await solMint.migrateAuthority(r.dest_address)
         results.push({ mint: r.dest_address, ...out })
-      } catch (e) { results.push({ mint: r.dest_address, error: String(e.message || e) }) }
+      } catch (e) { results.push({ mint: r.dest_address, error: publicError(e), code: publicErrorCode(e) }) }
     }
     res.json({ target, squads_vault: squadsVault, migrated: results })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // EVM deployer/authority for Base + Ethereum (same address on both; fund per chain).
@@ -964,8 +1068,8 @@ app.get('/api/mint/evm-authority', async (req, res) => {
   try {
     const chain = String(req.query.chain || 'base')
     if (!evmMint.isSupported(chain)) return res.status(400).json({ error: 'unsupported chain' })
-    res.json(await evmMint.authorityInfo(chain))
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+    res.json(publicStatus(await evmMint.authorityInfo(chain)))
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Deposit-gated mint core — enforces the solvency invariant, mints on-chain, records.
@@ -989,15 +1093,17 @@ async function performMint(tick, amount, receive_address, chain = 'solana', asse
 // if the cross-process lock can't be acquired — a mint NEVER proceeds without it.
 async function mintCritical(asset, amount, receive_address, chain, opKey = null) {
   let holder
-  try { holder = await acquireAssetLock(asset.id) } catch (e) { return { status: 503, body: { error: e.message, retryable: true, locked: true } } }
+  try { holder = await acquireAssetLock(asset.id) } catch (e) { return { status: 503, body: { error: publicError(e), code: publicErrorCode(e), retryable: true, locked: true } } }
   try { return await mintCriticalCore(asset, amount, receive_address, chain, opKey) }
   finally { await releaseAssetLock(asset.id, holder) }
 }
 async function mintCriticalCore(asset, amount, receive_address, chain, opKey = null) {
+  const releaseHold = mainnetWriteHold(chain)
+  if (releaseHold) return releaseHold
   // Effective on-chain decimals: EVM = 18; Solana sized so max_supply fits u64 (≤9, e.g. BOSHI→7).
   // Round the mint DOWN to THIS precision so DB accounting == on-chain supply exactly (no drift),
   // and so the representation can never exceed its backing.
-  const destDec = chain === 'solana' ? solanaDecimalsFor(asset.max_supply) : DEST_DECIMALS[chain]
+  const destDec = isSolanaChain(chain) ? solanaDecimalsFor(asset.max_supply) : DEST_DECIMALS[chain]
   const mintAmt = floorToDecimals(amount, destDec) // round DOWN to real dest precision
   const mintBase = toBaseUnits(mintAmt)
   if (mintBase <= 0n) return { status: 400, body: { error: `amount below ${chain} precision (${destDec} dp)` } }
@@ -1054,7 +1160,7 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
     availableCollateral = (await collateralBase(asset.id)) - (await redeemedBase(asset.id))
   } catch (e) {
     if (opKey) await opFail(opKey)
-    return { status: 503, body: { error: 'could not read backing/liability state — mint refused (fail-closed), retry: ' + String(e.message || e), retryable: true } }
+    return { status: 503, body: { error: 'could not read backing/liability state — mint refused (fail-closed), retry: ' + publicError(e), retryable: true } }
   }
   const circulating = rep ? await repCirculatingBase(rep.id).catch(() => 0n) : 0n // display figure for the response only
   if (totalCirculating + reserved + mintBase > availableCollateral) {
@@ -1089,26 +1195,26 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
     }
   } catch (e) {
     if (opKey) await opFail(opKey)
-    return { status: 503, body: { error: 'could not establish representation identity: ' + String(e.message || e), retryable: true } }
+    return { status: 503, body: { error: 'could not establish representation identity: ' + publicError(e), retryable: true } }
   }
 
   // ---- execute on-chain FIRST, then record ----
   let mintAddr, signature, explorer = null, real = false
-  if (chain === 'solana') {
+  if (isSolanaChain(chain)) {
     try {
       const amountBase = toBaseUnits(mintAmt, destDec) // same rounding as accounting → no drift
       if (amountBase > U64_MAX) return { status: 400, body: { error: 'amount exceeds Solana SPL u64 capacity even at 0 decimals' } }
       // Authority: Emblem managed signer (default) OR the Squads M-of-N multisig (propose→approve→execute).
       const useSquads = solanaAuthorityMode() === 'squads' && squads
       const r = useSquads
-        ? await squads.mintViaMultisig({ existingMint: rep && rep.dest_address, amountBase, decimals: destDec, recipient: receive_address })
-        : await solMint.mintTokens({ existingMint: rep && rep.dest_address, amountBase, decimals: destDec, recipient: receive_address })
+        ? await squads.mintViaMultisig({ existingMint: rep && rep.dest_address, amountBase, decimals: destDec, recipient: receive_address, chain })
+        : await solMint.mintTokens({ existingMint: rep && rep.dest_address, amountBase, decimals: destDec, recipient: receive_address, chain })
       mintAddr = r.mint; signature = r.signature; explorer = r.explorer; real = true
     } catch (e) {
       // UNFUNDED = nothing was signed/sent (pre-send) → retryable; anything else is uncertain → reconcile.
       if (opKey) await (e.code === 'UNFUNDED' ? opFail(opKey) : opReconcile(opKey))
-      if (e.code === 'UNFUNDED') return { status: 503, body: { error: e.message, needs_funding: e.authority, chain } }
-      return { status: 502, body: { error: 'solana mint failed (outcome uncertain — reconcile before retry): ' + String(e.message || e), reconcile: true } }
+      if (e.code === 'UNFUNDED') return { status: 503, body: { error: publicError(e), code: publicErrorCode(e), needs_funding: publicFundingAddress(e.authority, chain), chain } }
+      return { status: 502, body: { error: 'solana mint failed (outcome uncertain — reconcile before retry): ' + publicError(e), reconcile: true } }
     }
   } else if (evmMint.isSupported(chain)) {
     try {
@@ -1130,9 +1236,9 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
     } catch (e) {
       // UNFUNDED/BADADDR = pre-send (nothing minted) → retryable; anything else is uncertain → reconcile.
       if (opKey) await ((e.code === 'UNFUNDED' || e.code === 'BADADDR') ? opFail(opKey) : opReconcile(opKey))
-      if (e.code === 'UNFUNDED') return { status: 503, body: { error: e.message, needs_funding: e.authority, chain } }
-      if (e.code === 'BADADDR') return { status: 400, body: { error: e.message } }
-      return { status: 502, body: { error: `${chain} mint failed (outcome uncertain — reconcile before retry): ` + String(e.message || e), reconcile: true } }
+      if (e.code === 'UNFUNDED') return { status: 503, body: { error: publicError(e), code: publicErrorCode(e), needs_funding: publicFundingAddress(e.authority, chain), chain } }
+      if (e.code === 'BADADDR') return { status: 400, body: { error: publicError(e), code: publicErrorCode(e) } }
+      return { status: 502, body: { error: `${chain} mint failed (outcome uncertain — reconcile before retry): ` + publicError(e), reconcile: true } }
     }
   } else { if (opKey) await opFail(opKey); return { status: 400, body: { error: 'unsupported destination chain' } } } // grok: release the reservation, don't strand it
 
@@ -1156,13 +1262,13 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
       return { status: 500, body: { error: 'representation row could not be created after an on-chain mint — reconciliation required (backing stays reserved, mint NOT marked complete)', reconcile: true, mint_address: mintAddr, signature } }
     }
   }
-  if (!repRow.dest_address || (chain === 'solana' ? repRow.dest_address !== mintAddr : repRow.dest_address.toLowerCase() !== mintAddr.toLowerCase())) {
+  if (!repRow.dest_address || (isSolanaChain(chain) ? repRow.dest_address !== mintAddr : repRow.dest_address.toLowerCase() !== mintAddr.toLowerCase())) {
     if (opKey) await opReconcile(opKey)
     return { status: 500, body: { error: 'minted token differs from the registered identity — reconciliation required', reconcile: true, mint_address: mintAddr, signature } }
   }
   // once-only increment keyed to this logical mint (opKey if present, else the on-chain tx signature)
   const mintEventKey = `mint:${opKey || ('tx:' + signature)}`
-  const inc = await applyCirculatingDelta(repRow.id, mintBase, mintEventKey).catch(e => ({ ok: false, reason: String(e.message || e) }))
+  const inc = await applyCirculatingDelta(repRow.id, mintBase, mintEventKey).catch(e => ({ ok: false, reason: publicError(e) }))
   if (!inc || !inc.ok) { if (opKey) await opReconcile(opKey); return { status: 500, body: { error: 'mint accounting write failed — on-chain mint done, op kept for reconciliation: ' + (inc && inc.reason), reconcile: true } } }
   await dbExec('UPDATE representations SET status=?, updated_at=? WHERE id=?', ['CANONICAL', now(), repRow.id]).catch(() => {})
   await dbExec(`INSERT INTO collateral_ledger (canonical_id, direction, amount, dest_chain, dest_tx, status, created_at)
@@ -1181,8 +1287,8 @@ async function mintCriticalCore(asset, amount, receive_address, chain, opKey = n
   // The on-chain mint + accounting event ARE durable (events are authoritative, solvency already counts
   // them), so this is NOT insolvent and NOT a re-mint risk — but the op is still 'reserved' and needs
   // reconciliation, so the response must not claim a fully-completed operation.
-  const baseNote = real ? (chain === 'solana' ? 'Real SPL token minted on Solana devnet; solvency-checked.' : `Real ERC-20 minted on ${chain} testnet; solvency-checked.`) : 'accounting real; on-chain step unavailable.'
-  return { status: 200, body: { minted: true, real, chain, network: chain === 'solana' ? 'devnet' : 'testnet',
+  const baseNote = real ? (isSolanaChain(chain) ? 'Real SPL token minted on Solana devnet; solvency-checked.' : `Real ERC-20 minted on ${chain} testnet; solvency-checked.`) : 'accounting real; on-chain step unavailable.'
+  return { status: 200, body: { minted: true, real, chain, network: isSolanaChain(chain) ? 'devnet' : 'testnet',
     tick: asset.exact_ticker, amount_requested: String(amount), amount_minted: mintAmt, rounded: mintAmt !== String(amount),
     dest_decimals: destDec, mint_address: mintAddr, receive_address, signature, explorer,
     circulating: fromBaseUnits(newCirc), total_circulating: fromBaseUnits(totalCirculating + mintBase),
@@ -1204,7 +1310,7 @@ app.post('/api/mint', async (req, res) => {
     if (op_key.startsWith('representation-deploy:')) return res.status(400).json({ error: 'reserved internal operation key prefix' })
     const r = await performMint(tick, amount, receive_address, chain, null, op_key)
     res.status(r.status).json(r.body)
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // CROSS-CHAIN MOVE — burn a representation on one chain, mint it on another. Same collateral
@@ -1216,26 +1322,26 @@ app.post('/api/mint', async (req, res) => {
 const BURN_FINALITY = { base: 3, ethereum: 12, 'base-mainnet': parseInt(process.env.BASE_MAINNET_BURN_CONFIRMATIONS || '20', 10) }
 async function verifyRepBurn(chain, txid, repAddress, amount, asset = null) {
   let r, wantBase
-  if (chain === 'solana') {
+  if (isSolanaChain(chain)) {
     // Solana burns are denominated at the SPL mint's ACTUAL decimals — solanaDecimalsFor(max_supply),
     // which is ≤9 and can be smaller for large-supply assets (e.g. BOSHI→7). Comparing at a hardcoded
     // 9dp would mis-scale the exact-amount check. Use the asset's real dp when we know the asset.
     const solDec = asset ? solanaDecimalsFor(asset.max_supply) : DEST_DECIMALS.solana
     wantBase = BigInt(toBaseUnits(floorToDecimals(amount, solDec), solDec))
-    r = await solMint.verifyBurn(txid, repAddress, wantBase.toString())
+    r = await solMint.verifyBurn(txid, repAddress, wantBase.toString(), chain, solDec)
   } else if (chain in DEST_DECIMALS) {
     const tok = floorToDecimals(amount, DEST_DECIMALS[chain])
     wantBase = BigInt(_ethers.parseUnits(String(tok), 18).toString()) // the evm verifier compares at 18dp
-    r = await evmMint.verifyBurn(chain, txid, repAddress, tok)
+    r = await evmMint.verifyBurn(chain, txid, repAddress, tok, asset ? labels.srcOriginFor(asset) : null)
   } else return { valid: false, reason: 'unsupported source chain' }
-  if (!r || !r.valid) return r || { valid: false, reason: 'burn verification failed' }
+  if (!r || !r.valid) return { valid: false, reason: publicBurnReason(r && r.reason), code: publicErrorCode(r) }
   // R04/F10 (audit): EXACT-amount entitlement. The on-chain burn must EQUAL the requested amount, not
   // merely be ≥ it — otherwise a partial redeem/move consumes the whole (larger) one-shot burn and
   // strands the remainder. Burn EXACTLY what you redeem/move.
   if (r.burned != null && BigInt(r.burned) !== wantBase)
     return { valid: false, reason: `on-chain burn is ${r.burned} base units, but you requested ${wantBase} — burn EXACTLY the amount you redeem/move`, exact: false, burned: String(r.burned) }
   // Solana finality is enforced in the verifier (queried at 'finalized'); EVM needs depth.
-  if (chain !== 'solana') {
+  if (!isSolanaChain(chain) && !MAINNET_CHAINS.has(chain)) {
     const min = BURN_FINALITY[chain] != null ? BURN_FINALITY[chain] : 12
     if ((r.confirmations || 0) < min) return { valid: false, reason: `burn not final yet — ${r.confirmations || 0}/${min} confirmations required`, confirmations: r.confirmations || 0, final: false }
   }
@@ -1244,7 +1350,7 @@ async function verifyRepBurn(chain, txid, repAddress, amount, asset = null) {
 // ---- PR3 (audit): shared consume-once burn registry + owner→recipient authorization ----
 // Normalize a burn txid: EVM hashes are hex (case-insensitive) → lowercase; Solana sigs are
 // base58 (CASE-SENSITIVE) → leave untouched. Prevents case-variant replay on EVM.
-function normTxid(chain, txid) { const t = String(txid || '').trim(); return chain === 'solana' ? t : t.toLowerCase() }
+function normTxid(chain, txid) { const t = String(txid || '').trim(); return isSolanaChain(chain) ? t : t.toLowerCase() }
 async function burnConsumed(chain, txid) { return (await dbQuery('SELECT * FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, txid)]))[0] || null }
 // Atomic claim: the PRIMARY KEY makes the INSERT fail if this burn was already consumed by ANY
 // endpoint (redeem OR move) — so a single burn can never authorize two releases/mints.
@@ -1257,12 +1363,18 @@ async function consumeBurn({ chain, txid, canonical_id, purpose, owner, amount }
 function verifyBurnOwnerSig(chain, owner, msg, sig) {
   if (!owner || !sig) return false
   try {
-    if (chain === 'solana') return nacl.sign.detached.verify(new TextEncoder().encode(msg), bs58.decode(String(sig)), bs58.decode(String(owner)))
+    if (isSolanaChain(chain)) return nacl.sign.detached.verify(new TextEncoder().encode(msg), bs58.decode(String(sig)), bs58.decode(String(owner)))
     return _ethers.verifyMessage(msg, String(sig)).toLowerCase() === String(owner).toLowerCase()
   } catch (_) { return false }
 }
-function moveBindingMsg({ burn_txid, to_chain, to_address, amount }) { return `StampySwap move: burn ${burn_txid} → mint ${amount} on ${to_chain} to ${to_address}` }
-function redeemBindingMsg({ burn_txid, to, amount }) { return `StampySwap redeem: burn ${burn_txid} → release ${amount} to ${to}` }
+function moveBindingMsg({ asset, from_chain, representation, burn_txid, to_chain, to_address, amount }) {
+  return intentBindings.moveMessage({ group: GROUP, asset, vault: VAULT_ADDR, amount,
+    sourceChain: from_chain, representation, burnTxid: burn_txid, destinationChain: to_chain, destinationAddress: to_address })
+}
+function redeemBindingMsg({ asset, chain, representation, burn_txid, to, amount }) {
+  return intentBindings.redeemMessage({ group: GROUP, asset, vault: VAULT_ADDR, amount,
+    sourceChain: chain, representation, burnTxid: burn_txid, destinationAddress: to })
+}
 
 // ---- Durable operation records (audit R05 / F06-F07) — make on-chain effects crash-safe. An op is
 // RESERVED (unique op_key) before the external effect, COMPLETED with its txid after, or marked for
@@ -1287,11 +1399,11 @@ async function opComplete(op_key, tx_id, result) {
   for (let i = 0; i < 4; i++) {
     try {
       await dbExec(`UPDATE operations SET state='completed', tx_id=?, result_json=?, updated_at=? WHERE op_key=?`, [expectedTx, expectedResult, now(), op_key])
-    } catch (e) { reason = String(e.message || e) }
+    } catch (e) { reason = publicError(e) }
     try {
       const row = (await dbQuery('SELECT state, tx_id, result_json FROM operations WHERE op_key=?', [op_key]))[0]
       if (row && row.state === 'completed' && row.tx_id === expectedTx && row.result_json === expectedResult) return { ok: true }
-    } catch (e) { reason = String(e.message || e) }
+    } catch (e) { reason = publicError(e) }
   }
   console.error(`opComplete PERSIST FAILED for ${op_key} (tx ${tx_id}) — RECONCILE: ${reason}`)
   return { ok: false, reason }
@@ -1331,8 +1443,13 @@ async function reservedBase(canonicalId, excludeOpKey) {
 // reads THROW on DB failure (fail-closed, same reason as reservedBase).
 async function repCirculatingBase(repId) {
   const rows = await dbQuery('SELECT delta_base FROM accounting_events WHERE rep_id=?', [repId])
-  let s = 0n; for (const r of rows) s += BigInt(r.delta_base)
-  return s < 0n ? 0n : s
+  let s = 0n
+  for (const r of rows) {
+    if (typeof r.delta_base !== 'string' || !/^-?\d+$/.test(r.delta_base)) throw new Error('invalid accounting event amount')
+    s += BigInt(r.delta_base)
+  }
+  if (s < 0n) throw new Error('negative authoritative representation balance')
+  return s
 }
 async function assetCirculatingBase(canonicalId) {
   // A single query snapshots ALL representations and their events together. Separate per-rep
@@ -1342,11 +1459,15 @@ async function assetCirculatingBase(canonicalId) {
   for (const row of rows) {
     if (!Number.isSafeInteger(row.rep_id) || row.rep_id <= 0 || !Object.prototype.hasOwnProperty.call(row, 'event_key') || !Object.prototype.hasOwnProperty.call(row, 'delta_base'))
       throw new Error('invalid accounting snapshot row')
-    if (row.event_key != null && (typeof row.event_key !== 'string' || row.delta_base == null || !/^-?\d+$/.test(String(row.delta_base))))
+    if (row.event_key != null && (typeof row.event_key !== 'string' || typeof row.delta_base !== 'string' || !/^-?\d+$/.test(row.delta_base)))
       throw new Error('invalid accounting event')
     totals.set(row.rep_id, (totals.get(row.rep_id) || 0n) + (row.event_key == null ? 0n : BigInt(row.delta_base)))
   }
-  let s = 0n; for (const total of totals.values()) s += total < 0n ? 0n : total
+  let s = 0n
+  for (const total of totals.values()) {
+    if (total < 0n) throw new Error('negative authoritative representation balance')
+    s += total
+  }
   return s
 }
 // Sync the display cache column to the authoritative event sum (idempotent; safe to call anytime).
@@ -1403,7 +1524,7 @@ async function applyCirculatingDelta(repId, deltaBase, eventKey) {
   await recordAccountingEvent(repId, eventKey, deltaBase)
   const rows = await dbQuery('SELECT delta_base FROM accounting_events WHERE rep_id=?', [repId])
   let sum = 0n; for (const r of rows) sum += BigInt(r.delta_base)
-  if (sum < 0n) sum = 0n
+  if (sum < 0n) throw new Error('negative authoritative representation balance')
   const target = fromBaseUnits(sum, 18)
   await writeCirculating(repId, target)
   return { ok: true, newCirc: target }
@@ -1452,8 +1573,7 @@ app.post('/api/move', async (req, res) => {
   // F05 (audit): a move mints dest tokens against a source burn. Without binding the burn to the
   // receiver, a caller could front-run someone's public burn and claim the minted output. So a
   // NON-operator must prove they are the burner by signing the move binding (burn_txid → to_chain/
-  // to_address/amount) with the key that burned. Operator header remains a back-office bypass.
-  const operatorMode = isOperator(req)
+  // to_address/amount) with the key that burned. Operators require the same owner authorization.
   try {
     const { tick, from_chain, to_chain, burn_txid, to_address, auth_sig } = req.body || {}
     const amount = parseAmount((req.body || {}).amount)
@@ -1476,8 +1596,8 @@ app.post('/api/move', async (req, res) => {
     if (!burn.valid) return res.status(409).json({ error: 'burn not verified', reason: burn.reason })
     // F05 BIND: the BURNER must authorize THIS move to THIS destination — else anyone could claim
     // another holder's burn to their own address. Signed by the burn owner (EVM EIP-191 / Solana ed25519).
-    if (!operatorMode) {
-      const bmsg = moveBindingMsg({ burn_txid, to_chain, to_address, amount })
+    {
+      const bmsg = moveBindingMsg({ asset, from_chain, representation: fromRep.dest_address, burn_txid, to_chain, to_address, amount })
       if (!verifyBurnOwnerSig(from_chain, burn.owner, bmsg, auth_sig))
         return res.status(401).json({ error: 'authorization required — sign the move binding with the key that burned the source tokens', binding_message: bmsg, burn_owner: burn.owner })
     }
@@ -1545,7 +1665,7 @@ app.post('/api/move', async (req, res) => {
       return { status: 200, body: { moved: true, tick: asset.exact_ticker, amount, from: from_chain, to: to_chain, burn_txid, destination: m.body } }
     })
     res.status(out.status).json(out.body)
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Redemption — burn representation, release collateral. Enforces circulating ≥ amount.
@@ -1579,7 +1699,20 @@ app.post('/api/redeem', async (req, res) => {
         circulating: fromBaseUnits(newCirc), note: 'Representation burned; equivalent collateral released.' } }
     })
     res.status(out.status).json(out.body)
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
+})
+
+// Operator evidence only. One DB read snapshot, no RPC/signing/writes, no inferred holdings.
+app.get('/api/claims', async (req, res) => {
+  if (requireOperator(req, res)) return
+  if (Object.keys(req.query).length) return res.status(400).json({ error: 'claims report accepts no query parameters' })
+  try {
+    const report = await claimsReport.readClaimsReport(dbQuery)
+    res.set('Cache-Control', 'no-store').json(report)
+  } catch (_) {
+    res.status(503).set('Cache-Control', 'no-store').json({ error: 'claims report unavailable: incomplete or invalid accounting evidence',
+      code: 'CLAIMS_EVIDENCE_INVALID', accounting_snapshot_complete: false, full_customer_claims_verified: false, full_customer_claims_base: null, release_ready: false })
+  }
 })
 
 // REAL proof-of-reserves — per-asset collateral vs circulating, with the solvency check.
@@ -1631,10 +1764,11 @@ app.get('/api/reserves', async (_req, res) => {
       }
     })
     res.json({ preview: PREVIEW, invariant: 'circulating ≤ collateral ≤ source_supply',
-      all_solvent: assets.every(a => a.solvent), assets, btc_usd: btc,
+      all_solvent: assets.every(a => a.solvent), solvency_scope: 'accounting_ledger_only',
+      chain_reconciled: false, release_ready: false, assets, btc_usd: btc,
       tvl_usd: tvlUsd, tvl_thin_usd: tvlThinUsd,
-      note: PREVIEW ? 'PREVIEW — accounting is real and solvency-enforced; on-chain mints are simulated.' : 'live' })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+      note: 'Ledger balances only. Current chain supply, custody backing and pending customer claims require separate reconciliation; this is not release clearance.' })
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Indicative USD/BTC prices for assets in the registry (or a ?ticks=A,B,C subset). Honest:
@@ -1656,17 +1790,17 @@ app.get('/api/prices', async (req, res) => {
       out[r.exact_ticker] = p ? { price_usd: p.price_usd ?? null, price_btc: p.price_btc ?? null, change_24h: p.change_24h ?? null, market_cap_usd: p.market_cap_usd ?? null, source: p.source } : { price_usd: null, source: 'none' }
     }))
     res.json({ btc_usd: btc, prices: out })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Custody status — the Emblem-managed vault BTC address + whether deposits are live.
 app.get('/api/custody/status', async (_req, res) => {
   try {
-    const s = await custody.status()
+    const s = publicStatus(await custody.status())
     // R07: don't claim deposits are live while the service is paused — reflect maintenance truthfully.
     if (MAINTENANCE) { s.deposits_live = false; s.service = 'maintenance'; s.note = 'Deposits/mints/redemptions are PAUSED for security remediation. Custody holds real assets; nothing new is accepted right now.' }
     res.json(s)
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // READ-ONLY deposit DETECTION (ACME Phase 1). Proves the app SEES + ATTRIBUTES + CONFIRMS a
@@ -1722,7 +1856,7 @@ app.get('/api/custody/detect', async (req, res) => {
     }
     if (!known) return res.status(404).json({ error: 'asset not in registry — discover it first, or pass ?protocol=acme' })
     return res.status(400).json({ error: `detection not wired for source_protocol='${known.source_protocol}' (ACME only for now)` })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // READ-ONLY wrap ROUTE for external explorers (the ACME Terminal) — describes how an asset wraps
@@ -1734,6 +1868,8 @@ const WRAP_CHAIN_META = {
   base:     { chain_label: 'Base Sepolia',     is_testnet: true, explorer: 'https://sepolia.basescan.org/token/%s' },
   ethereum: { chain_label: 'Ethereum Sepolia', is_testnet: true, explorer: 'https://sepolia.etherscan.io/token/%s' },
   'base-mainnet': { chain_label: 'Base', is_testnet: false, explorer: 'https://basescan.org/token/%s' },
+  'ethereum-mainnet': { chain_label: 'Ethereum', is_testnet: false, explorer: 'https://etherscan.io/token/%s' },
+  'solana-mainnet': { chain_label: 'Solana', is_testnet: false, explorer: 'https://explorer.solana.com/address/%s' },
 }
 app.get('/api/wrap/route', async (req, res) => {
   try {
@@ -1770,7 +1906,8 @@ app.get('/api/wrap/route', async (req, res) => {
       const meta = WRAP_CHAIN_META[chain] || {}, rep = repByChain[chain]
       return {
         chain, chain_label: meta.chain_label || chain, is_testnet: !!meta.is_testnet,
-        decimals: chain === 'solana' ? solanaDecimalsFor(asset.max_supply) : DEST_DECIMALS[chain],
+        writes_enabled: !MAINNET_CHAINS.has(chain), release_hold: MAINNET_CHAINS.has(chain),
+        decimals: isSolanaChain(chain) ? solanaDecimalsFor(asset.max_supply) : DEST_DECIMALS[chain],
         rep_contract: rep ? rep.dest_address : null,
         rep_symbol: rep ? displayTicker(asset.exact_ticker) : null,
         explorer_url: rep && meta.explorer ? meta.explorer.replace('%s', rep.dest_address) : null,
@@ -1838,7 +1975,7 @@ app.get('/api/wrap/route', async (req, res) => {
       app_url: `/pub/${GROUP}/stampyswap/`,
       note: 'READ-ONLY route — nothing is deposited, minted, or moved by this call.',
     })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // REAL deposit → mint. Requires a genuinely-confirmed SRC-20 TRANSFER txid to the vault
@@ -1862,17 +1999,18 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
     // F08 (audit): only consume a claim for a chain we can actually MINT on. base-mainnet is
     // advertised in wrap routes but not yet wired into the mint path → fail CLOSED here rather than
     // recording a confirmed deposit that mintCritical would then reject ('unsupported destination').
-    if (!(chain === 'solana' || evmMint.isSupported(chain)))
+    if (!(isSolanaChain(chain) || evmMint.isSupported(chain)))
       return res.status(400).json({ error: `destination chain '${chain}' is not a supported mint target yet — deposit not consumed` })
+    if (!txid) return res.status(400).json({ error: 'deposit txid required before authorizing a deposit claim' })
     // AUTHENTICATION — bind the mint to whoever controls the on-chain deposit SOURCE. Without this,
     // anyone who observes a deposit (or front-runs it) could claim the mint to their own address.
-    // Operator override (x-operator-token) exists only for back-office credits in the current phase.
-    const operatorMode = isOperator(req) // grok: use the constant-time comparison, not raw ===
+    // Operators must supply the same source-wallet binding; endpoint access is separate from ownership.
     let boundSource = null
-    if (!operatorMode) {
+    {
       const { source_address, binding_sig } = req.body || {}
-      const bmsg = depositBindingMessage({ source: source_address || '<your BTC source address>', receive: receive_address, tick: asset.exact_ticker, amount: amt })
-      if (!source_address || !binding_sig) return res.status(401).json({ error: 'deposit binding required — sign the binding message with the Bitcoin address that made the deposit (BIP-322) and pass source_address + binding_sig', binding_message: bmsg })
+      if (!source_address) return res.status(401).json({ error: 'source_address required before requesting a deposit authorization (BIP-322)' })
+      const bmsg = depositBindingMessage({ asset, source: source_address, receive: receive_address, amount: amt, txid, chain })
+      if (!binding_sig) return res.status(401).json({ error: 'deposit binding required — sign the binding message with the Bitcoin address that made the deposit (BIP-322) and pass source_address + binding_sig', binding_message: bmsg })
       let sigOk = false
       try { sigOk = Bip322Verifier.verifySignature(String(source_address), bmsg, String(binding_sig)) } catch (_) {}
       if (!sigOk) return res.status(401).json({ error: 'binding signature invalid — sign the EXACT binding message with the deposit source address', binding_message: bmsg })
@@ -1983,7 +2121,7 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
       catch (e) {
         // audit: an UNEXPECTED throw after the credit is an UNKNOWN outcome. KEEP the credit (never
         // revert a possibly-successful mint → no circulating>collateral) and flag for reconciliation.
-        return { status: 502, body: { error: 'mint threw — deposit credit kept (backing preserved), outcome uncertain, flagged for reconciliation: ' + String(e.message || e), reconcile: true } }
+        return { status: 502, body: { error: 'mint threw — deposit credit kept (backing preserved), outcome uncertain, flagged for reconciliation: ' + publicError(e), reconcile: true } }
       }
       if (m.status !== 200) {
         // F06: definite pre-send failure (no reconcile flag → opFail already freed the op) → revert the
@@ -2007,7 +2145,7 @@ app.post('/api/custody/verify-deposit', async (req, res) => {
       return { status: 200, body: { deposit: { key: ledgerKey, confirmations, protocol: asset.source_protocol }, mint: m.body } }
     })
     res.status(out.status).json(out.body)
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // REDEEM (release SRC-20 from the vault) — burn the representation, then release via the
@@ -2020,13 +2158,12 @@ app.post('/api/custody/redeem', async (req, res) => {
     const asset = await resolveAsset(tick || '') // grok: honor "proto:TICKER" for collided tickers
     if (!asset) return res.status(404).json({ error: 'asset not in registry' })
     if (!custody.isLive()) return res.status(403).json({ error: 'custody redemption is gated — audited go-ahead required', gated: true })
-    const operatorMode = isOperator(req)
     // PROOF-OF-BURN + crash-safe release, serialized per asset (P0-1, audit 2345961). A PUBLIC caller
     // MUST prove they burned the representation on-chain — binding the vault release to a real burn.
     // Without it, anyone (with CUSTODY_LIVE on) could trigger releases up to `circulating` WITHOUT
     // holding tokens = vault drain. We reserve a PENDING ledger row (keyed by burn_txid) BEFORE
     // broadcasting, so a crash between broadcast and finalize can't double-release on retry.
-    // The operator header is an audited back-office override (no burn required).
+    // Operator access never bypasses burn proof, owner authorization or one-time consumption.
     const out = await withAssetLock(asset.id, async () => {
       const rep = (await dbQuery('SELECT * FROM representations WHERE canonical_id=? AND dest_chain=?', [asset.id, chain]))[0]
       const eligibilityHold = representationEligibilityHold(rep)
@@ -2035,7 +2172,7 @@ app.post('/api/custody/redeem', async (req, res) => {
       if (toBaseUnits(amt) > circ) return { status: 409, body: { error: 'cannot redeem more than circulating', circulating: fromBaseUnits(circ) } }
       const { burn_txid, auth_sig } = req.body || {}
       let burnInfo = null
-      if (!operatorMode) {
+      {
         if (!burn_txid) return { status: 401, body: { error: 'burn_txid required — burn your representation on-chain (transfer it to the zero address), then pass the burn txid so the release is bound to a real burn' } }
         if (await burnConsumed(chain, burn_txid)) return { status: 409, body: { error: 'burn already consumed by a redeem or move' } }
         if (!rep || !rep.dest_address) return { status: 404, body: { error: `no ${chain} representation to burn against` } }
@@ -2043,7 +2180,7 @@ app.post('/api/custody/redeem', async (req, res) => {
         if (!burnInfo.valid) return { status: 409, body: { error: 'representation burn not verified on-chain', reason: burnInfo.reason } }
         // PR3/F05 BIND: the BURNER must authorize THIS release to THIS BTC address — otherwise
         // anyone could redeem another holder's burn to their own address. Signed by the burn owner.
-        const bmsg = redeemBindingMsg({ burn_txid, to, amount: amt })
+        const bmsg = redeemBindingMsg({ asset, chain, representation: rep.dest_address, burn_txid, to, amount: amt })
         if (!verifyBurnOwnerSig(chain, burnInfo.owner, bmsg, auth_sig))
           return { status: 401, body: { error: 'authorization required — sign the redeem binding message with the key that burned the tokens', binding_message: bmsg, burn_owner: burnInfo.owner } }
         // reserve the burn in the SHARED registry (atomic) BEFORE the external release
@@ -2066,13 +2203,13 @@ app.post('/api/custody/redeem', async (req, res) => {
         circNow = rep ? await repCirculatingBase(rep.id) : 0n
       } catch (e) {
         await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
-        if (!operatorMode && burn_txid) await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, burn_txid)]).catch(() => {})
-        return { status: 503, body: { error: 'could not read in-flight redemption state — redeem refused (fail-closed), retry: ' + String(e.message || e), retryable: true } }
+        if (burn_txid) await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, burn_txid)]).catch(() => {})
+        return { status: 503, body: { error: 'could not read in-flight redemption state — redeem refused (fail-closed), retry: ' + publicError(e), retryable: true } }
       }
       if (inflightBase > circNow) {
         // another in-flight redeem already claims the backing — back THIS one out (nothing released yet)
         await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
-        if (!operatorMode && burn_txid) await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, burn_txid)]).catch(() => {})
+        if (burn_txid) await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, burn_txid)]).catch(() => {})
         return { status: 409, body: { error: 'redeem would exceed circulating together with other in-flight redemptions — retry', in_flight: fromBaseUnits(inflightBase), circulating: fromBaseUnits(circNow), retryable: true } }
       }
       let release
@@ -2091,18 +2228,18 @@ app.post('/api/custody/redeem', async (req, res) => {
         // burn consumed and mark the row for reconciliation. Never free a reservation on uncertainty.
         if (e.code === 'GATED') {
           await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
-          if (!operatorMode && burn_txid) await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, burn_txid)]).catch(() => {})
-          return { status: 403, body: { error: e.message, gated: true } }
+          if (burn_txid) await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, burn_txid)]).catch(() => {})
+          return { status: 403, body: { error: publicError(e), code: publicErrorCode(e), gated: true } }
         }
         await dbExec(`UPDATE collateral_ledger SET status='reconcile' WHERE id=?`, [pend.lastInsertRowid]).catch(() => {})
-        return { status: 502, body: { error: 'release outcome UNCERTAIN — burn kept consumed, flagged for manual reconciliation (no automatic retry): ' + String(e.message || e), reconcile: true } }
+        return { status: 502, body: { error: 'release outcome UNCERTAIN — burn kept consumed, flagged for manual reconciliation (no automatic retry): ' + publicError(e), reconcile: true } }
       }
       // release landed → finalize EXACTLY ONCE (A01): the CAS terminal transition gates the decrement.
       await finalizeReleaseOnce({ ledgerId: pend.lastInsertRowid, canonicalId: asset.id, chain, amountBase: toBaseUnits(amt), releaseTxid: release.txid })
       return { status: 200, body: { redeemed: true, release, circulating: fromBaseUnits(circ - toBaseUnits(amt)) } }
     })
     res.status(out.status).json(out.body)
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // ============================================================================
@@ -2148,46 +2285,67 @@ app.get('/api/reconcile', async (req, res) => {
       stuck_stamps: stamps,
       orphan_burns: orphanBurns,
       stuck_ops: ops,
-      note: 'POST /api/reconcile after verifying the ON-CHAIN outcome. Kinds: '
-          + '{kind:"redeem", id, resolution:"released"|"failed", release_txid?} — released=BTC left the vault (decrement+keep burn); failed=nothing left (restore collateral+free burn). '
-          + '{kind:"move", burn_txid, resolution:"decremented"|"aborted"} — decremented=source debit CONFIRMED (lets the move resume its dest mint); aborted=debit did NOT happen (free the burn, mark aborted). '
-          + '{kind:"stamp", burn_txid, resolution:"released"|"failed", release_txid?} — released=stamp went out (mark released); failed=nothing broadcast (delete the reservation, retryable). '
-          + '{kind:"burn", burn_txid, chain, resolution:"free"} — free an ORPHAN consumed-burn with no downstream row. '
-          + '{kind:"mint", op_key, resolution:"completed"|"failed", release_txid?} — completed=mint confirmed on-chain (record supply, needs release_txid); failed=no mint happened (release the backing reservation).',
+      destructive_reconciliation_enabled: false,
+      independently_verified_recovery: false,
+      note: 'Destructive resolutions failed/aborted/free return 409 fencing_required and retain reservations/burn identities. '
+          + 'Mainnet operation/redeem/move rows remain held. Existing positive bookkeeping requires operator access and an externally verified outcome; it is not automated receipt recovery. '
+          + 'Legacy shapes: {kind:"redeem", id, resolution:"released", release_txid}; '
+          + '{kind:"move", burn_txid, resolution:"decremented"}; '
+          + '{kind:"stamp", burn_txid, resolution:"released", release_txid}; '
+          + '{kind:"mint", op_key, resolution:"completed", release_txid}. '
+          + 'Orphan consumed burns cannot currently be freed safely.',
     })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 app.post('/api/reconcile', async (req, res) => {
   if (requireOperator(req, res)) return
   try {
-    const { kind, id, resolution, release_txid, burn_txid, chain } = req.body || {}
+    const { kind, id, resolution, release_txid, burn_txid } = req.body || {}
+    if (kind === 'burn' || resolution === 'failed' || resolution === 'aborted' || resolution === 'free') {
+      return res.status(409).json({ error: 'destructive reconciliation requires independently verified worker and transaction fencing; reservations and consumed identities remain retained',
+        reconciled: false, fencing_required: true })
+    }
+
 
     // ---- kind:"move" — resolve a stuck move-out 'pending' (source-debit outcome uncertain) ----
     if (kind === 'move') {
       if (!burn_txid) return res.status(400).json({ error: 'burn_txid required' })
-      if (resolution !== 'decremented' && resolution !== 'aborted') return res.status(400).json({ error: 'resolution must be "decremented" (source debit confirmed → move can resume) or "aborted" (debit did NOT happen → free burn)' })
+      if (resolution !== 'decremented') return res.status(400).json({ error: 'resolution must be "decremented" (source debit confirmed → move can resume)' })
       const mrow = (await dbQuery(`SELECT * FROM collateral_ledger WHERE direction='move-out' AND btc_txid=?`, [burn_txid]))[0]
       if (!mrow) return res.status(404).json({ error: 'move-out row not found for that burn_txid' })
+      const rowHold = mainnetWriteHold(mrow.dest_chain)
+      if (rowHold) return res.status(rowHold.status).json(rowHold.body)
       if (mrow.status !== 'pending') return res.status(409).json({ error: `move-out is not pending (status=${mrow.status})` })
       const out = await withAssetLock(mrow.canonical_id, async () => {
-        if (resolution === 'decremented') {
-          // C06 (audit): advancing the phase is not enough — a failed source materialization must be
-          // REPAIRED. The debit event is authoritative, so re-materialize the source cache from the event
-          // ledger before marking decremented. (With events authoritative the dest mint already sees the
-          // reduced source; this also makes the display cache truthful.)
-          const srcRep = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [mrow.canonical_id, mrow.dest_chain]))[0]
-          if (srcRep) await rematerialize(srcRep.id).catch(() => {})
-          await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE id=? AND status='pending'`, [mrow.id])
-          return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, note: 'source debit re-materialized; resubmit the move with the same burn_txid to complete the destination mint' } }
-        }
-        // aborted: operator confirmed the debit never happened → free the burn + mark aborted (retryable)
-        const cbChain = mrow.dest_chain
-        await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(cbChain, burn_txid)]).catch(() => {})
-        const freed = !(await burnConsumed(cbChain, burn_txid))
-        if (!freed) return { status: 500, body: { error: 'could not free the burn — left pending; retry', reconciled: false } }
-        await dbExec(`UPDATE collateral_ledger SET status='aborted' WHERE id=?`, [mrow.id])
-        return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, freed_burn: true } }
+        // A positive recovery must prove the exact source debit, not merely trust an
+        // operator label. A materialization error must leave the phase pending.
+        const cur = (await dbQuery('SELECT * FROM collateral_ledger WHERE id=?', [mrow.id]))[0]
+        if (!cur || cur.status !== 'pending' || cur.direction !== 'move-out' || cur.btc_txid !== burn_txid ||
+            cur.canonical_id !== mrow.canonical_id || cur.dest_chain !== mrow.dest_chain || cur.amount !== mrow.amount)
+          return { status: 409, body: { reconciled: false, error: 'move-out identity or phase changed; retained for reconciliation' } }
+        const srcRep = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [cur.canonical_id, cur.dest_chain]))[0]
+        const expectedDebit = -toBaseUnits(cur.amount)
+        const eventKey = `move-out:${normTxid(cur.dest_chain, burn_txid)}:${cur.canonical_id}`
+        const event = (await dbQuery('SELECT rep_id, delta_base FROM accounting_events WHERE event_key=?', [eventKey]))[0]
+        if (!srcRep || expectedDebit >= 0n || !event || String(event.rep_id) !== String(srcRep.id) || event.delta_base !== expectedDebit.toString())
+          return { status: 409, body: { reconciled: false, error: 'exact source debit is not established in the immutable event ledger; burn and move remain retained' } }
+        const burn = await burnConsumed(cur.dest_chain, burn_txid)
+        const exactDecimal = value => typeof value === 'string' && /^[0-9]{1,78}(?:\.[0-9]{1,18})?$/.test(value)
+        if (!burn || burn.purpose !== 'move' || burn.chain !== cur.dest_chain || burn.canonical_id !== cur.canonical_id ||
+            !exactDecimal(cur.amount) || !exactDecimal(burn.amount) || toBaseUnits(burn.amount) !== -expectedDebit)
+          return { status: 409, body: { reconciled: false, error: 'retained burn identity does not match the exact source move; reconciliation required' } }
+        const target = await rematerialize(srcRep.id)
+        const cached = (await dbQuery('SELECT circulating_supply c FROM representations WHERE id=?', [srcRep.id]))[0]
+        if (!cached || cached.c !== target) throw new Error('source balance materialization was not verified')
+        // A lost acknowledgement can still have committed. Verify durable phase and
+        // identity after both success and failure; never infer success from an ACK.
+        try { await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE id=? AND status='pending'`, [cur.id]) } catch (_) {}
+        const phase = (await dbQuery('SELECT * FROM collateral_ledger WHERE id=?', [cur.id]))[0]
+        if (!phase || phase.status !== 'decremented' || phase.direction !== cur.direction || phase.btc_txid !== cur.btc_txid ||
+            phase.canonical_id !== cur.canonical_id || phase.dest_chain !== cur.dest_chain || phase.amount !== cur.amount)
+          throw new Error('source debit phase could not be durably verified')
+        return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, note: 'exact source debit and materialization verified; resubmit the same move to complete the destination mint' } }
       })
       return res.status(out.status).json(out.body)
     }
@@ -2195,49 +2353,32 @@ app.post('/api/reconcile', async (req, res) => {
     // ---- kind:"stamp" — resolve a stamp-bridge release whose broadcast outcome is unknown ----
     if (kind === 'stamp') {
       if (!burn_txid) return res.status(400).json({ error: 'burn_txid required' })
-      if (resolution !== 'released' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "released" (stamp went out) or "failed" (nothing broadcast → delete reservation)' })
+      if (resolution !== 'released') return res.status(400).json({ error: 'resolution must be "released" (stamp went out)' })
       const brow = (await dbQuery('SELECT * FROM bridge_ops WHERE burn_txid=?', [String(burn_txid)]))[0]
       if (!brow) return res.status(404).json({ error: 'bridge_ops row not found for that burn_txid' })
       if (brow.status !== 'reserving' && brow.status !== 'reconcile') return res.status(409).json({ error: `bridge op is terminal (status=${brow.status})` })
-      if (resolution === 'released') { await dbExec(`UPDATE bridge_ops SET status='released', release_txid=COALESCE(?, release_txid) WHERE burn_txid=?`, [release_txid || null, String(burn_txid)]); return res.status(200).json({ reconciled: true, kind, burn_txid, resolution }) }
-      await dbExec('DELETE FROM bridge_ops WHERE burn_txid=? AND status IN (?,?)', [String(burn_txid), 'reserving', 'reconcile']) // failed → retryable
-      return res.status(200).json({ reconciled: true, kind, burn_txid, resolution: 'failed', deleted: true })
-    }
-
-    // ---- kind:"burn" — free an ORPHAN consumed-burn (no downstream redeem/move row) ----
-    if (kind === 'burn') {
-      if (!burn_txid || !chain) return res.status(400).json({ error: 'burn_txid and chain required' })
-      if (resolution !== 'free') return res.status(400).json({ error: 'resolution must be "free"' })
-      const norm = normTxid(chain, burn_txid)
-      const cb = (await dbQuery('SELECT * FROM consumed_burns WHERE burn_txid=?', [norm]))[0]
-      if (!cb) return res.status(404).json({ error: 'consumed_burn not found' })
-      // safety: refuse to free a burn that still has a live downstream row (not actually an orphan)
-      const live = await dbQuery(`SELECT 1 FROM collateral_ledger WHERE (direction='redeem' AND (burn_txid=? OR lower(burn_txid)=?)) OR (direction='move-out' AND (btc_txid=? OR lower(btc_txid)=?) AND status!='aborted') LIMIT 1`, [burn_txid, norm, burn_txid, norm])
-      if (live.length) return res.status(409).json({ error: 'that burn still has a live redeem/move row — resolve THAT first (not an orphan)' })
-      await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [norm])
-      return res.status(200).json({ reconciled: true, kind, burn_txid, resolution: 'free' })
+      await dbExec(`UPDATE bridge_ops SET status='released', release_txid=COALESCE(?, release_txid) WHERE burn_txid=?`, [release_txid || null, String(burn_txid)])
+      return res.status(200).json({ reconciled: true, kind, burn_txid, resolution })
     }
 
     // ---- kind:"mint" — resolve an uncertain mint OP (B04 audit). An op left 'reserved'/'reconcile'
     // holds a durable backing reservation (reservedBase) so no other op can mint against it until the
     // operator establishes the on-chain outcome. 'completed' = the mint DID land (record its supply +
-    // mark the op complete); 'failed' = it did NOT (release the reservation). Immutable request binding:
+    // mark the op complete). Uncertain reservations cannot be released here. Immutable request binding:
     // the op row carries the canonical_id/chain/recipient/amount that were reserved; we act on those.
     if (kind === 'mint') {
       const { op_key } = req.body || {}
       if (!op_key) return res.status(400).json({ error: 'op_key required' })
-      if (resolution !== 'completed' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "completed" (mint confirmed on-chain → record supply) or "failed" (no mint happened → release the reservation)' })
+      if (resolution !== 'completed') return res.status(400).json({ error: 'resolution must be "completed" (mint confirmed on-chain → record supply)' })
       const op = (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0]
       if (!op) return res.status(404).json({ error: 'operation not found' })
+      const rowHold = mainnetWriteHold(op.chain)
+      if (rowHold) return res.status(rowHold.status).json(rowHold.body)
       if (op.action !== 'mint') return res.status(400).json({ error: `operation ${op_key} is not a mint (action=${op.action})` })
       if (op.state !== 'reserved' && op.state !== 'reconcile') return res.status(409).json({ error: `operation is terminal (state=${op.state}); nothing to reconcile` })
       const out = await withAssetLock(op.canonical_id, async () => {
         const cur = (await dbQuery('SELECT * FROM operations WHERE op_key=?', [op_key]))[0]
         if (!cur || (cur.state !== 'reserved' && cur.state !== 'reconcile')) return { status: 409, body: { error: 'operation no longer reconcilable' } }
-        if (resolution === 'failed') {
-          await dbExec('DELETE FROM operations WHERE op_key=?', [op_key]) // release the reservation (backing freed)
-          return { status: 200, body: { reconciled: true, kind, op_key, resolution: 'failed', note: 'reservation released — backing is available again' } }
-        }
         // completed: the operator verified the on-chain mint. Record its supply as a once-only event
         // (idempotent — if some accounting already landed, the event key makes this a no-op) + complete.
         if (!release_txid) return { status: 400, body: { error: 'release_txid (the on-chain mint signature/tx) required to record a completed mint' } }
@@ -2250,10 +2391,12 @@ app.post('/api/reconcile', async (req, res) => {
       return res.status(out.status).json(out.body)
     }
 
-    if (kind !== 'redeem') return res.status(400).json({ error: 'kind must be "redeem", "mint", "move", "stamp", or "burn"' })
-    if (resolution !== 'released' && resolution !== 'failed') return res.status(400).json({ error: 'resolution must be "released" or "failed"' })
+    if (kind !== 'redeem') return res.status(400).json({ error: 'kind must be "redeem", "mint", "move", or "stamp"' })
+    if (resolution !== 'released') return res.status(400).json({ error: 'resolution must be "released"' })
     const row = (await dbQuery(`SELECT * FROM collateral_ledger WHERE id=? AND direction='redeem'`, [id]))[0]
     if (!row) return res.status(404).json({ error: 'redeem ledger row not found' })
+    const rowHold = mainnetWriteHold(row.dest_chain)
+    if (rowHold) return res.status(rowHold.status).json(rowHold.body)
     if (row.status !== 'pending' && row.status !== 'reconcile')
       return res.status(409).json({ error: `row is already terminal (status=${row.status}); nothing to reconcile` })
 
@@ -2263,30 +2406,14 @@ app.post('/api/reconcile', async (req, res) => {
       if (!cur || (cur.status !== 'pending' && cur.status !== 'reconcile'))
         return { status: 409, body: { error: `row no longer reconcilable (status=${cur ? cur.status : 'gone'})` } }
       const chain = cur.dest_chain
-      if (resolution === 'released') {
-        // BTC left the vault → finalize through the SAME exactly-once finalizer as the success path
-        // (A01): the CAS terminal transition gates the decrement, so reconciling twice (or racing the
-        // success path) can never decrement circulation more than once.
-        const r = await finalizeReleaseOnce({ ledgerId: id, canonicalId: cur.canonical_id, chain, amountBase: toBaseUnits(cur.amount), releaseTxid: release_txid })
-        return { status: 200, body: { reconciled: true, id, resolution, finalized: !!r.finalized, already_finalized: !!r.alreadyFinalized } }
-      } else {
-        // resolution === 'failed': nothing left the vault → restore collateral (redeemedBase excludes
-        // 'failed') and FREE the consumed burn so the holder can retry. A04.1 (audit): free the burn
-        // FIRST and CONFIRM it is gone; only then mark the row terminal-failed. If the free fails, leave
-        // the row reconcilable and report truthfully — never claim freed_burn while the burn is stuck,
-        // which would strand the holder's entitlement behind a terminal row.
-        let freed_burn = true
-        if (cur.burn_txid) {
-          await dbExec('DELETE FROM consumed_burns WHERE burn_txid=?', [normTxid(chain, cur.burn_txid)]).catch(() => {})
-          freed_burn = !(await burnConsumed(chain, cur.burn_txid)) // confirm it is actually gone
-          if (!freed_burn) return { status: 500, body: { error: 'could not free the consumed burn — row left reconcilable (not marked failed); retry', reconciled: false } }
-        }
-        await dbExec(`UPDATE collateral_ledger SET status='failed' WHERE id=?`, [id])
-        return { status: 200, body: { reconciled: true, id, resolution, freed_burn } }
-      }
+      // BTC left the vault → finalize through the SAME exactly-once finalizer as the success path
+      // (A01): the CAS terminal transition gates the decrement, so reconciling twice (or racing the
+      // success path) can never decrement circulation more than once.
+      const r = await finalizeReleaseOnce({ ledgerId: id, canonicalId: cur.canonical_id, chain, amountBase: toBaseUnits(cur.amount), releaseTxid: release_txid })
+      return { status: 200, body: { reconciled: true, id, resolution, finalized: !!r.finalized, already_finalized: !!r.alreadyFinalized } }
     })
     res.status(out.status).json(out.body)
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // ============================================================================
@@ -2312,7 +2439,7 @@ app.get('/api/stampbridge/config', async (_req, res) => {
         stamp_in_vault: vaultHas, note: b.note })
     }
     res.json({ bridges, warning: 'Bridging is ONE-WAY and PERMANENT: the SRC-20 is burned forever and cannot be recovered.' })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Quote: what you'd receive + the exact burn instructions. Read-only, no state change.
@@ -2331,7 +2458,7 @@ app.post('/api/stampbridge/quote', express.json(), async (req, res) => {
       instructions: `Send an SRC-20 TRANSFER of ${amt} ${displayTicker(b.src20_tick)} to ${b.burn_address} (a provably-unspendable burn address), then submit the txid. This BURNS your ${displayTicker(b.src20_tick)} PERMANENTLY.`,
       warning: 'ONE-WAY & IRREVERSIBLE — the burned SRC-20 can never be recovered.',
     })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Execute: verify the burn on-chain (SRC-20 TRANSFER to the burn address), then release the
@@ -2389,29 +2516,29 @@ app.post('/api/stampbridge/execute', express.json(), async (req, res) => {
       let release
       try {
         // R05: shared-vault UTXO serialization — same global BTC lock as redeem.
-        release = await withBtcVaultLock(() => custody.redeem({ tick: b.stamp_asset, amount: rel, toAddress: check.source, protocol: b.stamp_protocol, qtyBase: counterparty.toBase(rel, 0) }))
+        release = await withBtcVaultLock(() => custody.redeem({ tick: b.stamp_asset, amount: rel, toAddress: check.source, protocol: b.stamp_protocol, qtyBase: counterparty.toBase(rel, 0), dec: 0 }))
       } catch (e) {
         if (e.code === 'GATED') {
           // proven pre-send (nothing broadcast) → free the reservation so it stays retryable
           await dbExec(`DELETE FROM bridge_ops WHERE burn_txid=? AND status='reserving'`, [String(burn_txid)]).catch(() => {})
-          return { status: 403, body: { error: e.message, gated: true } }
+          return { status: 403, body: { error: publicError(e), code: publicErrorCode(e), gated: true } }
         }
         // UNKNOWN outcome → KEEP the reservation (never re-release), mark for reconciliation
         await dbExec(`UPDATE bridge_ops SET status='reconcile' WHERE burn_txid=?`, [String(burn_txid)]).catch(() => {})
-        return { status: 502, body: { error: 'stamp release outcome UNCERTAIN — reserved, flagged for reconciliation (no auto-retry): ' + String(e.message || e), reconcile: true } }
+        return { status: 502, body: { error: 'stamp release outcome UNCERTAIN — reserved, flagged for reconciliation (no auto-retry): ' + publicError(e), reconcile: true } }
       }
       await dbExec(`UPDATE bridge_ops SET status='released', release_txid=? WHERE burn_txid=?`, [release.txid, String(burn_txid)])
       return { status: 200, body: { bridged: true, burned: `${amt} ${displayTicker(b.src20_tick)}`, released: `${rel} ${b.stamp_asset}`, release, burn_txid } }
     })
     res.status(out.status).json(out.body)
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Squads multisig status (Solana authority upgrade — built + proven on devnet, migration pending).
 app.get('/api/multisig', async (_req, res) => {
   const out = { solana: { available: false }, evm: { available: false } }
-  if (squads) { try { out.solana = { available: true, mode: solanaAuthorityMode(), active: solanaAuthorityMode() === 'squads', ...(await squads.info()) } } catch (_) {} }
-  if (safe) { try { out.evm = { available: true, mode: evmAuthorityMode(), active: evmAuthorityMode() === 'safe', ...(await safe.info('base')) } } catch (_) {} }
+  if (squads) { try { out.solana = { available: true, mode: solanaAuthorityMode(), active: solanaAuthorityMode() === 'squads', ...publicStatus(await squads.info()) } } catch (_) {} }
+  if (safe) { try { out.evm = { available: true, mode: evmAuthorityMode(), active: evmAuthorityMode() === 'safe', ...publicStatus(await safe.info('base')) } } catch (_) {} }
   res.json(out)
 })
 
@@ -2428,7 +2555,7 @@ app.get('/api/trust', async (_req, res) => {
     if (squads) { try { sq = await squads.info() } catch (_) {} }
     if (safe) { try { sf = await safe.info('base') } catch (_) {} }
     res.json({
-      custody: await custody.status().catch(() => ({ provider: 'none' })),
+      custody: publicStatus(await custody.status().catch(() => ({ provider: 'none' }))),
       authorities: [
         { chain: 'solana', network: 'devnet',
           model: (solMode === 'squads' && sq) ? sq.model : ((solAuth && solAuth.authority_model) || 'unavailable'),
@@ -2442,10 +2569,12 @@ app.get('/api/trust', async (_req, res) => {
           multisig: sf ? { available: true, active: evmMode === 'safe', model: sf.model, safe: sf.safe, threshold: sf.threshold, owners: (sf.owners || []).length } : { available: false } },
       ],
       invariant: 'circulating ≤ confirmed collateral ≤ source supply (enforced, cross-chain)',
-      guarantees: ['deposit-gated minting', 'round-down decimals', 'per-asset solvency lock', 'txid-attributed + reorg-safe relayer', 'public proof-of-reserves'],
+      guarantees: ['deposit wallet binding', 'exact base-unit accounting', 'durable mint reservations', 'transaction-attributed deposits'],
+      release_ready: false, mainnet_writes_enabled: false,
+      unverified: ['host isolation', 'independent signing including Bitcoin custody', 'continuous reorg reconciliation', 'complete customer-claim reconciliation', 'external audit'],
       roadmap_to_mainnet: ['security audit', 'Emblem Vault custody provisioning', 'multisig mint authority', 'on-chain proof-of-reserves', 'mainnet with real collateral'],
     })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // ============================================================================
@@ -2469,7 +2598,7 @@ app.post('/api/amm/deploy-mock', async (req, res) => {
     if (!symbol || !parseAmount(supply)) return res.status(400).json({ error: 'symbol and positive supply required' })
     const addr = await amm.deployExternalToken(chain, name || symbol, String(symbol).slice(0, 11), parseAmount(supply))
     res.json({ token: addr, symbol, chain, explorer: `${amm.EXPLORER[chain]}/token/${addr}`, note: 'External token — NOT a backed representation; the LP holds it directly.' })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Create a pool. Side A is always one of our representations (minted, solvency-gated). Side B
@@ -2520,7 +2649,7 @@ app.post('/api/amm/create', async (req, res) => {
     res.json({ pool_id: ins.lastInsertRowid, chain, pair, pair_explorer: `${amm.EXPLORER[chain]}/address/${pair}`,
       pair_label: `${symA}/${symB}`, kind_b: kindB, token_a: token0, token_b: token1, seeded: seed,
       reserves: { [symA]: reserves.r0, [symB]: reserves.r1 } })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // List pools with live on-chain reserves + implied price.
@@ -2542,7 +2671,7 @@ app.get('/api/amm/pools', async (_req, res) => {
         explorer: `${amm.EXPLORER[p.chain]}/address/${p.pair_address}`, reserves, price })
     }
     res.json({ pools: out })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Read-only swap quote (constant-product, 0.30% fee).
@@ -2556,7 +2685,7 @@ app.get('/api/amm/quote', async (req, res) => {
     const out = amm.quoteOut(rIn, rOut, req.query.amount_in || '0')
     res.json({ token_in: inIsA ? pool.symbol_a : pool.symbol_b, token_out: inIsA ? pool.symbol_b : pool.symbol_a,
       amount_in: String(req.query.amount_in || '0'), amount_out: out, reserves: { a: r.r0, b: r.r1 } })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Execute a swap (protocol-signed for demo; a real router lets users sign their own).
@@ -2571,6 +2700,7 @@ app.post('/api/amm/swap', async (req, res) => {
     // of the same swap can't double-mint protocol inventory (swaps legitimately repeat → key is per-call).
     if (!op_key || typeof op_key !== 'string') return res.status(400).json({ error: 'op_key required — supply a unique idempotency key per swap so a retry cannot double-mint the input' })
     const pool = (await dbQuery('SELECT * FROM pools WHERE id=?', [pool_id]))[0]
+    if (pool) { const hold = mainnetWriteHold(pool.chain); if (hold) return res.status(hold.status).json(hold.body) }
     if (!pool) return res.status(404).json({ error: 'pool not found' })
     const inIsA = String(token_in) === pool.token_a || String(token_in).toLowerCase() === String(pool.symbol_a).toLowerCase()
     const tokenInAddr = inIsA ? pool.token_a : pool.token_b
@@ -2601,7 +2731,7 @@ app.post('/api/amm/swap', async (req, res) => {
     const reserves = await amm.getReserves(pool.chain, pool.pair_address)
     res.json({ swapped: true, ...r, token_in: inIsA ? pool.symbol_a : pool.symbol_b, token_out: inIsA ? pool.symbol_b : pool.symbol_a,
       amount_in: amtIn, reserves: { [pool.symbol_a]: reserves.r0, [pool.symbol_b]: reserves.r1 } })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // ============================================================================
@@ -2677,7 +2807,7 @@ app.get('/api/route', async (req, res) => {
     })
     res.json({ found: true, from: displayTicker(from.asset.exact_ticker), to: displayTicker(to.asset.exact_ticker),
       amount_in: amount, amount_out: best.output, hops: steps.length, steps })
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // Arbitrage / mispricing detection (read-only analysis over the liquidity graph). Two signals:
@@ -2734,7 +2864,7 @@ async function detectArbitrage() {
     note: 'Read-only. Cycles are fee-aware (0.30%/hop); pool mispricing compares the pool ratio to indicative native Bitcoin-market prices. ⚠ thin = one side has a thin/scarce market (signal is noisy).' }
 }
 app.get('/api/arbitrage', async (_req, res) => {
-  try { res.json(await detectArbitrage()) } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  try { res.json(await detectArbitrage()) } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
 })
 
 // ---- Startup schema check + idempotent burn backfill (audit R03/C) ----

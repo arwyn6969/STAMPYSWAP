@@ -26,6 +26,7 @@ const token = '0x' + '3'.repeat(40)
 const burnId = '0x' + 'ab'.repeat(32)
 const op = { 'x-operator-token': 'local-fixture-operator' }
 const read = file => fs.readFileSync(path.join(ROOT, file), 'utf8')
+const intents = require(path.join(ROOT, 'intent-bindings.js'))
 
 function load(file, req, globals = {}) {
   const module = { exports: {} }
@@ -76,8 +77,10 @@ async function fixture(t, options = {}) {
   const cp = pure('counterparty.js'), acme = pure('acme.js')
   const evm = load('evm-mint.js', n => {
     if (n === 'ethers') return { ethers }
-    if (n === './evm-signer') return { address: attacker.address, provider: () => ({ getTransactionReceipt: async () => state.receipt, getBlockNumber: async () => state.head || 30 }) }
+    if (n === './evm-signer') return { address: attacker.address, provider: chain => ({ send: async () => chain === 'ethereum' ? '0xaa36a7' : '0x14a34', getTransactionReceipt: async () => state.receipt, getBlockNumber: async () => state.head || 30 }) }
     if (n === './erc20-artifact.json') return JSON.parse(read('erc20-artifact.json'))
+    if (n === './erc20-mainnet-artifact.json') return JSON.parse(read('erc20-mainnet-artifact.json'))
+    if (n === './network-config') return require(path.join(ROOT, 'network-config.js'))
     throw Error('unexpected import: ' + n)
   }).exports
   evm.deployAndMint = async args => { if(options.beforeMint) await options.beforeMint(args,state); state.mints.push(args); if(options.afterMint) await options.afterMint(args,state); return { contract: token, txHash: 'mint-' + state.mints.length } }
@@ -88,7 +91,7 @@ async function fixture(t, options = {}) {
   Object.assign(express, expressReal)
   const dependencies = { express, path, crypto: require('node:crypto'), tweetnacl: dep('tweetnacl'),
     bs58: dep('bs58'), './sol-mint': {}, './evm-mint': evm, './amm': {}, './custody': custody,
-    './recovery': require(path.join(ROOT, 'recovery.js')), './labels': require(path.join(ROOT, 'labels.js')),
+    './recovery': require(path.join(ROOT, 'recovery.js')), './labels': require(path.join(ROOT, 'labels.js')), './intent-bindings': intents, './claims-report': require(path.join(ROOT, 'claims-report.js')),
     './counterparty': cp, './acme': acme, './prices': {btcUsd: async()=>null, indicativeUsd: async()=>null}, './squads': null, './safe': null,
     'bip322-js': bip, fs: { existsSync: () => false }, ethers }
   const query = async (sql, params = []) => { if(options.beforeQuery) await options.beforeQuery(sql,params,state); const rows=db.prepare(sql).all(...params); if(options.afterQuery) await options.afterQuery(sql,params,rows,state); return rows }
@@ -114,19 +117,26 @@ async function fixture(t, options = {}) {
       headers: { 'Content-Type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body) })
     return { code: r.status, body: await r.json() }
   }
+  const intentBase = () => ({ group: (options.env && options.env.ARTIFACT_GROUP) || 'kevmart', vault: 'vault', asset: db.prepare('SELECT * FROM canonical_assets WHERE id=1').get() })
+  const repAddress = chain => (db.prepare('SELECT dest_address FROM representations WHERE canonical_id=1 AND dest_chain=?').get(chain) || {}).dest_address || token
   async function redeem(extra = {}, signer = owner) {
     const body = { tick: 'COIN', amount: '10', chain: 'base', to: btcSource, burn_txid: burnId, ...extra }
-    body.auth_sig = await signer.signMessage(`StampySwap redeem: burn ${body.burn_txid} → release ${body.amount} to ${body.to}`)
+    body.auth_sig = await signer.signMessage(intents.redeemMessage({ ...intentBase(), amount: body.amount, sourceChain: body.chain, representation: repAddress(body.chain), burnTxid: body.burn_txid, destinationAddress: body.to }))
     return body
   }
   const claim = (extra = {}) => {
     const body = { tick: 'COIN', amount: '10', txid: 'deposit', chain: 'base', receive_address: attacker.address, source_address: btcSource, ...extra }
-    const msg = `StampySwap deposit authorization\nSource: ${btcSource}\nReceive: ${body.receive_address}\nAsset: COIN\nAmount: ${body.amount}\nI control the source Bitcoin address and authorize minting this deposit to the receive address above.`
+    const msg = intents.depositMessage({ ...intentBase(), amount: body.amount, sourceAddress: body.source_address, depositTxid: body.txid, destinationChain: body.chain, destinationAddress: body.receive_address })
     body.binding_sig = bip.Signer.sign(btcKey.toWIF(), btcSource, msg)
     return body
   }
   const circ = () => db.prepare('SELECT circulating_supply c FROM representations WHERE id=1').get().c
-  const move = extra => ({ tick: 'COIN', amount: '10', from_chain: 'base', to_chain: 'ethereum', burn_txid: burnId, to_address: owner.address, ...extra })
+  const move = extra => {
+    const body = { tick: 'COIN', amount: '10', from_chain: 'base', to_chain: 'ethereum', burn_txid: burnId, to_address: owner.address, ...extra }
+    const message = intents.moveMessage({ ...intentBase(), amount: body.amount, sourceChain: body.from_chain, representation: repAddress(body.from_chain), burnTxid: body.burn_txid, destinationChain: body.to_chain, destinationAddress: body.to_address })
+    body.auth_sig = owner.signingKey.sign(ethers.hashMessage(message)).serialized
+    return body
+  }
   return { db, state, call, redeem, claim, move, circ, context, evm, custody, sol: dependencies['./sol-mint'] }
 }
 

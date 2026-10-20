@@ -92,14 +92,13 @@ test('B05: a failed source debit is not marked decremented and the move does not
 })
 
 // ---- B06: startup backfill respects recovery dispositions ----
-test('B06: an explicitly aborted move burn is not reconsumed on restart', async t => {
+test('B06: a historical explicitly aborted move burn is not reconsumed on restart', async t => {
   const f = await fixture(t)
-  f.db.prepare("INSERT INTO consumed_burns(burn_txid,chain,canonical_id,purpose,amount) VALUES(?,'base',1,'move','10')").run(burnId)
-  f.db.prepare("INSERT INTO collateral_ledger(canonical_id,direction,amount,dest_chain,btc_txid,status) VALUES(1,'move-out','10','base',?,'pending')").run(burnId)
-  assert.equal((await f.call('/api/reconcile', { kind: 'move', burn_txid: burnId, resolution: 'aborted' }, op)).code, 200)
-  assert.equal(f.db.prepare('SELECT count(*) n FROM consumed_burns').get().n, 0)
+  // Compatibility with an existing reviewed historical abort; the live reconcile API now
+  // refuses destructive cancellation without signer/worker fencing.
+  f.db.prepare("INSERT INTO collateral_ledger(canonical_id,direction,amount,dest_chain,btc_txid,status) VALUES(1,'move-out','10','base',?,'aborted')").run(burnId)
   await f.context.migrateSchema()
-  assert.equal(f.db.prepare('SELECT count(*) n FROM consumed_burns').get().n, 0) // NOT resurrected
+  assert.equal(f.db.prepare('SELECT count(*) n FROM consumed_burns').get().n, 0)
 })
 
 test('B06: a NULL-status historical redemption burn is preserved and cannot be reused', async t => {
@@ -392,7 +391,7 @@ test('D01: a redeem during a mint read window cannot cause over-issue', async t 
   const b = await fixture(t, { db: a.db })
   const mintP = a.call('/api/mint', mint('mintA'), op)
   await entered.promise
-  assert.equal((await b.call('/api/custody/redeem', { tick: 'COIN', amount: '10', to: btcSource, chain: 'base' }, op)).code, 200)
+  assert.equal((await b.call('/api/custody/redeem', await b.redeem(), op)).code, 200)
   resume.resolve()
   const mr = await mintP
   assert.notEqual(mr.code, 200) // mint blocked — the collateral the redeem removed is no longer available
@@ -410,9 +409,9 @@ test('D02: concurrent redeems cannot over-release past circulating', async t => 
     async afterQuery(sql) { if (pause && sql.startsWith('SELECT delta_base FROM accounting_events WHERE rep_id')) { pause = false; entered.resolve(); await resume.promise } } })
   const b = await fixture(t, { db: a.db })
   pause = true
-  const r1 = a.call('/api/custody/redeem', { tick: 'COIN', amount: '10', to: btcSource, chain: 'base' }, op)
+  const r1 = a.call('/api/custody/redeem', await a.redeem(), op)
   await entered.promise
-  const r2 = await b.call('/api/custody/redeem', { tick: 'COIN', amount: '10', to: btcSource, chain: 'base' }, op)
+  const r2 = await b.call('/api/custody/redeem', await b.redeem({ burn_txid: '0x' + 'cd'.repeat(32) }), op)
   resume.resolve()
   const r1r = await r1
   const released = a.state.releases.length + b.state.releases.length

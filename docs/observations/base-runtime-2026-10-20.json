@@ -1,0 +1,37 @@
+{
+  "observed_at_utc": "2026-10-20T10:47:50.657Z",
+  "chain": "base-mainnet",
+  "chain_id": "0x2105",
+  "rpc": "https://mainnet.base.org",
+  "block_number": "52851422",
+  "block_hash": "0x7f5116a2216d5a2f9662a4dbb140c35f94946c03a91e831b22c4f08608a59c39",
+  "block_tag": "finalized",
+  "artifact_sha256": "575f9e4341001afa375ce49af0ba46972a91976ec5ef517f9670a2cc9f1d8d1c",
+  "observations": [
+    {
+      "symbol": "ACME",
+      "address": "0x2B5b0B7B876A494D98e730A93C89aAB852722527",
+      "runtime_match": true,
+      "runtime_bytes": 3298,
+      "runtime_keccak256": "0xb0043ef917f18a9e51d5d3909ba3420021f810c426ccacbaa885a0dabc4fb0fb",
+      "owner": "0x58fbda919c022bD2948F0BacEc9891874cb8E4a5",
+      "decimals": "18",
+      "srcOrigin": "bitcoin:acme:ACME",
+      "totalSupply": "1000000000000000000000"
+    },
+    {
+      "symbol": "TREES",
+      "address": "0x19f36c4854571F2122C5eaF86292E44bBaF57c7f",
+      "runtime_match": true,
+      "runtime_bytes": 3298,
+      "runtime_keccak256": "0xb0043ef917f18a9e51d5d3909ba3420021f810c426ccacbaa885a0dabc4fb0fb",
+      "owner": "0x58fbda919c022bD2948F0BacEc9891874cb8E4a5",
+      "decimals": "18",
+      "srcOrigin": "bitcoin:acme:TREES",
+      "totalSupply": "110000000000000000000"
+    }
+  ],
+  "effects": "public read-only JSON-RPC; no signer or broadcast",
+  "scope": "point-in-time RPC observation only; source provenance, owner independence, full history and continuous canonicality not certified",
+  "release_ready": false
+}

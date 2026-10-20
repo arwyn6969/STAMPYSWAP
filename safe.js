@@ -7,8 +7,8 @@ const Safe = require('@safe-global/protocol-kit').default || require('@safe-glob
 const fs = require('fs')
 const path = require('path')
 const erc20Artifact = require('./erc20-artifact.json')
+const networks = require('./network-config')
 
-const RPCS = { base: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org', ethereum: process.env.ETH_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com' }
 const OWNERS_PATH = path.join(__dirname, '.safe-owners.json')  // N owner keys (server-side, 600)
 const STATE_PATH = path.join(__dirname, '.safe-state.json')    // { base: <safeAddr>, ethereum: <safeAddr> }
 const DEPLOYER_PATH = path.join(__dirname, '.evm-deployer.json')
@@ -24,19 +24,23 @@ function loadOwners() {
   fs.writeFileSync(OWNERS_PATH, JSON.stringify(owners), { mode: 0o600 })
   return owners
 }
-function ownerAddrs() { return loadOwners().map(pk => new ethers.Wallet(pk).address) }
+function ownerAddrs(chain = 'base') { networks.requireIndependentSigning(chain); return loadOwners().map(pk => new ethers.Wallet(pk).address) }
 function loadState() { try { return JSON.parse(fs.readFileSync(STATE_PATH, 'utf8')) } catch (_) { return {} } }
 function saveState(s) { fs.writeFileSync(STATE_PATH, JSON.stringify(s), { mode: 0o600 }) }
-function provider(chain) { return new ethers.JsonRpcProvider(RPCS[chain]) }
+const providers = {}
+function provider(chain) { if (!providers[chain]) providers[chain] = new networks.CheckedEvmProvider(chain); return providers[chain] }
+function safeProvider(chain) { return { request: ({ method, params = [] }) => provider(chain).send(method, params) } }
 
 // Deploy a Safe on `chain` with the owners + threshold (idempotent — reuses the stored address).
 async function ensureSafe(chain = 'base') {
+  networks.requireIndependentSigning(chain) // Before reading owner/deployer keys or state.
+  await networks.assertEvmNetwork(provider(chain), chain)
   const st = loadState()
   if (st[chain]) return st[chain]
-  const owners = ownerAddrs()
+  const owners = ownerAddrs(chain)
   const deployer = deployerKey()
   const salt = '0x' + Buffer.from(`stampyswap:${chain}`).toString('hex').padEnd(64, '0').slice(0, 64)
-  const kit = await Safe.init({ provider: RPCS[chain], signer: deployer, predictedSafe: {
+  const kit = await Safe.init({ provider: safeProvider(chain), signer: deployer, predictedSafe: {
     safeAccountConfig: { owners, threshold: THRESHOLD }, safeDeploymentConfig: { saltNonce: BigInt(salt).toString() },
   } })
   const safeAddress = await kit.getAddress()
@@ -47,22 +51,52 @@ async function ensureSafe(chain = 'base') {
   st[chain] = safeAddress; saveState(st)
   return safeAddress
 }
-function safeAddress(chain = 'base') { return loadState()[chain] || null }
+function safeAddress(chain = 'base') {
+  if (!Object.hasOwn(networks.EVM_CHAINS, chain)) throw new Error('unsupported EVM chain identity')
+  if (networks.EVM_CHAINS[chain].mainnet) {
+    const address = process.env[chain === 'base-mainnet' ? 'BASE_MAINNET_SAFE_ADDRESS' : 'ETH_MAINNET_SAFE_ADDRESS']
+    if (!address) return null
+    if (!ethers.isAddress(address) || address === ethers.ZeroAddress) throw new Error('invalid mainnet Safe address')
+    return address
+  }
+  return loadState()[chain] || null
+}
 
-async function info(chain = 'base') {
+async function readInfo(chain = 'base') {
+  const config = networks.evmChain(chain)
+  await networks.assertEvmNetwork(provider(chain), chain)
   const addr = safeAddress(chain)
+  if (config.mainnet) {
+    // Public on-chain configuration only: never load the local owner/deployer key files.
+    let owners = [], threshold = null
+    if (addr) {
+      const code = await provider(chain).getCode(addr)
+      if (code === '0x' || code === '0x0') throw new Error('configured Safe has no deployed code')
+      const safe = new ethers.Contract(addr, ['function getOwners() view returns(address[])', 'function getThreshold() view returns(uint256)'], provider(chain))
+      owners = Array.from(await safe.getOwners()); threshold = Number(await safe.getThreshold())
+      if (!Number.isSafeInteger(threshold) || threshold < 2 || threshold > owners.length || new Set(owners.map(owner => owner.toLowerCase())).size !== owners.length) throw new Error('invalid independent Safe quorum configuration')
+    }
+    return { chain, configured: !!addr, safe: addr, threshold, owners, network: config.name, chainId: config.chainId,
+      writes_enabled: false, independent_signing_required: true, signer_independence_verified: false }
+  }
   let deployerBal = '0'
   try { deployerBal = ethers.formatEther(await provider(chain).getBalance(new ethers.Wallet(deployerKey()).address)) } catch (_) {}
   return {
-    chain, configured: !!addr, safe: addr, threshold: THRESHOLD, owners: ownerAddrs(),
+    chain, configured: !!addr, safe: addr, threshold: THRESHOLD, owners: ownerAddrs(chain),
     executor_deployer: new ethers.Wallet(deployerKey()).address, deployer_eth: deployerBal,
     model: addr ? `safe ${THRESHOLD}-of-${N_OWNERS} multisig` : 'not deployed', network: chain === 'base' ? 'base-sepolia' : 'eth-sepolia',
   }
+}
+async function info(chain = 'base') {
+  try { return await readInfo(chain) }
+  catch (_) { const error = new Error('Safe status unavailable'); error.code = 'SAFE_STATUS_UNAVAILABLE'; throw error }
 }
 
 // Mint `amountToken` (whole units, 18dp) of a rep ERC-20 (owned by the Safe) to `recipient`, via a
 // Safe transaction: build mint() call → each owner signs (off-chain) → executor submits.
 async function mintViaSafe({ chain = 'base', rep, amountToken, recipient }) {
+  networks.requireIndependentSigning(chain)
+  await networks.assertEvmNetwork(provider(chain), chain)
   const safeAddr = await ensureSafe(chain)
   const owners = loadOwners()
   const deployer = deployerKey()
@@ -70,10 +104,10 @@ async function mintViaSafe({ chain = 'base', rep, amountToken, recipient }) {
   const data = iface.encodeFunctionData('mint', [recipient, ethers.parseUnits(String(amountToken), 18)])
 
   // executor-connected kit builds + executes; owner-connected kits sign
-  const execKit = await Safe.init({ provider: RPCS[chain], signer: deployer, safeAddress: safeAddr })
+  const execKit = await Safe.init({ provider: safeProvider(chain), signer: deployer, safeAddress: safeAddr })
   let safeTx = await execKit.createTransaction({ transactions: [{ to: rep, value: '0', data }] })
   for (let i = 0; i < THRESHOLD; i++) {
-    const ownerKit = await Safe.init({ provider: RPCS[chain], signer: owners[i], safeAddress: safeAddr })
+    const ownerKit = await Safe.init({ provider: safeProvider(chain), signer: owners[i], safeAddress: safeAddr })
     safeTx = await ownerKit.signTransaction(safeTx) // accumulate owner signatures (off-chain)
   }
   const exec = await execKit.executeTransaction(safeTx)
@@ -84,6 +118,8 @@ async function mintViaSafe({ chain = 'base', rep, amountToken, recipient }) {
 
 // Deploy a rep ERC-20 whose OWNER is the Safe (so only the Safe can mint it). Deployer pays gas.
 async function deployRep({ chain = 'base', name, symbol, srcOrigin }) {
+  networks.requireIndependentSigning(chain)
+  await networks.assertEvmNetwork(provider(chain), chain)
   const safeAddr = await ensureSafe(chain)
   const wallet = new ethers.Wallet(deployerKey(), provider(chain))
   const f = new ethers.ContractFactory(erc20Artifact.abi, erc20Artifact.bytecode, wallet)
