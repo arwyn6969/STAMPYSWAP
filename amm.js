@@ -3,12 +3,14 @@
 // shared nonce-managed EVM signer as protocol LP (interim). Testnet only.
 const { ethers } = require('ethers')
 const evmSigner = require('./evm-signer')
+const networks = require('./network-config')
 
 const ammArtifact = require('./amm-artifact.json')
 const erc20Artifact = require('./erc20-artifact.json')
 const EXPLORER = { base: 'https://sepolia.basescan.org', ethereum: 'https://sepolia.etherscan.io', 'base-mainnet': 'https://basescan.org' }
 
 async function deployPair(chain, token0, token1) {
+  networks.requireIndependentSigning(chain)
   return evmSigner.serialize(chain, async () => {
     const f = new ethers.ContractFactory(ammArtifact.abi, ammArtifact.bytecode, evmSigner.signer(chain))
     const inst = await f.deploy(token0, token1)
@@ -19,6 +21,7 @@ async function deployPair(chain, token0, token1) {
 
 // LP is the Emblem-managed vault (holds the reps, signs approve + addLiquidity via Emblem).
 async function addLiquidity(chain, pair, token0, token1, amt0, amt1) {
+  networks.requireIndependentSigning(chain)
   return evmSigner.serialize(chain, async () => {
     const s = await evmSigner.emblemSigner(chain)
     const lp = await evmSigner.emblemAddress(chain)
@@ -32,12 +35,16 @@ async function addLiquidity(chain, pair, token0, token1, amt0, amt1) {
     return { txHash: r.hash, explorer: `${EXPLORER[chain]}/tx/${r.hash}` }
   })
 }
-async function lpAddress(chain) { return evmSigner.emblemAddress(chain) }
+async function lpAddress(chain) {
+  if (!Object.hasOwn(networks.EVM_CHAINS, chain)) throw new Error('unsupported EVM chain identity')
+  return networks.EVM_CHAINS[chain].mainnet ? null : evmSigner.emblemAddress(chain)
+}
 
 // Deploy a mock EXTERNAL token (a stand-in "ETH memecoin" we do NOT mint as a rep) and
 // seed the LP with it — so we can demo rep/external pools. In production the external token
 // already exists on-chain and the LP brings its own liquidity; this is only for testnet demos.
 async function deployExternalToken(chain, name, symbol, amountToLp) {
+  networks.requireIndependentSigning(chain)
   return evmSigner.serialize(chain, async () => {
     const raw = evmSigner.signer(chain)
     const lp = await evmSigner.emblemAddress(chain)
@@ -71,6 +78,7 @@ function quoteOut(rInStr, rOutStr, amountInStr) {
 
 // Swapper is the Emblem-managed vault (holds tokenIn, signs approve + swap via Emblem).
 async function swap(chain, pair, tokenIn, amountIn, to) {
+  networks.requireIndependentSigning(chain)
   return evmSigner.serialize(chain, async () => {
     const s = await evmSigner.emblemSigner(chain)
     const amt = ethers.parseUnits(String(amountIn), 18)
@@ -82,4 +90,4 @@ async function swap(chain, pair, tokenIn, amountIn, to) {
   })
 }
 
-module.exports = { deployPair, addLiquidity, getReserves, quoteOut, swap, lpAddress, deployExternalToken, tokenBalance, deployerAddress: evmSigner.address, EXPLORER }
+module.exports = { deployPair, addLiquidity, getReserves, quoteOut, swap, lpAddress, deployExternalToken, tokenBalance, get deployerAddress() { return evmSigner.address }, EXPLORER }

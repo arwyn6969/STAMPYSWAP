@@ -5,8 +5,7 @@ name: ci
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  pull_request: # Also verify stacked security PRs before they reach main.
 
 jobs:
   build-and-test:

@@ -1,9 +1,8 @@
-// Uniswap V2 integration for MAINNET liquidity (Base). On mainnet we do NOT run our own AMM —
-// we mint the backed reps, then provide liquidity + swap on Uniswap's audited, battle-tested V2
-// contracts. All value-moving actions are signed by the Emblem-managed vault (no raw keys); the
-// deployer key only pays gas. Serialized per chain via evm-signer to keep nonces ordered.
+// Uniswap V2 reads and public-owner static preflights on Base mainnet. Automatic
+// protocol-funded writes remain closed pending an independent signing workflow.
 const { ethers } = require('ethers')
 const evmSigner = require('./evm-signer')
+const networks = require('./network-config')
 
 // Verified live on-chain 2026-09-14 (Factory.allPairsLength ~3.05M). Base MAINNET canonical V2.
 const UNI = {
@@ -23,8 +22,8 @@ const ERC20_ABI = ['function approve(address,uint256) returns (bool)', 'function
 // gas), which reverts contract calls as "intrinsic gas too low". So we set explicit generous
 // limits on every contract call. Base gas is pennies, so headroom is free.
 const GAS = { approve: 80000n, addLiquidity: 600000n, swap: 400000n }
-function cfg(chain) { const c = UNI[chain]; if (!c) throw new Error('uniswap V2 not configured for ' + chain); return c }
-function isSupported(chain) { return chain in UNI }
+function cfg(chain) { if (!Object.hasOwn(UNI, chain)) throw new Error('uniswap V2 not configured for ' + chain); return UNI[chain] }
+function isSupported(chain) { return Object.hasOwn(UNI, chain) }
 function deadline() { return Math.floor(Date.now() / 1000) + 1200 } // 20 min
 
 async function getPair(chain, tokenA, tokenB) {
@@ -38,7 +37,18 @@ async function _dec(chain, token) { return new ethers.Contract(token, ERC20_ABI,
 
 // Mint-to-vault → vault approves router → addLiquidity (auto-creates the pair if new). Vault signs
 // (Emblem, no raw key) and pays gas. `preflight` runs the calls with callStatic first (no spend).
-async function addLiquidity(chain, tokenA, tokenB, amountAWhole, amountBWhole, { preflight = false } = {}) {
+async function addLiquidity(chain, tokenA, tokenB, amountAWhole, amountBWhole, { preflight = false, from = null } = {}) {
+  if (preflight) {
+    if (!ethers.isAddress(from) || from === ethers.ZeroAddress) throw new Error('read-only liquidity preflight requires an explicit public from address')
+    const c = cfg(chain), rpc = evmSigner.provider(chain)
+    await networks.assertEvmNetwork(rpc, chain)
+    const decA = await _dec(chain, tokenA), decB = await _dec(chain, tokenB)
+    const amtA = ethers.parseUnits(String(amountAWhole), decA), amtB = ethers.parseUnits(String(amountBWhole), decB)
+    const router = new ethers.Contract(c.router, ROUTER_ABI, rpc)
+    await router.addLiquidity.staticCall(tokenA, tokenB, amtA, amtB, 0, 0, from, deadline(), { from })
+    return { preflight: true, ok: true, lp: from }
+  }
+  networks.requireIndependentSigning(chain)
   return evmSigner.serialize(chain, async () => {
     const c = cfg(chain)
     const signer = await evmSigner.emblemSigner(chain)
@@ -46,17 +56,9 @@ async function addLiquidity(chain, tokenA, tokenB, amountAWhole, amountBWhole, {
     const decA = await _dec(chain, tokenA), decB = await _dec(chain, tokenB)
     const amtA = ethers.parseUnits(String(amountAWhole), decA), amtB = ethers.parseUnits(String(amountBWhole), decB)
     const router = new ethers.Contract(c.router, ROUTER_ABI, signer)
-    // approvals (skip in preflight — approve is itself a spend; we just validate liquidity math)
-    if (!preflight) {
-      for (const [t, amt] of [[tokenA, amtA], [tokenB, amtB]]) {
-        const erc = new ethers.Contract(t, ERC20_ABI, signer)
-        if ((await erc.allowance(lp, c.router)) < amt) await (await erc.approve(c.router, amt, { gasLimit: GAS.approve })).wait()
-      }
-    }
-    if (preflight) {
-      // static-simulate (no state change) to surface a revert before we ever spend
-      await router.addLiquidity.staticCall(tokenA, tokenB, amtA, amtB, 0, 0, lp, deadline())
-      return { preflight: true, ok: true, lp }
+    for (const [t, amt] of [[tokenA, amtA], [tokenB, amtB]]) {
+      const erc = new ethers.Contract(t, ERC20_ABI, signer)
+      if ((await erc.allowance(lp, c.router)) < amt) await (await erc.approve(c.router, amt, { gasLimit: GAS.approve })).wait()
     }
     // slippage floor (P1 audit): min amounts = 99% of desired (protects when adding to an existing
     // pool; harmless for the first add to a fresh pair, where the router uses the exact amounts).
@@ -85,7 +87,19 @@ async function quoteOut(chain, amountInWhole, tokenIn, tokenOut) {
   return ethers.formatUnits(outs[1], decOut)
 }
 
-async function swap(chain, amountInWhole, tokenIn, tokenOut, { preflight = false } = {}) {
+async function swap(chain, amountInWhole, tokenIn, tokenOut, { preflight = false, from = null } = {}) {
+  if (preflight) {
+    if (!ethers.isAddress(from) || from === ethers.ZeroAddress) throw new Error('read-only swap preflight requires an explicit public from address')
+    const c = cfg(chain), rpc = evmSigner.provider(chain)
+    await networks.assertEvmNetwork(rpc, chain)
+    const amtIn = ethers.parseUnits(String(amountInWhole), await _dec(chain, tokenIn))
+    const router = new ethers.Contract(c.router, ROUTER_ABI, rpc)
+    const outs = await router.getAmountsOut(amtIn, [tokenIn, tokenOut])
+    const minOut = outs[1] - outs[1] * 50n / 10000n
+    await router.swapExactTokensForTokens.staticCall(amtIn, minOut, [tokenIn, tokenOut], from, deadline(), { from })
+    return { preflight: true, ok: true }
+  }
+  networks.requireIndependentSigning(chain)
   return evmSigner.serialize(chain, async () => {
     const c = cfg(chain)
     const signer = await evmSigner.emblemSigner(chain)
@@ -93,18 +107,19 @@ async function swap(chain, amountInWhole, tokenIn, tokenOut, { preflight = false
     const decIn = await _dec(chain, tokenIn)
     const amtIn = ethers.parseUnits(String(amountInWhole), decIn)
     const router = new ethers.Contract(c.router, ROUTER_ABI, signer)
-    if (!preflight) {
-      const erc = new ethers.Contract(tokenIn, ERC20_ABI, signer)
-      if ((await erc.allowance(to, c.router)) < amtIn) await (await erc.approve(c.router, amtIn, { gasLimit: GAS.approve })).wait()
-    }
+    const erc = new ethers.Contract(tokenIn, ERC20_ABI, signer)
+    if ((await erc.allowance(to, c.router)) < amtIn) await (await erc.approve(c.router, amtIn, { gasLimit: GAS.approve })).wait()
     // slippage floor (P1 audit): minOut = quote − 50 bps, instead of 0 (which would accept any output)
     const outs = await router.getAmountsOut(amtIn, [tokenIn, tokenOut])
     const minOut = outs[1] - outs[1] * 50n / 10000n
-    if (preflight) { await router.swapExactTokensForTokens.staticCall(amtIn, minOut, [tokenIn, tokenOut], to, deadline()); return { preflight: true, ok: true } }
     const tx = await router.swapExactTokensForTokens(amtIn, minOut, [tokenIn, tokenOut], to, deadline(), { gasLimit: GAS.swap })
     const r = await tx.wait()
     return { txHash: r.hash, explorer: `${c.explorer}/tx/${r.hash}` }
   })
 }
 
-module.exports = { isSupported, getPair, addLiquidity, getReserves, quoteOut, swap, UNI, lpAddress: (chain) => evmSigner.emblemAddress(chain) }
+async function lpAddress(chain) {
+  if (!Object.hasOwn(networks.EVM_CHAINS, chain)) throw new Error('unsupported EVM chain identity')
+  return networks.EVM_CHAINS[chain].mainnet ? null : evmSigner.emblemAddress(chain)
+}
+module.exports = { isSupported, getPair, addLiquidity, getReserves, quoteOut, swap, UNI, lpAddress }

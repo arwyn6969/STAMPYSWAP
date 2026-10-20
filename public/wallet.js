@@ -146,8 +146,8 @@
     return d.provider.request({ method: 'personal_sign', params: [message, d.address] })
   }
   window.stampySignForChain = async function (chain, message) {
-    if (chain === 'solana') return signSolanaMessage(message)
-    if (chain === 'base' || chain === 'ethereum' || chain === 'base-mainnet') return signEvmMessage(message)
+    if (chain === 'solana' || chain === 'solana-mainnet') return signSolanaMessage(message)
+    if (chain === 'base' || chain === 'ethereum' || chain === 'base-mainnet' || chain === 'ethereum-mainnet') return signEvmMessage(message)
     throw new Error('unsupported chain for signing: ' + chain)
   }
 
