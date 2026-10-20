@@ -83,3 +83,38 @@ test('solana valid full path -> ok', () => {
   const p = POL(); p.expectedAnchors = { s1: { kind: 'burn', chain: 'solana-mainnet', identity: SSIG, assetId: 'K', height: 10, blockHash: SHASH, amountBase: '5' } }
   const s = (pr) => src({ providerId: pr, chain: 'solana-mainnet', networkId: 'sol', finalizedHeight: 20, tipHeight: 20, effects: { s1: { kind: 'burn', chain: 'solana-mainnet', identity: SSIG, assetId: 'K', height: 10, blockHash: SHASH, amountBase: '5' } } })
   assert.equal(evaluate([{ effect_id: 's1', kind: 'burn', chain: 'solana-mainnet', identity: SSIG, assetId: 'K', height: 10, blockHash: SHASH, amountBase: '5' }], [s('pA'), s('pB')], p).status, 'ok') })
+
+// ===== v5: strict bounded own-data schema =====
+test('v5: 1026 chains -> policy throws', () => { const p = POL(); for (let i = 0; i < 1026; i++) p.chains['c' + i] = { networkId: i, protocolVersion: 1, idForm: 'evm', hashForm: 'evm' }; assert.throws(() => evaluate([A], [src(), src({ providerId: 'pB' })], p)) })
+test('v5: 1027 providers -> policy throws', () => { const p = POL(); for (let i = 0; i < 1027; i++) p.trustedProviders['x' + i] = { operatorGroup: 'g' + i, chains: ['base-mainnet'] }; assert.throws(() => evaluate([A], [src()], p)) })
+test('v5: unknown policy field -> throws', () => assert.throws(() => evaluate([A], [src()], Object.assign(POL(), { surprise: 1 }))))
+test('v5: unknown chaincfg field -> throws', () => { const p = POL(); p.chains['base-mainnet'].extra = 1; assert.throws(() => evaluate([A], [src()], p)) })
+test('v5: 1025 extra malformed effect records -> malformed_observation pause (no ok)', () => {
+  const effs = { e1: { ...M } }; for (let i = 0; i < 1025; i++) effs['junk' + i] = { x: i } // unknown effect labels + too many
+  const r = evaluate([A], [src({ effects: effs }), src({ providerId: 'pB' })], POL())
+  assert.equal(r.status, 'pause'); assert.ok(r.reasons.some(x => x.startsWith('source:')))
+})
+test('v5: unknown 100000-char observation field -> rejected', () => {
+  const r = evaluate([A], [src({ bogus: 'z'.repeat(100000) }), src({ providerId: 'pB' })], POL())
+  assert.equal(r.status, 'pause'); assert.ok(has(r, 'source:unknown_field'))
+})
+test('v5: unknown anchor field -> malformed, pause, no throw', () => {
+  assert.doesNotThrow(() => { const r = evaluate([{ ...A, weird: 1 }], [src(), src({ providerId: 'pB' })], POL()); assert.equal(r.status, 'pause'); assert.ok(r.reasons.some(x => x.includes('unknown_field') || x.includes('missing_expected_anchor'))) })
+})
+test('v5: observedAt -1 (now 0) -> bad_timestamp, not fresh', () => {
+  const p = Object.assign(POL(), { now: 0 })
+  const r = evaluate([A], [src({ observedAt: -1 }), src({ providerId: 'pB', observedAt: -1 })], p)
+  assert.equal(r.status, 'pause'); assert.ok(has(r, 'source:bad_timestamp'))
+})
+test('v5: Object.create(validSource) with inherited fields -> non_plain_prototype pause, no crash', () => {
+  const base = src(); const inherited = Object.create(base) // zero OWN fields, all inherited
+  assert.doesNotThrow(() => { const r = evaluate([A], [inherited, src({ providerId: 'pB' })], POL()); assert.equal(r.status, 'pause'); assert.ok(r.reasons.some(x => x.includes('non_plain_prototype'))) })
+})
+test('v5: throwing getter on providerId -> accessor rejected, evaluate does NOT crash', () => {
+  const s = src(); const bad = {}; for (const k of Object.keys(s)) bad[k] = s[k]
+  Object.defineProperty(bad, 'providerId', { enumerable: true, configurable: true, get() { throw new Error('boom') } })
+  assert.doesNotThrow(() => { const r = evaluate([A], [bad, src({ providerId: 'pB' })], POL()); assert.equal(r.status, 'pause'); assert.ok(r.reasons.some(x => x.includes('accessor_field'))) })
+})
+test('v5: malformed POLICY still throws even with bad observations present', () => {
+  assert.throws(() => evaluate([A], [{}, null], Object.assign(POL(), { version: 9 })))
+})

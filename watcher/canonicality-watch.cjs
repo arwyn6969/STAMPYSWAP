@@ -7,7 +7,51 @@
 // qualified completeness-complete source that OMITS an expected effect is explicit disagreement;
 // (6) bounded, versioned, plain-scalar policy at every level; (7) trusted anchor CONTENT lives in
 // policy.expectedAnchors — labels alone don't pin content. Only policy throws; data pauses.
-const LIMITS = { maxAnchors: 1024, maxSources: 1024, maxExpected: 256, maxProviderChains: 64 }
+const LIMITS = { maxAnchors: 1024, maxSources: 1024, maxExpected: 256, maxChains: 64, maxProviders: 256, maxProviderChains: 64, maxEffectsPerSource: 256, maxFields: 32 }
+// Strict bounded own-DATA schema (defends against inherited fields, accessor/throwing getters,
+// unknown/oversized fields, and nested-map blowups). Returns a null-proto copy of ONLY the allowed
+// own data fields, or throws RecErr. For POLICY this throws (outside the data catch); for OBSERVATIONS
+// and ANCHORS the caller converts any throw to a FIXED pause reason.
+class RecErr extends Error { constructor(code) { super(code); this.code = code } }
+function strictRecord(v, allowed, where) {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new RecErr(where + ':not_plain_object')
+  const proto = Object.getPrototypeOf(v)
+  if (proto !== Object.prototype && proto !== null) throw new RecErr(where + ':non_plain_prototype')
+  const names = Object.getOwnPropertyNames(v)
+  if (names.length > LIMITS.maxFields) throw new RecErr(where + ':too_many_fields')
+  const out = Object.create(null)
+  for (const k of names) {
+    if (!allowed.has(k)) throw new RecErr(where + ':unknown_field')
+    const d = Object.getOwnPropertyDescriptor(v, k)
+    if (!d || typeof d.get === 'function' || typeof d.set === 'function' || !('value' in d)) throw new RecErr(where + ':accessor_field')
+    out[k] = d.value
+  }
+  return out
+}
+const SOURCE_FIELDS = new Set(['providerId', 'chain', 'networkId', 'protocolVersion', 'historyComplete', 'paginationComplete', 'tipHeight', 'finalizedHeight', 'observedAt', 'effects', 'error'])
+const EFFECT_FIELDS = new Set(['kind', 'chain', 'identity', 'assetId', 'height', 'blockHash', 'amountBase'])
+const ANCHOR_FIELDS = new Set(['effect_id', 'kind', 'chain', 'identity', 'assetId', 'height', 'blockHash', 'amountBase'])
+const CHAINCFG_FIELDS = new Set(['networkId', 'protocolVersion', 'idForm', 'hashForm', 'minConfirmations'])
+const PROVIDER_FIELDS = new Set(['operatorGroup', 'chains'])
+const POLICY_FIELDS = new Set(['version', 'minIndependentSources', 'now', 'maxObsAgeMs', 'chains', 'trustedProviders', 'expectedAnchors'])
+function sanitizeSource(s, P) {
+  const o = strictRecord(s, SOURCE_FIELDS, 'source')
+  if (o.effects !== undefined) {
+    if (o.effects === null || typeof o.effects !== 'object' || Array.isArray(o.effects) || (Object.getPrototypeOf(o.effects) !== Object.prototype && Object.getPrototypeOf(o.effects) !== null)) throw new RecErr('source:effects_not_plain_object')
+    const keys = Object.getOwnPropertyNames(o.effects)
+    if (keys.length > LIMITS.maxEffectsPerSource) throw new RecErr('source:too_many_effects')
+    const clean = Object.create(null)
+    for (const k of keys) {
+      if (!Object.prototype.hasOwnProperty.call(P.expectedAnchors, k)) throw new RecErr('source:unknown_effect_label')
+      const d = Object.getOwnPropertyDescriptor(o.effects, k)
+      if (!d || typeof d.get === 'function' || typeof d.set === 'function' || !('value' in d)) throw new RecErr('source:effect_accessor')
+      clean[k] = strictRecord(d.value, EFFECT_FIELDS, 'effect')
+    }
+    o.effects = clean
+  } else { o.effects = Object.create(null) }
+  return o
+}
+function sanitizeAnchor(a) { return strictRecord(a, ANCHOR_FIELDS, 'anchor') }
 const B58A = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 const B58M = (() => { const m = Object.create(null); for (let i = 0; i < B58A.length; i++) m[B58A[i]] = i; return m })()
 function b58decode(s) {
@@ -47,22 +91,24 @@ function manifestEntryValid(m, P) {
 }
 function validatePolicy(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) throw new TypeError('policy required')
+  strictRecord(p, POLICY_FIELDS, 'policy') // reject unknown/accessor/non-plain top-level policy fields
   if (p.version !== 1) throw new TypeError('policy.version must be 1')
   if (!Number.isSafeInteger(p.minIndependentSources) || p.minIndependentSources < 2 || p.minIndependentSources > 64) throw new TypeError('minIndependentSources must be int in [2,64]')
   if (!isInt0(p.now)) throw new TypeError('now must be a non-negative integer')
   if (!Number.isSafeInteger(p.maxObsAgeMs) || p.maxObsAgeMs <= 0 || p.maxObsAgeMs > 86400000) throw new TypeError('maxObsAgeMs must be a positive integer <= 86400000')
   if (!p.chains || typeof p.chains !== 'object' || Array.isArray(p.chains) || !Object.keys(p.chains).length) throw new TypeError('chains must be a non-empty object map')
+  if (Object.keys(p.chains).length > LIMITS.maxChains) throw new TypeError('too many chains')
   for (const c of Object.keys(p.chains)) {
-    const cfg = p.chains[c]
-    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw new TypeError('chains.' + c + ' must be a plain object')
+    const cfg = strictRecord(p.chains[c], CHAINCFG_FIELDS, 'chaincfg')
     if (!isScalar(cfg.networkId) || !isScalar(cfg.protocolVersion)) throw new TypeError('chains.' + c + ' networkId/protocolVersion must be non-empty scalars')
     if (!own(FORMS, cfg.idForm) || !own(FORMS, cfg.hashForm)) throw new TypeError('chains.' + c + ' needs valid idForm/hashForm')
     if (cfg.minConfirmations != null && !isInt0(cfg.minConfirmations)) throw new TypeError('chains.' + c + '.minConfirmations must be >= 0')
   }
   if (!p.trustedProviders || typeof p.trustedProviders !== 'object' || Array.isArray(p.trustedProviders) || !Object.keys(p.trustedProviders).length) throw new TypeError('trustedProviders must be a non-empty object map')
+  if (Object.keys(p.trustedProviders).length > LIMITS.maxProviders) throw new TypeError('too many providers')
   for (const idp of Object.keys(p.trustedProviders)) {
-    const t = p.trustedProviders[idp]
-    if (!t || typeof t !== 'object' || Array.isArray(t) || !isStr(t.operatorGroup, 128) || !Array.isArray(t.chains) || !t.chains.length || t.chains.length > LIMITS.maxProviderChains) throw new TypeError('trustedProviders.' + idp + ' invalid')
+    const t = strictRecord(p.trustedProviders[idp], PROVIDER_FIELDS, 'provider')
+    if (!isStr(t.operatorGroup, 128) || !Array.isArray(t.chains) || !t.chains.length || t.chains.length > LIMITS.maxProviderChains) throw new TypeError('trustedProviders.' + idp + ' invalid')
     for (const c of t.chains) if (!own(p.chains, c)) throw new TypeError('trustedProviders.' + idp + ' authorizes unknown chain')
   }
   if (!p.expectedAnchors || typeof p.expectedAnchors !== 'object' || Array.isArray(p.expectedAnchors)) throw new TypeError('expectedAnchors must be an object manifest')
@@ -86,7 +132,7 @@ function sourceHealth(s, P) {
   if (!isInt0(s.tipHeight)) r.push('bad_tip')
   if (!isInt0(s.finalizedHeight)) r.push('bad_finalized')
   if (isInt0(s.tipHeight) && isInt0(s.finalizedHeight) && s.finalizedHeight > s.tipHeight) r.push('impossible_finality')
-  if (!Number.isSafeInteger(s.observedAt)) r.push('no_timestamp')
+  if (!isInt0(s.observedAt)) r.push('bad_timestamp')
   else if (s.observedAt > P.now) r.push('future_timestamp')
   else if ((P.now - s.observedAt) > P.maxObsAgeMs) r.push('stale_observation')
   return { healthy: r.length === 0, reasons: r, group: trusted ? trusted.operatorGroup : null, chain: cfg ? s.chain : null }
@@ -122,13 +168,14 @@ function evaluate(anchors, sources, policy) {
   if (sources.length > LIMITS.maxSources) { reasons.add('too_many_sources'); sources = sources.slice(0, LIMITS.maxSources) }
   const healthy = []
   for (const s of sources) {
-    const h = sourceHealth(s, P)
+    let clean; try { clean = sanitizeSource(s, P) } catch (e) { const code = e && e.code ? e.code : 'source:malformed_observation'; reasons.add(code); sourceEvidence.push({ group: null, chain: null, healthy: false, reasons: [code] }); continue }
+    const h = sourceHealth(clean, P)
     sourceEvidence.push({ group: h.group, chain: h.chain, healthy: h.healthy, reasons: h.reasons })
-    if (h.healthy) healthy.push({ s, group: h.group, chain: h.chain }); else h.reasons.forEach(x => reasons.add('source:' + x))
+    if (h.healthy) healthy.push({ s: clean, group: h.group, chain: h.chain }); else h.reasons.forEach(x => reasons.add('source:' + x))
   }
   const supplied = new Map()
-  for (const a of anchors) {
-    if (!a || typeof a !== 'object' || Array.isArray(a)) { reasons.add('malformed_anchor'); continue }
+  for (const a0 of anchors) {
+    let a; try { a = sanitizeAnchor(a0) } catch (e) { reasons.add(e && e.code ? e.code : 'malformed_anchor'); continue }
     const eid = a.effect_id
     if (!isStr(eid, 128)) { reasons.add('malformed_anchor_id'); continue }
     if (!own(P.expectedAnchors, eid)) { reasons.add('unexpected_anchor'); continue }

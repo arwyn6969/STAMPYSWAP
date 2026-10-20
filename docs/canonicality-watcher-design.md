@@ -22,3 +22,10 @@ qualified = healthy sources on the effect's chain (provider authorized). EVERY q
 
 ## Caveats
 Pure logic. Provider/operator-group mappings and the manifest are trusted configuration supplied by a reviewed integrator, not cryptographic proof of independence; the integrator must supply trustworthy observations and enforce any pause. This is detection evidence, not a live watchdog.
+
+## v5 — strict bounded own-data JSON schema at entry (narrow fixes, v4 regressions preserved)
+- strictRecord(): every record (policy top-level, chain cfg, provider entry, source, effect, anchor) must be a PLAIN OWN-DATA object — prototype Object.prototype|null, no inherited fields, no accessor/getter properties (read via getOwnPropertyDescriptor, never invoked), only whitelisted known fields, bounded field count. Unknown fields rejected (exact unknown-field policy).
+- Collection bounds everywhere: chains <=64, providers <=256, provider chains <=64, expectedAnchors <=256, effects-per-source <=256, anchors/sources arrays <=1024, fields-per-record <=32, per-field string/byte bounds (base58 decode + form validators).
+- observedAt must be a NON-NEGATIVE integer (negative no longer passes freshness).
+- Entry discipline: POLICY validation throws (outside any catch); OBSERVATION/ANCHOR validation exceptions are converted to FIXED pause reasons (source:<code>/anchor:<code>) — Object.create(validRecord) and throwing getters pause, never crash evaluate.
+32/32 adversarial tests (all prior v1–v4 regressions + nested/unknown/oversized bounds + negative timestamp + inherited-field + throwing-getter + policy-throws-despite-bad-observations).
