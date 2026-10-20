@@ -92,7 +92,7 @@ async function fixture(t, options = {}) {
   Object.assign(express, expressReal)
   const dependencies = { express, path, crypto: require('node:crypto'), tweetnacl: dep('tweetnacl'),
     bs58: dep('bs58'), './sol-mint': {}, './evm-mint': evm, './amm': {}, './custody': custody,
-    './recovery': require(path.join(ROOT, 'recovery.js')), './labels': require(path.join(ROOT, 'labels.js')), './intent-bindings': intents,
+    './recovery': require(path.join(ROOT, 'recovery.js')), './labels': require(path.join(ROOT, 'labels.js')), './intent-bindings': intents, './claims-report': require(path.join(ROOT, 'claims-report.js')),
     './counterparty': cp, './acme': acme, './prices': {}, './squads': null, './safe': null,
     'bip322-js': bip, fs: { existsSync: () => false }, ethers }
   const query = async (sql, params = []) => db.prepare(sql).all(...params)

@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --experimental-sqlite --test test/*.test.js test/*.test.cjs",
-    "lint": "eslint server.js custody.js acme.js counterparty.js evm-mint.js sol-mint.js uniswap.js amm.js evm-signer.js squads.js safe.js prices.js recovery.js labels.js src20-validator.js vendor/bigint-buffer/index.js network-config.js intent-bindings.js"
+    "lint": "eslint server.js custody.js acme.js counterparty.js evm-mint.js sol-mint.js uniswap.js amm.js evm-signer.js squads.js safe.js prices.js recovery.js labels.js src20-validator.js vendor/bigint-buffer/index.js network-config.js intent-bindings.js claims-report.js counterparty-validator.js"
   },
   "dependencies": {
     "@emblemvault/auth-sdk": "^2.3.18",

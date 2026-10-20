@@ -16,6 +16,7 @@ const prices = require('./prices') // indicative USD/BTC pricing (SRC-20 market 
 const recovery = require('./recovery') // durable-recovery decision logic (audit R05/F06) — pure, unit-tested
 const labels = require('./labels') // on-chain provenance labels (canonical cross-protocol identity) — pure, unit-tested
 const intentBindings = require('./intent-bindings') // versioned, exact action/chain/asset/transaction signing domains
+const claimsReport = require('./claims-report') // bounded read-only accounting claims; never chain solvency evidence
 const squads = (() => { try { return require('./squads') } catch (_) { return null } })() // Squads v4 multisig (Solana authority upgrade)
 const safe = (() => { try { return require('./safe') } catch (_) { return null } })() // Safe multisig (EVM authority upgrade)
 const { Verifier: Bip322Verifier } = require('bip322-js') // Phase 5: real BIP-322 proof verification
@@ -1442,8 +1443,13 @@ async function reservedBase(canonicalId, excludeOpKey) {
 // reads THROW on DB failure (fail-closed, same reason as reservedBase).
 async function repCirculatingBase(repId) {
   const rows = await dbQuery('SELECT delta_base FROM accounting_events WHERE rep_id=?', [repId])
-  let s = 0n; for (const r of rows) s += BigInt(r.delta_base)
-  return s < 0n ? 0n : s
+  let s = 0n
+  for (const r of rows) {
+    if (typeof r.delta_base !== 'string' || !/^-?\d+$/.test(r.delta_base)) throw new Error('invalid accounting event amount')
+    s += BigInt(r.delta_base)
+  }
+  if (s < 0n) throw new Error('negative authoritative representation balance')
+  return s
 }
 async function assetCirculatingBase(canonicalId) {
   // A single query snapshots ALL representations and their events together. Separate per-rep
@@ -1453,11 +1459,15 @@ async function assetCirculatingBase(canonicalId) {
   for (const row of rows) {
     if (!Number.isSafeInteger(row.rep_id) || row.rep_id <= 0 || !Object.prototype.hasOwnProperty.call(row, 'event_key') || !Object.prototype.hasOwnProperty.call(row, 'delta_base'))
       throw new Error('invalid accounting snapshot row')
-    if (row.event_key != null && (typeof row.event_key !== 'string' || row.delta_base == null || !/^-?\d+$/.test(String(row.delta_base))))
+    if (row.event_key != null && (typeof row.event_key !== 'string' || typeof row.delta_base !== 'string' || !/^-?\d+$/.test(row.delta_base)))
       throw new Error('invalid accounting event')
     totals.set(row.rep_id, (totals.get(row.rep_id) || 0n) + (row.event_key == null ? 0n : BigInt(row.delta_base)))
   }
-  let s = 0n; for (const total of totals.values()) s += total < 0n ? 0n : total
+  let s = 0n
+  for (const total of totals.values()) {
+    if (total < 0n) throw new Error('negative authoritative representation balance')
+    s += total
+  }
   return s
 }
 // Sync the display cache column to the authoritative event sum (idempotent; safe to call anytime).
@@ -1514,7 +1524,7 @@ async function applyCirculatingDelta(repId, deltaBase, eventKey) {
   await recordAccountingEvent(repId, eventKey, deltaBase)
   const rows = await dbQuery('SELECT delta_base FROM accounting_events WHERE rep_id=?', [repId])
   let sum = 0n; for (const r of rows) sum += BigInt(r.delta_base)
-  if (sum < 0n) sum = 0n
+  if (sum < 0n) throw new Error('negative authoritative representation balance')
   const target = fromBaseUnits(sum, 18)
   await writeCirculating(repId, target)
   return { ok: true, newCirc: target }
@@ -1690,6 +1700,19 @@ app.post('/api/redeem', async (req, res) => {
     })
     res.status(out.status).json(out.body)
   } catch (e) { res.status(500).json({ error: publicError(e), code: publicErrorCode(e) }) }
+})
+
+// Operator evidence only. One DB read snapshot, no RPC/signing/writes, no inferred holdings.
+app.get('/api/claims', async (req, res) => {
+  if (requireOperator(req, res)) return
+  if (Object.keys(req.query).length) return res.status(400).json({ error: 'claims report accepts no query parameters' })
+  try {
+    const report = await claimsReport.readClaimsReport(dbQuery)
+    res.set('Cache-Control', 'no-store').json(report)
+  } catch (_) {
+    res.status(503).set('Cache-Control', 'no-store').json({ error: 'claims report unavailable: incomplete or invalid accounting evidence',
+      code: 'CLAIMS_EVIDENCE_INVALID', accounting_snapshot_complete: false, full_customer_claims_verified: false, full_customer_claims_base: null, release_ready: false })
+  }
 })
 
 // REAL proof-of-reserves — per-asset collateral vs circulating, with the solvency check.
@@ -2295,14 +2318,29 @@ app.post('/api/reconcile', async (req, res) => {
       if (rowHold) return res.status(rowHold.status).json(rowHold.body)
       if (mrow.status !== 'pending') return res.status(409).json({ error: `move-out is not pending (status=${mrow.status})` })
       const out = await withAssetLock(mrow.canonical_id, async () => {
-        // C06 (audit): advancing the phase is not enough — a failed source materialization must be
-        // REPAIRED. The debit event is authoritative, so re-materialize the source cache from the event
-        // ledger before marking decremented. (With events authoritative the dest mint already sees the
-        // reduced source; this also makes the display cache truthful.)
-        const srcRep = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [mrow.canonical_id, mrow.dest_chain]))[0]
-        if (srcRep) await rematerialize(srcRep.id).catch(() => {})
-        await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE id=? AND status='pending'`, [mrow.id])
-        return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, note: 'source debit re-materialized; resubmit the move with the same burn_txid to complete the destination mint' } }
+        // A positive recovery must prove the exact source debit, not merely trust an
+        // operator label. A materialization error must leave the phase pending.
+        const cur = (await dbQuery('SELECT * FROM collateral_ledger WHERE id=?', [mrow.id]))[0]
+        if (!cur || cur.status !== 'pending' || cur.direction !== 'move-out' || cur.btc_txid !== burn_txid ||
+            cur.canonical_id !== mrow.canonical_id || cur.dest_chain !== mrow.dest_chain || cur.amount !== mrow.amount)
+          return { status: 409, body: { reconciled: false, error: 'move-out identity or phase changed; retained for reconciliation' } }
+        const srcRep = (await dbQuery('SELECT id FROM representations WHERE canonical_id=? AND dest_chain=?', [cur.canonical_id, cur.dest_chain]))[0]
+        const expectedDebit = -toBaseUnits(cur.amount)
+        const eventKey = `move-out:${normTxid(cur.dest_chain, burn_txid)}:${cur.canonical_id}`
+        const event = (await dbQuery('SELECT rep_id, delta_base FROM accounting_events WHERE event_key=?', [eventKey]))[0]
+        if (!srcRep || expectedDebit >= 0n || !event || String(event.rep_id) !== String(srcRep.id) || event.delta_base !== expectedDebit.toString())
+          return { status: 409, body: { reconciled: false, error: 'exact source debit is not established in the immutable event ledger; burn and move remain retained' } }
+        const target = await rematerialize(srcRep.id)
+        const cached = (await dbQuery('SELECT circulating_supply c FROM representations WHERE id=?', [srcRep.id]))[0]
+        if (!cached || cached.c !== target) throw new Error('source balance materialization was not verified')
+        // A lost acknowledgement can still have committed. Verify durable phase and
+        // identity after both success and failure; never infer success from an ACK.
+        try { await dbExec(`UPDATE collateral_ledger SET status='decremented' WHERE id=? AND status='pending'`, [cur.id]) } catch (_) {}
+        const phase = (await dbQuery('SELECT * FROM collateral_ledger WHERE id=?', [cur.id]))[0]
+        if (!phase || phase.status !== 'decremented' || phase.direction !== cur.direction || phase.btc_txid !== cur.btc_txid ||
+            phase.canonical_id !== cur.canonical_id || phase.dest_chain !== cur.dest_chain || phase.amount !== cur.amount)
+          throw new Error('source debit phase could not be durably verified')
+        return { status: 200, body: { reconciled: true, kind, burn_txid, resolution, note: 'exact source debit and materialization verified; resubmit the same move to complete the destination mint' } }
       })
       return res.status(out.status).json(out.body)
     }
@@ -2473,7 +2511,7 @@ app.post('/api/stampbridge/execute', express.json(), async (req, res) => {
       let release
       try {
         // R05: shared-vault UTXO serialization — same global BTC lock as redeem.
-        release = await withBtcVaultLock(() => custody.redeem({ tick: b.stamp_asset, amount: rel, toAddress: check.source, protocol: b.stamp_protocol, qtyBase: counterparty.toBase(rel, 0) }))
+        release = await withBtcVaultLock(() => custody.redeem({ tick: b.stamp_asset, amount: rel, toAddress: check.source, protocol: b.stamp_protocol, qtyBase: counterparty.toBase(rel, 0), dec: 0 }))
       } catch (e) {
         if (e.code === 'GATED') {
           // proven pre-send (nothing broadcast) → free the reservation so it stays retryable

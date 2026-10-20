@@ -4,12 +4,37 @@
 // vault signs → broadcast). Divisible assets use 8 decimals; indivisible use 0.
 const CP = process.env.COUNTERPARTY_API || 'https://api.counterparty.io:4000/v2'
 
+async function boundedJson(response) {
+  const maximum = 1000000 // Includes PSBT/metadata; larger envelopes are unsupported.
+  let text
+  if (response.body && typeof response.body.getReader === 'function') {
+    const reader = response.body.getReader(), chunks = []
+    let size = 0
+    try {
+      while (true) {
+        const next = await reader.read()
+        if (next.done) break
+        size += next.value.length
+        if (size > maximum) { await reader.cancel(); throw new Error('counterparty response exceeds size policy') }
+        chunks.push(Buffer.from(next.value))
+      }
+      text = Buffer.concat(chunks).toString('utf8')
+    } finally { reader.releaseLock() }
+  } else {
+    // Offline text-only test transports. Actual fetch responses use the bounded
+    // streaming branch; the abort signal remains active while the body is read.
+    text = await response.text()
+    if (Buffer.byteLength(text, 'utf8') > maximum) throw new Error('counterparty response exceeds size policy')
+  }
+  return JSON.parse(text)
+}
+
 async function cpGet(pathname) {
   const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 20000)
   try {
     const r = await fetch(`${CP}${pathname}`, { headers: { accept: 'application/json' }, signal: ctrl.signal })
     if (!r.ok) throw new Error(`counterparty ${r.status}`)
-    return (await r.json())
+    return await boundedJson(r)
   } finally { clearTimeout(t) }
 }
 const xcpDecimals = divisible => (divisible ? 8 : 0)
@@ -90,10 +115,21 @@ async function checkDeposit(vault, asset, qtyWhole, dec) {
 // REDEEM: release `qtyWhole` of a Counterparty asset from the vault via a `send` — compose
 // the tx, sign with the vault's managed signer, broadcast. Scaffolded; finalized against the
 // first real redeem (like SRC-20). GATED by the caller (custody live).
-async function composeSend({ from, toAddress, asset, qtyWhole, dec }) {
-  const qtyBase = toBase(qtyWhole, dec)
-  const j = await cpGet(`/addresses/${encodeURIComponent(from)}/compose/send?destination=${encodeURIComponent(toAddress)}&asset=${encodeURIComponent(asset)}&quantity=${qtyBase}&validate=true`)
+function releaseQuantity(whole, dec, expectedBase = null) {
+  if (![0, 8].includes(dec) || typeof whole !== 'string' || !/^\d{1,30}(?:\.\d{1,18})?$/.test(whole)) throw new Error('Counterparty release requires exact decimal text and source decimals 0 or 8')
+  const [integer, fraction = ''] = whole.split('.')
+  if (/[1-9]/.test(fraction.slice(dec))) throw new Error('Counterparty release exceeds source precision')
+  const units = BigInt(integer) * 10n ** BigInt(dec) + BigInt(fraction.padEnd(dec, '0').slice(0, dec) || '0')
+  if (units <= 0n || units > (1n << 63n) - 1n) throw new Error('Counterparty release quantity outside MAX_INT')
+  if (expectedBase !== null && (typeof expectedBase !== 'string' || !/^[1-9][0-9]{0,18}$/.test(expectedBase) || BigInt(expectedBase) !== units)) throw new Error('Counterparty release base units do not match the authorized amount')
+  return units.toString()
+}
+async function composeSend({ from, toAddress, asset, qtyWhole, dec, qtyBase = null }) {
+  const exactBase = releaseQuantity(qtyWhole, dec, qtyBase)
+  // Only the bounded one-transaction OP_RETURN enhanced-send policy is supported by
+  // counterparty-validator.js. Taproot/multisig/legacy encodings remain unsupported.
+  const j = await cpGet(`/addresses/${encodeURIComponent(from)}/compose/send?destination=${encodeURIComponent(toAddress)}&asset=${encodeURIComponent(asset)}&quantity=${exactBase}&encoding=opreturn&use_enhanced_send=true&verbose=true&validate=true`)
   return j && j.result
 }
 
-module.exports = { lookupAsset, addressBalanceBase, checkDeposit, composeSend, chainHeight, sentToVault, findDeposits, confirmations, fromBase, toBase, xcpDecimals }
+module.exports = { lookupAsset, addressBalanceBase, checkDeposit, composeSend, releaseQuantity, chainHeight, sentToVault, findDeposits, confirmations, fromBase, toBase, xcpDecimals }

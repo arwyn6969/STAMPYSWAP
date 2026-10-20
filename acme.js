@@ -15,6 +15,16 @@
 // /api/discover dispatch chain (counterparty → src-20 → acme) writing source_protocol='acme'.
 const AP = process.env.ACME_API || 'https://acme.pics/api'
 
+// The existing v1→v2 envelope rewrite and fee address were inferred from examples,
+// not a pinned primary protocol specification. Composer JSON is not a byte-level
+// authorization proof. Keep custody releases closed until a reviewed decoder can
+// bind the actual envelope, source/recipient/asset/quantity and fee rules.
+function requireReleaseValidation() {
+  const error = new Error('ACME release is closed pending a pinned protocol specification and independently reviewed byte-level envelope validation')
+  error.code = 'ACME_RELEASE_VALIDATION_REQUIRED'
+  throw error
+}
+
 async function apGet(pathname) {
   const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 20000)
   try {
@@ -123,8 +133,8 @@ async function checkDeposit(vault, asset, qtyWhole, dec) {
   return { arrived: BigInt(balBase || '0') >= need, balance_base: balBase, balance: fromBase(balBase, dec) }
 }
 
-// REDEEM: compose an ACME `send` releasing `qtyWhole` of `asset` from the vault → returns an
-// unsigned tx for the vault to sign (via Emblem) + broadcast. GATED upstream by custody-live.
+// Read-only composer inspection only. This opaque response is NOT authorization
+// for a release; custody's requireReleaseValidation gate always refuses signing.
 // acme.pics wants `quantity` as a JSON NUMBER (u64), not a string (a string 422s with a plain
 // serde error). We guard against JS >2^53 precision loss: base-unit amounts above
 // MAX_SAFE_INTEGER are rejected rather than silently mis-sent. (Realistic redemption amounts
@@ -172,4 +182,5 @@ module.exports = {
   lookupAsset, addressBalanceBase, checkDeposit, composeSend, chainHeight, sentToVault,
   findDeposits, confirmations,
   fromBase, toBase, acmeDecimals,
+  requireReleaseValidation,
 }
