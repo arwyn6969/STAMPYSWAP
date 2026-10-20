@@ -2330,6 +2330,11 @@ app.post('/api/reconcile', async (req, res) => {
         const event = (await dbQuery('SELECT rep_id, delta_base FROM accounting_events WHERE event_key=?', [eventKey]))[0]
         if (!srcRep || expectedDebit >= 0n || !event || String(event.rep_id) !== String(srcRep.id) || event.delta_base !== expectedDebit.toString())
           return { status: 409, body: { reconciled: false, error: 'exact source debit is not established in the immutable event ledger; burn and move remain retained' } }
+        const burn = await burnConsumed(cur.dest_chain, burn_txid)
+        const exactDecimal = value => typeof value === 'string' && /^[0-9]{1,78}(?:\.[0-9]{1,18})?$/.test(value)
+        if (!burn || burn.purpose !== 'move' || burn.chain !== cur.dest_chain || burn.canonical_id !== cur.canonical_id ||
+            !exactDecimal(cur.amount) || !exactDecimal(burn.amount) || toBaseUnits(burn.amount) !== -expectedDebit)
+          return { status: 409, body: { reconciled: false, error: 'retained burn identity does not match the exact source move; reconciliation required' } }
         const target = await rematerialize(srcRep.id)
         const cached = (await dbQuery('SELECT circulating_supply c FROM representations WHERE id=?', [srcRep.id]))[0]
         if (!cached || cached.c !== target) throw new Error('source balance materialization was not verified')

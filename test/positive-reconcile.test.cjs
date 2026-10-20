@@ -120,3 +120,35 @@ test('positive move reconciliation detects an acknowledged no-op cache materiali
   assert.equal(f.circ(), '100')
   assert.equal(f.state.mints.length, 0)
 })
+
+for (const mismatch of ['missing', 'purpose', 'chain', 'asset', 'amount', 'null amount']) {
+  test('positive move reconciliation retains pending when burn tombstone has ' + mismatch + ' evidence', async t => {
+    let failPhase = true
+    const f = await fixture(t, { beforeExec: async sql => {
+      if (failPhase && sql.startsWith("UPDATE collateral_ledger SET status='decremented'")) throw Error('initial phase unavailable')
+    } })
+    assert.equal((await f.call('/api/move', f.move(), op)).code, 500)
+    if (mismatch === 'missing') f.db.prepare('DELETE FROM consumed_burns').run()
+    else {
+      const [field, value] = { purpose: ['purpose', 'redeem'], chain: ['chain', 'ethereum'], asset: ['canonical_id', 2], amount: ['amount', '9'], 'null amount': ['amount', null] }[mismatch]
+      f.db.prepare(`UPDATE consumed_burns SET ${field}=?`).run(value)
+    }
+    failPhase = false
+    assert.equal((await f.call('/api/reconcile', request, op)).code, 409)
+    assert.equal(moveRow(f).status, 'pending')
+    assert.equal(f.state.mints.length, 0)
+  })
+}
+
+test('exact move recovery preserves an accepted leading-zero amount representation', async t => {
+  let failPhase = true
+  const f = await fixture(t, { beforeExec: async sql => {
+    if (failPhase && sql.startsWith("UPDATE collateral_ledger SET status='decremented'")) throw Error('initial phase unavailable')
+  } })
+  assert.equal((await f.call('/api/move', f.move({ amount: '00010' }), op)).code, 500)
+  assert.equal(moveRow(f).amount, '00010')
+  failPhase = false
+  assert.equal((await f.call('/api/reconcile', request, op)).code, 200)
+  assert.equal(moveRow(f).status, 'decremented')
+  assert.equal(f.state.mints.length, 0)
+})

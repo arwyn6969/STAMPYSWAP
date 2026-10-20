@@ -64,6 +64,7 @@ function buildClaimsReport(snapshot) {
   const assets = new Map(), reps = indexed(t.representations, 'id', id), events = indexed(t.accounting_events, 'event_key', value => text(value, 4096))
   const ops = indexed(t.operations, 'op_key', value => text(value, 4096)), ledger = indexed(t.collateral_ledger, 'id', id)
   const consumed = new Map(), repSums = new Map(), matchedOps = new Set(), matchedBurns = new Set()
+  const matchedEvents = new Set(), repIdentities = new Set(), mintOpsByTx = new Map(), mintReceiptLinks = new Set()
   for (const row of t.canonical_assets) {
     if (assets.has(id(row.id))) invalid()
     const asset = { id: row.id, ticker: text(row.exact_ticker), protocol: text(row.source_protocol, 64), decimals: row.decimals,
@@ -98,6 +99,7 @@ function buildClaimsReport(snapshot) {
     if (!event) return null
     const rep = reps.get(event.rep_id)
     if (!rep || rep.canonical_id !== canonicalId || rep.dest_chain !== chain || event.delta !== expectedDelta) invalid()
+    matchedEvents.add(key)
     return event
   }
   for (const asset of assets.values()) {
@@ -105,7 +107,12 @@ function buildClaimsReport(snapshot) {
     if (!['src-20', 'counterparty', 'acme'].includes(asset.protocol)) gap(asset, 'source_protocol_unverified')
     if (asset.registry_source_supply_base == null) gap(asset, 'registry_source_supply_unrecorded')
   }
-  for (const rep of reps.values()) { const asset = assetFor(rep.canonical_id); chainFor(asset, rep.dest_chain); repSums.set(rep.id, 0n) }
+  for (const rep of reps.values()) {
+    const asset = assetFor(rep.canonical_id); chainFor(asset, rep.dest_chain)
+    const identity = JSON.stringify([rep.canonical_id, rep.dest_chain])
+    if (repIdentities.has(identity)) invalid()
+    repIdentities.add(identity); repSums.set(rep.id, 0n)
+  }
   for (const event of events.values()) {
     const rep = reps.get(id(event.rep_id)); if (!rep) invalid()
     event.delta = quantity(event.delta_base, true)
@@ -115,10 +122,16 @@ function buildClaimsReport(snapshot) {
   for (const op of ops.values()) {
     const asset = assetFor(op.canonical_id); chainFor(asset, op.chain)
     op.base = quantity(op.amount); text(op.action, 64); text(op.state, 64)
+    if (op.tx_id != null) text(op.tx_id, 4096)
     if (op.action === 'representation-deploy') { if (op.base !== 0n) invalid(); continue }
     if (op.action !== 'mint') { gap(asset, 'unclassified_operation_action', op.base); continue }
     if (op.base <= 0n) invalid()
     op.event = eventFor('mint:' + op.op_key, op.canonical_id, op.chain, op.base)
+    if (op.tx_id != null) {
+      const identity = JSON.stringify([op.canonical_id, op.chain, op.tx_id])
+      const matches = mintOpsByTx.get(identity) || []
+      matches.push(op); mintOpsByTx.set(identity, matches)
+    }
     if (!['reserved', 'reconcile', 'completed'].includes(op.state)) gap(asset, 'unclassified_mint_state', op.base)
     if (!op.event) {
       add(asset, op.state === 'completed' ? 'completed_issuance_missing_event_base' : 'issuance_reserved_without_event_base', op.base, op.chain)
@@ -203,11 +216,44 @@ function buildClaimsReport(snapshot) {
         if (row.status === 'released' || row.status == null) gap(asset, 'released_redeem_missing_exact_accounting_debit', row.base)
       }
       if (row.status === 'pending' || row.status === 'reconcile') add(asset, 'recorded_pending_redeem_base', row.base, row.dest_chain)
-    } else if (row.direction !== 'mint') gap(asset, 'unclassified_collateral_ledger_direction', row.base)
+    } else if (row.direction === 'mint') {
+      if (!row.dest_chain) { gap(asset, 'mint_receipt_destination_chain_unrecorded', row.base); continue }
+      chainFor(asset, row.dest_chain)
+      if (!row.dest_tx) { gap(asset, 'mint_receipt_accounting_or_legacy_overlap_unverified', row.base); continue }
+      const identity = JSON.stringify([row.canonical_id, row.dest_chain, row.dest_tx])
+      const candidates = mintOpsByTx.get(identity) || []
+      // A receipt is evidence of possible issuance, not a second additive claim.
+      // Require one exact operation/event, or the legacy direct transaction event.
+      // Baseline overlap is deliberately not inferred from matching aggregate sums.
+      const direct = eventFor('mint:tx:' + row.dest_tx, row.canonical_id, row.dest_chain, row.base)
+      if (candidates.length > 1) { gap(asset, 'mint_receipt_operation_link_ambiguous', row.base); continue }
+      const candidate = candidates[0]
+      if (candidate && candidate.base !== row.base) invalid()
+      if (direct && candidate && candidate.event && direct !== candidate.event) invalid()
+      const exactEvent = candidate ? candidate.event : direct
+      if (!exactEvent || row.status !== 'minted') {
+        gap(asset, 'mint_receipt_accounting_or_legacy_overlap_unverified', row.base)
+        continue
+      }
+      const link = candidate ? 'operation:' + candidate.op_key : 'event:' + exactEvent.event_key
+      if (mintReceiptLinks.has(link)) invalid()
+      mintReceiptLinks.add(link)
+    } else gap(asset, 'unclassified_collateral_ledger_direction', row.base)
   }
   for (const op of ops.values()) if (op.action === 'mint' && /^(deposit-mint:|move-mint:)/.test(op.op_key) && !matchedOps.has(op.op_key))
     gap(assetFor(op.canonical_id), 'mint_operation_has_no_exact_origin_claim_link', op.base)
   for (const [key, burn] of consumed) if (!matchedBurns.has(key)) gap(assetFor(burn.canonical_id), 'orphan_or_unclassified_consumed_burn', burn.base)
+  // Forward row -> event checks alone miss a recorded debit after its origin row
+  // disappears, or a materialized mint with no surviving operation/receipt link.
+  // Keep those exact amounts visible as overlapping origin-evidence findings;
+  // they are not a newly proved customer-claims total. Historical baselines remain
+  // circulation evidence without inventing a corresponding customer receipt.
+  for (const event of events.values()) {
+    const validBaseline = event.event_key === `baseline:${event.rep_id}` && event.delta >= 0n
+    if (matchedEvents.has(event.event_key) || validBaseline) continue
+    const asset = assetFor(reps.get(event.rep_id).canonical_id)
+    gap(asset, event.delta < 0n ? 'accounting_debit_origin_unmatched' : 'accounting_credit_origin_unmatched', event.delta < 0n ? -event.delta : event.delta)
+  }
   const bridges = indexed(t.bridge_ops, 'id', id)
   const bridgeClaims = []
   for (const row of bridges.values()) {
