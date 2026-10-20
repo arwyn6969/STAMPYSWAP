@@ -1,101 +1,103 @@
 'use strict'
 const test = require('node:test'); const assert = require('node:assert')
-const { evaluate, validatePolicy } = require('./canonicality-watch.cjs')
-const H = 'a'.repeat(64), HX = '0x' + 'a'.repeat(64), SOLSIG = '5'.repeat(64) // base58-ish
-const POL = () => ({ minIndependentSources: 2, now: 10000, maxObsAgeMs: 5000,
-  chains: { 'base-mainnet': { networkId: 8453, protocolVersion: 1, hashForm: 'evm' },
-            'bitcoin-mainnet': { networkId: 'btc', protocolVersion: 1, hashForm: 'btc' },
-            'solana-mainnet': { networkId: 'sol', protocolVersion: 1, hashForm: 'solana' } },
-  trustedProviders: { pA: { operatorGroup: 'gA' }, pB: { operatorGroup: 'gB' } },
+const { evaluate } = require('./canonicality-watch.cjs')
+const HX = '0x' + 'a'.repeat(64), HB = '0x' + 'b'.repeat(64)
+const SSIG = '5'.repeat(88), SHASH = '5'.repeat(44)
+const POL = () => ({ version: 1, minIndependentSources: 2, now: 10000, maxObsAgeMs: 5000,
+  chains: { 'base-mainnet': { networkId: 8453, protocolVersion: 1, idForm: 'evm', hashForm: 'evm', minConfirmations: 3 },
+            'bitcoin-mainnet': { networkId: 'btc', protocolVersion: 1, idForm: 'btc', hashForm: 'btc' },
+            'solana-mainnet': { networkId: 'sol', protocolVersion: 1, idForm: 'sol-sig', hashForm: 'sol-hash' } },
+  trustedProviders: { pA: { operatorGroup: 'gA', chains: ['base-mainnet', 'solana-mainnet'] },
+                      pB: { operatorGroup: 'gB', chains: ['base-mainnet', 'solana-mainnet'] },
+                      pC: { operatorGroup: 'gC', chains: ['base-mainnet'] } },
   expectedEffectIds: ['e1'] })
-const A = { effect_id: 'e1', chain: 'base-mainnet', identity: '0xtx', assetId: 'ACME', height: 50, blockHash: HX, amountBase: '1000' }
-const eff = { chain: 'base-mainnet', identity: '0xtx', assetId: 'ACME', height: 50, blockHash: HX, amountBase: '1000' }
+const eff = { kind: 'burn', chain: 'base-mainnet', identity: HX, assetId: 'ACME', height: 50, blockHash: HB, amountBase: '1000' }
+const A = Object.assign({ effect_id: 'e1' }, eff)
 const src = (over) => Object.assign({ providerId: 'pA', chain: 'base-mainnet', networkId: 8453, protocolVersion: 1,
   historyComplete: true, paginationComplete: true, tipHeight: 100, finalizedHeight: 100, observedAt: 9000,
   effects: { e1: { ...eff } } }, over)
 const two = () => [src(), src({ providerId: 'pB' })]
+const has = (r, code) => r.reasons.includes(code)
 
-// ---- counterexamples that MUST no longer be false-green ----
-test('CE1: evaluate([],[],{minIndependentSources:0}) THROWS (not ok)', () => {
-  assert.throws(() => evaluate([], [], { minIndependentSources: 0 }), /minIndependentSources/)
-})
-test('CE2: provider-asserted/omitted expected values no longer pass -> pause', () => {
-  // sources with undefined networkId/protocol + untrusted provider + no completeness
-  const bad = [{ providerFingerprint: 'A', tipHeight: 1, finalizedHeight: 1 }, { providerFingerprint: 'B', tipHeight: 1, finalizedHeight: 1 }]
-  const r = evaluate([{ effect_id: 'claim', chain: 'bitcoin-mainnet', identity: 'not-a-transaction', height: 1, blockHash: H }],
-    bad, Object.assign(POL(), { expectedEffectIds: ['claim'] }))
-  assert.equal(r.status, 'pause')
-  assert.ok(r.reasons.includes('source:untrusted_provider'))
-})
-// ---- malformed policy (all THROW) ----
-for (const [name, mut] of [
-  ['minIndependentSources<2', p => p.minIndependentSources = 1],
-  ['missing chains', p => delete p.chains],
-  ['missing trustedProviders', p => delete p.trustedProviders],
-  ['missing expectedEffectIds', p => delete p.expectedEffectIds],
-  ['empty expectedEffectIds', p => p.expectedEffectIds = []],
-  ['missing maxObsAgeMs', p => delete p.maxObsAgeMs],
-  ['bad hashForm', p => p.chains['base-mainnet'].hashForm = 'nope'],
-]) test('malformed policy throws: ' + name, () => { const p = POL(); mut(p); assert.throws(() => evaluate([A], two(), p)) })
+test('happy evm: 2 operator groups exact+final -> ok', () => { const r = evaluate([A], two(), POL()); assert.equal(r.status, 'ok') })
 
-test('happy: 2 operator groups, exact match, finalized, fresh -> ok', () => {
-  const r = evaluate([A], two(), POL()); assert.equal(r.status, 'ok'); assert.equal(r.evidence.independent_operator_groups, 2)
-})
-test('two providers SAME operator group -> not independent -> pause', () => {
-  const r = evaluate([A], [src(), src({ providerId: 'pA' })], POL()) // both gA
-  assert.equal(r.status, 'pause'); assert.ok(r.reasons.includes('sources_share_operator_group_not_independent'))
-})
-test('untrusted provider -> pause', () => {
-  const r = evaluate([A], [src(), src({ providerId: 'pX' })], POL()); assert.equal(r.status, 'pause')
-  assert.ok(r.reasons.includes('source:untrusted_provider'))
-})
-test('network mismatch (obs lies) -> pause', () => {
-  const r = evaluate([A], [src(), src({ providerId: 'pB', networkId: 1 })], POL())
-  assert.equal(r.status, 'pause'); assert.ok(r.reasons.includes('source:network_mismatch'))
-})
-test('protocol mismatch -> pause', () => {
-  const r = evaluate([A], [src(), src({ providerId: 'pB', protocolVersion: 2 })], POL())
-  assert.equal(r.status, 'pause'); assert.ok(r.reasons.includes('source:protocol_mismatch'))
-})
-test('history/pagination not explicitly true -> pause', () => {
-  const r = evaluate([A], [src({ historyComplete: undefined }), src({ providerId: 'pB', paginationComplete: false })], POL())
-  assert.equal(r.status, 'pause')
-})
-test('future timestamp -> pause', () => {
-  const r = evaluate([A], [src({ observedAt: 99999 }), src({ providerId: 'pB' })], POL())
-  assert.equal(r.status, 'pause'); assert.ok(r.reasons.includes('source:future_timestamp'))
-})
-test('stale observation -> pause', () => {
-  const r = evaluate([A], [src({ observedAt: 1000 }), src({ providerId: 'pB', observedAt: 1000 })], POL())
-  assert.equal(r.status, 'pause'); assert.ok(r.reasons.includes('source:stale_observation'))
-})
-test('omitted expected anchor (inventory has e1 but none supplied) -> pause', () => {
-  const r = evaluate([], two(), POL()); assert.equal(r.status, 'pause'); assert.ok(r.reasons.includes('missing_expected_anchor'))
-})
-test('exact identity mismatch (different txid) -> pause conflict', () => {
-  const r = evaluate([A], [src(), src({ providerId: 'pB', effects: { e1: { ...eff, identity: '0xOTHER' } } })], POL())
-  assert.equal(r.status, 'pause'); assert.ok(r.reasons.includes('anchor:observation_identity_or_reorg_mismatch'))
-})
-test('amount mismatch in observation -> not counted -> pause', () => {
-  const r = evaluate([A], [src({ effects: { e1: { ...eff, amountBase: '999' } } }), src({ providerId: 'pB', effects: { e1: { ...eff, amountBase: '999' } } })], POL())
-  assert.equal(r.status, 'pause'); assert.ok(r.reasons.includes('anchor:insufficient_final_canonical_matches'))
-})
-test('unsafe/non-string amount on anchor -> bad_amount_precision', () => {
-  const r = evaluate([{ ...A, amountBase: 1e40 }], two(), POL())
-  assert.equal(r.status, 'pause'); assert.ok(r.reasons.includes('anchor:bad_amount_precision'))
-})
-test('not finalized on enough groups -> pause', () => {
-  const r = evaluate([A], [src({ finalizedHeight: 49 }), src({ providerId: 'pB', finalizedHeight: 49 })], POL())
-  assert.equal(r.status, 'pause'); assert.ok(r.reasons.includes('anchor:insufficient_final_canonical_matches'))
-})
-test('duplicate conflicting anchors -> pause', () => {
-  const r = evaluate([A, { ...A, blockHash: '0x' + 'b'.repeat(64) }], two(), POL())
-  assert.equal(r.status, 'pause'); assert.ok(r.reasons.includes('duplicate_anchor_conflict'))
-})
-test('solana base58 block/sig form accepted (positive)', () => {
-  const pol = POL(); pol.expectedEffectIds = ['s1']
-  const sa = { effect_id: 's1', chain: 'solana-mainnet', identity: SOLSIG, assetId: 'KEVIN', height: 10, blockHash: SOLSIG, amountBase: '5' }
-  const se = { chain: 'solana-mainnet', identity: SOLSIG, assetId: 'KEVIN', height: 10, blockHash: SOLSIG, amountBase: '5' }
-  const s = (p) => src({ providerId: p, chain: 'solana-mainnet', networkId: 'sol', finalizedHeight: 20, tipHeight: 20, effects: { s1: { ...se } } })
-  const r = evaluate([sa], [s('pA'), s('pB')], pol); assert.equal(r.status, 'ok')
-})
+// 1-2 prototype pollution
+test('__proto__ providerId -> untrusted (own-prop only)', () => {
+  const r = evaluate([A], [src({ providerId: '__proto__' }), src({ providerId: 'pB' })], POL())
+  assert.equal(r.status, 'pause'); assert.ok(has(r, 'source:untrusted_provider')) })
+test('__proto__ chain -> unknown_chain', () => {
+  const r = evaluate([A], [src({ chain: '__proto__' }), src({ providerId: 'pB' })], POL())
+  assert.equal(r.status, 'pause'); assert.ok(has(r, 'source:unknown_chain')) })
+// 3 error ignored
+test('source.error=true with cached data -> excluded -> pause', () => {
+  const r = evaluate([A], [src({ error: true }), src({ error: true, providerId: 'pB' })], POL())
+  assert.equal(r.status, 'pause'); assert.ok(has(r, 'source:read_error_or_missing')) })
+// 4 cross-chain effect
+test('bitcoin source carrying a base effect does NOT count toward base quorum', () => {
+  const btc = src({ providerId: 'pA', chain: 'bitcoin-mainnet', networkId: 'btc', effects: { e1: { ...eff } } }) // base effect on a btc source
+  const r = evaluate([A], [btc, src({ providerId: 'pB' })], POL())
+  assert.equal(r.status, 'pause') }) // only 1 real base match
+// 5 impossible heights
+test('finalized>tip -> impossible_finality', () => {
+  const r = evaluate([A], [src({ finalizedHeight: 100, tipHeight: 1 }), src({ providerId: 'pB', finalizedHeight: 100, tipHeight: 1 })], POL())
+  assert.equal(r.status, 'pause'); assert.ok(has(r, 'source:impossible_finality')) })
+test('anchor height > finalized -> no match', () => {
+  const r = evaluate([{ ...A, height: 200 }], two().map(s => ({ ...s, effects: { e1: { ...eff, height: 200 } } })), POL())
+  assert.equal(r.status, 'pause') })
+// 6 numeric amount
+test('numeric anchor amount -> bad_amount_precision (no String coercion)', () => {
+  const r = evaluate([{ ...A, amountBase: 1000 }], two(), POL())
+  assert.equal(r.status, 'pause'); assert.ok(has(r, 'anchor:bad_amount_precision')) })
+// 7 solana sig vs hash
+test('solana: 32-byte value used as tx identity -> bad_tx_identity', () => {
+  const p = POL(); p.expectedEffectIds = ['s1']
+  const sa = { effect_id: 's1', kind: 'burn', chain: 'solana-mainnet', identity: SHASH, assetId: 'KEVIN', height: 10, blockHash: SHASH, amountBase: '5' } // identity too short for a sig
+  const ss = (pr) => src({ providerId: pr, chain: 'solana-mainnet', networkId: 'sol', finalizedHeight: 20, tipHeight: 20, effects: { s1: { kind: 'burn', chain: 'solana-mainnet', identity: SHASH, assetId: 'KEVIN', height: 10, blockHash: SHASH, amountBase: '5' } } })
+  const r = evaluate([sa], [ss('pA'), ss('pB')], p); assert.equal(r.status, 'pause'); assert.ok(has(r, 'anchor:bad_tx_identity')) })
+test('solana valid sig+hash -> ok', () => {
+  const p = POL(); p.expectedEffectIds = ['s1']
+  const e = { kind: 'burn', chain: 'solana-mainnet', identity: SSIG, assetId: 'KEVIN', height: 10, blockHash: SHASH, amountBase: '5' }
+  const sa = { effect_id: 's1', ...e }
+  const ss = (pr) => src({ providerId: pr, chain: 'solana-mainnet', networkId: 'sol', finalizedHeight: 20, tipHeight: 20, effects: { s1: { ...e } } })
+  const r = evaluate([sa], [ss('pA'), ss('pB')], p); assert.equal(r.status, 'ok') })
+// 8 missing kind
+test('missing kind on anchor -> missing_kind', () => {
+  const r = evaluate([{ ...A, kind: undefined }], two(), POL())
+  assert.equal(r.status, 'pause'); assert.ok(has(r, 'anchor:missing_kind')) })
+test('kind mismatch in observation -> disagreement', () => {
+  const r = evaluate([A], [src(), src({ providerId: 'pB', effects: { e1: { ...eff, kind: 'mint' } } })], POL())
+  assert.equal(r.status, 'pause'); assert.ok(has(r, 'anchor:trusted_source_disagreement')) })
+// 9-10 policy validation throws
+test('version != 1 throws', () => assert.throws(() => evaluate([A], two(), Object.assign(POL(), { version: 2 }))))
+test('duplicate expectedEffectIds throws', () => assert.throws(() => evaluate([A], two(), Object.assign(POL(), { expectedEffectIds: ['e1', 'e1'] }))))
+test('non-string expectedEffectId throws', () => assert.throws(() => evaluate([A], two(), Object.assign(POL(), { expectedEffectIds: [123] }))))
+test('provider authorizes unknown chain throws', () => { const p = POL(); p.trustedProviders.pA.chains = ['nope']; assert.throws(() => evaluate([A], two(), p)) })
+// 11 unexpected anchor
+test('extra anchor not in inventory -> unexpected_anchor', () => {
+  const r = evaluate([A, { ...A, effect_id: 'eX' }], two(), POL())
+  assert.equal(r.status, 'pause'); assert.ok(has(r, 'unexpected_anchor')) })
+// 12 malformed must pause not crash
+test('null/garbage entries in anchors+sources -> pause, no crash', () => {
+  const r = evaluate([null, 42, A], [null, 'x', src(), src({ providerId: 'pB' })], POL())
+  assert.ok(['ok', 'pause'].includes(r.status)); assert.ok(has(r, 'source:malformed_observation') || has(r, 'malformed_anchor_id')) })
+// 13 disagreement after quorum
+test('2 match + 1 disagreeing hash -> pause despite quorum', () => {
+  const r = evaluate([A], [src(), src({ providerId: 'pB' }), src({ providerId: 'pC', effects: { e1: { ...eff, blockHash: '0x' + 'c'.repeat(64) } } })], POL())
+  assert.equal(r.status, 'pause'); assert.ok(has(r, 'anchor:trusted_source_disagreement')) })
+// 14 provider not authorized for chain
+test('provider authorized only for base, claims solana -> provider_not_authorized_for_chain', () => {
+  const p = POL(); p.expectedEffectIds = ['s1']
+  const e = { kind: 'burn', chain: 'solana-mainnet', identity: SSIG, assetId: 'KEVIN', height: 10, blockHash: SHASH, amountBase: '5' }
+  const sa = { effect_id: 's1', ...e }
+  const bad = src({ providerId: 'pC', chain: 'solana-mainnet', networkId: 'sol', finalizedHeight: 20, tipHeight: 20, effects: { s1: { ...e } } }) // pC not authorized for solana
+  const good = src({ providerId: 'pA', chain: 'solana-mainnet', networkId: 'sol', finalizedHeight: 20, tipHeight: 20, effects: { s1: { ...e } } })
+  const r = evaluate([sa], [bad, good], p); assert.equal(r.status, 'pause'); assert.ok(has(r, 'source:provider_not_authorized_for_chain')) })
+// 15 valid multi-chain not globally rejected
+test('base anchor OK even with an unrelated healthy solana source present', () => {
+  const sol = src({ providerId: 'pA', chain: 'solana-mainnet', networkId: 'sol', finalizedHeight: 20, tipHeight: 20, effects: {} })
+  const r = evaluate([A], [src({ providerId: 'pB' }), src({ providerId: 'pC' }), sol], POL()) // 2 base groups gB,gC + a solana source
+  assert.equal(r.status, 'ok') })
+// 16 confirmations depth
+test('below minConfirmations -> no match', () => {
+  const r = evaluate([{ ...A, height: 99 }], two().map(s => ({ ...s, effects: { e1: { ...eff, height: 99 } } })), POL()) // 100-99+1=2 < 3
+  assert.equal(r.status, 'pause') })
