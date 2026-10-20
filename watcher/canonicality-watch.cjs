@@ -1,92 +1,112 @@
 'use strict'
-// Canonicality & reorg checker — PURE decision logic (NOT a live/enforced watchdog; it does no
-// I/O, holds nothing, and never resolves/fences/mints/releases). A separate integrator would feed
-// it real observations and act on the signal. Fail-closed: a missing/errored/malformed read is
-// NEVER treated as zero or cached success. Source LABELS do not prove independence — agreement is
-// counted per distinct providerFingerprint, not per sourceId.
-const MAX_HEIGHT_KEYS = 100000 // oversized-observation guard
-function isHash(h) { return typeof h === 'string' && /^(0x)?[0-9a-f]{64}$/i.test(h) }
-function isBaseInt(s) { return typeof s === 'string' && /^\d{1,40}$/.test(s) } // exact base-unit integer
-function structOk(s) {
-  if (!s || typeof s !== 'object') return false
-  if (s.blockHashByHeight != null) {
-    if (typeof s.blockHashByHeight !== 'object' || Array.isArray(s.blockHashByHeight)) return false
-    const keys = Object.keys(s.blockHashByHeight)
-    if (keys.length > MAX_HEIGHT_KEYS) return false
-    for (const k of keys) { if (!/^\d{1,12}$/.test(k) || !isHash(s.blockHashByHeight[k])) return false }
-  }
-  return true
+// Canonicality & reorg CHECKER — PURE detection-only decision logic (NOT a live/enforced watchdog;
+// no I/O, holds nothing, never resolves/fences/mints/releases). All EXPECTED values live in POLICY
+// (trusted), never in observations (a provider must not assert its own network/protocol/operator).
+// Fail-closed: malformed policy THROWS (non-bypassable); an empty/omitted expected inventory can
+// NEVER read as healthy; a missing/errored/ambiguous read is never zero/success. provider→operator
+// mapping is a CONFIG ATTESTATION in policy, not proof of real independence.
+function isInt(n) { return Number.isSafeInteger(n) }
+function isBaseInt(s) { return typeof s === 'string' && /^\d{1,40}$/.test(s) }   // exact base-unit integer, string only
+function hashOk(form, v) {
+  if (typeof v !== 'string') return false
+  if (form === 'evm') return /^0x[0-9a-f]{64}$/i.test(v)
+  if (form === 'btc') return /^[0-9a-f]{64}$/i.test(v)
+  if (form === 'solana') return /^[1-9A-HJ-NP-Za-km-z]{32,88}$/.test(v) // base58 (pubkey/sig/blockhash)
+  return false
 }
-function sourceHealth(s, policy) {
+function validatePolicy(p) {
+  if (!p || typeof p !== 'object') throw new TypeError('policy required')
+  if (!isInt(p.minIndependentSources) || p.minIndependentSources < 2) throw new TypeError('policy.minIndependentSources must be an integer >= 2')
+  if (!isInt(p.now) || p.now < 0) throw new TypeError('policy.now (ms) must be a non-negative integer')
+  if (!isInt(p.maxObsAgeMs) || p.maxObsAgeMs <= 0) throw new TypeError('policy.maxObsAgeMs must be a positive integer')
+  if (!p.chains || typeof p.chains !== 'object' || !Object.keys(p.chains).length) throw new TypeError('policy.chains must be a non-empty map')
+  for (const [c, cfg] of Object.entries(p.chains)) {
+    if (!cfg || typeof cfg !== 'object') throw new TypeError('policy.chains.' + c + ' invalid')
+    if (cfg.networkId == null) throw new TypeError('policy.chains.' + c + '.networkId required')
+    if (cfg.protocolVersion == null) throw new TypeError('policy.chains.' + c + '.protocolVersion required')
+    if (!['evm', 'btc', 'solana'].includes(cfg.hashForm)) throw new TypeError('policy.chains.' + c + '.hashForm must be evm|btc|solana')
+  }
+  if (!p.trustedProviders || typeof p.trustedProviders !== 'object' || !Object.keys(p.trustedProviders).length) throw new TypeError('policy.trustedProviders must be a non-empty map')
+  for (const [id, cfg] of Object.entries(p.trustedProviders)) {
+    if (!cfg || typeof cfg !== 'object' || !cfg.operatorGroup || typeof cfg.operatorGroup !== 'string') throw new TypeError('policy.trustedProviders.' + id + '.operatorGroup required')
+  }
+  if (!Array.isArray(p.expectedEffectIds) || !p.expectedEffectIds.length) throw new TypeError('policy.expectedEffectIds must be a non-empty inventory (empty/omitted cannot mean healthy)')
+}
+function sourceHealth(s, P) {
   const r = []
-  if (!structOk(s)) return { healthy: false, reasons: ['malformed_or_oversized_observation'], fp: null }
-  if (s.error) r.push('read_error_or_missing')
-  if (s.networkId !== s.expectedNetworkId) r.push('network_mismatch')
-  if (s.historyPresent === false) r.push('missing_history')
-  if (s.paginationComplete === false) r.push('incomplete_pagination')
-  if (s.protocolVersion !== s.supportedProtocolVersion) r.push('unknown_protocol_version')
-  if (!Number.isSafeInteger(s.tipHeight)) r.push('no_tip')
-  else if (policy.referenceTip != null && (policy.referenceTip - s.tipHeight) > (policy.maxTipLag || 0)) r.push('stale_tip')
-  if (policy.now != null && policy.maxObsAgeMs != null) {
-    if (!Number.isSafeInteger(s.observedAt) || (policy.now - s.observedAt) > policy.maxObsAgeMs) r.push('stale_observation')
-  }
-  // fingerprint = what actually distinguishes a provider (endpoint+operator), NOT the label/sourceId
-  const fp = s.providerFingerprint || null
-  if (!fp) r.push('no_provider_fingerprint')
-  return { healthy: r.length === 0, reasons: r, fp }
+  if (!s || typeof s !== 'object') return { healthy: false, reasons: ['malformed_observation'], group: null }
+  const prov = (typeof s.providerId === 'string') ? P.trustedProviders[s.providerId] : undefined
+  if (!prov) r.push('untrusted_provider')                               // provider must be pinned IN POLICY
+  const cfg = (typeof s.chain === 'string') ? P.chains[s.chain] : undefined
+  if (!cfg) r.push('unknown_chain')
+  if (cfg && s.networkId !== cfg.networkId) r.push('network_mismatch')   // expected comes from POLICY
+  if (cfg && s.protocolVersion !== cfg.protocolVersion) r.push('protocol_mismatch')
+  if (s.historyComplete !== true) r.push('history_incomplete')           // explicit POSITIVE completeness
+  if (s.paginationComplete !== true) r.push('pagination_incomplete')
+  if (!isInt(s.tipHeight)) r.push('no_tip')
+  if (!isInt(s.finalizedHeight)) r.push('no_finalized_height')
+  if (!isInt(s.observedAt)) r.push('no_timestamp')
+  else if (s.observedAt > P.now) r.push('future_timestamp')
+  else if ((P.now - s.observedAt) > P.maxObsAgeMs) r.push('stale_observation')
+  return { healthy: r.length === 0, reasons: r, group: prov ? prov.operatorGroup : null }
 }
-function dedupeAnchors(anchors, reasons) {
-  const byId = new Map()
-  for (const a of anchors) {
-    const k = a && a.effect_id
-    if (k == null) { reasons.add('anchor:missing_effect_id'); continue }
-    const sig = JSON.stringify([a.chain, a.height, a.blockHash, a.amountBase, a.identity])
-    if (!byId.has(k)) byId.set(k, { a, sig })
-    else if (byId.get(k).sig !== sig) reasons.add('duplicate_anchor_conflict') // same id, different content
-  }
-  return [...byId.values()].map(v => v.a)
+function effectMatches(e, a, cfg) {
+  return e && typeof e === 'object'
+    && e.chain === a.chain && e.identity === a.identity && e.assetId === a.assetId
+    && isInt(e.height) && e.height === a.height
+    && hashOk(cfg.hashForm, e.blockHash) && e.blockHash.toLowerCase() === a.blockHash.toLowerCase()
+    && isBaseInt(String(e.amountBase)) && BigInt(String(e.amountBase)) === BigInt(String(a.amountBase))
 }
 function evaluate(anchors, sources, policy) {
-  const P = Object.assign({ minIndependentSources: 2, maxTipLag: 0 }, policy || {})
-  const reasons = new Set(); const perAnchor = []; const sourceEvidence = []
-  // 1) source health + independence (by fingerprint, not label)
-  const healthyByFp = new Map()
+  validatePolicy(policy)                   // THROWS on malformed policy — non-bypassable
+  const P = policy, reasons = new Set(), perAnchor = [], sourceEvidence = []
+  // 1) healthy sources, independence BY OPERATOR GROUP (from policy; a config attestation, not proof)
+  const groups = new Map()
   for (const s of (sources || [])) {
     const h = sourceHealth(s, P)
-    sourceEvidence.push({ sourceId: s && s.sourceId, fp: h.fp, healthy: h.healthy, reasons: h.reasons })
+    sourceEvidence.push({ providerId: s && s.providerId, group: h.group, healthy: h.healthy, reasons: h.reasons })
     if (!h.healthy) { h.reasons.forEach(x => reasons.add('source:' + x)); continue }
-    if (healthyByFp.has(h.fp)) reasons.add('sources_not_independent_labels_insufficient') // two labels, one provider
-    else healthyByFp.set(h.fp, s) // count a fingerprint ONCE
+    if (groups.has(h.group)) reasons.add('sources_share_operator_group_not_independent')
+    else groups.set(h.group, s)
   }
-  const independent = [...healthyByFp.values()]
+  const independent = [...groups.values()]
   if (independent.length < P.minIndependentSources) reasons.add('insufficient_independent_sources')
-  // 2) per-anchor canonicality (dedupe anchors first)
-  for (const a of dedupeAnchors(anchors || [], reasons)) {
-    const why = []
-    if (!a.chain || typeof a.chain !== 'string') why.push('missing_chain')
+  // 2) dedupe anchors + detect conflicts
+  const byId = new Map()
+  for (const a of (anchors || [])) {
+    if (!a || a.effect_id == null) { reasons.add('anchor_missing_effect_id'); continue }
+    const sig = JSON.stringify([a.chain, a.identity, a.assetId, a.height, a.blockHash, a.amountBase])
+    if (byId.has(a.effect_id) && byId.get(a.effect_id).sig !== sig) reasons.add('duplicate_anchor_conflict')
+    else byId.set(a.effect_id, { a, sig })
+  }
+  // 3) EVERY expected effect in the inventory must be present + canonically matched (omitted != healthy)
+  for (const eid of P.expectedEffectIds) {
+    const entry = byId.get(eid)
+    if (!entry) { reasons.add('missing_expected_anchor'); perAnchor.push({ effect_id: eid, ok: false, why: ['missing_expected_anchor'] }); continue }
+    const a = entry.a, why = []
+    const cfg = (typeof a.chain === 'string') ? P.chains[a.chain] : undefined
+    if (!cfg) why.push('anchor_unknown_chain')
     if (!a.identity || typeof a.identity !== 'string') why.push('missing_tx_identity')
-    if (!isHash(a.blockHash) || !Number.isSafeInteger(a.height) || a.height < 0) why.push('bad_anchor')
-    if (a.amountBase != null && !isBaseInt(String(a.amountBase))) why.push('bad_amount_precision')
-    if (why.length) { why.forEach(x => reasons.add('anchor:' + x)); perAnchor.push({ effect_id: a.effect_id, ok: false, why }); continue }
-    let agree = 0, finalAgree = 0, amountAgree = 0, conflict = false
-    for (const s of independent) {
-      const seen = s.blockHashByHeight && Object.prototype.hasOwnProperty.call(s.blockHashByHeight, String(a.height)) ? s.blockHashByHeight[String(a.height)] : undefined
-      if (seen === undefined) continue                              // missing != agreement
-      if (seen.toLowerCase() !== a.blockHash.toLowerCase()) { conflict = true; continue } // same height, different hash = reorg/fork
-      agree++
-      if (Number.isSafeInteger(s.finalizedHeight) && s.finalizedHeight >= a.height) finalAgree++
-      const amt = s.amountByEffect && Object.prototype.hasOwnProperty.call(s.amountByEffect, a.effect_id) ? String(s.amountByEffect[a.effect_id]) : undefined
-      if (amt !== undefined && isBaseInt(amt) && a.amountBase != null && BigInt(amt) === BigInt(String(a.amountBase))) amountAgree++
+    if (!a.assetId || typeof a.assetId !== 'string') why.push('missing_asset_identity')
+    if (!isInt(a.height) || a.height < 0) why.push('bad_height')
+    if (cfg && !hashOk(cfg.hashForm, a.blockHash)) why.push('bad_block_hash_form')
+    if (!isBaseInt(String(a.amountBase))) why.push('bad_amount_precision')
+    if (!why.length) {
+      let match = 0, conflict = false
+      for (const s of independent) {
+        const e = s.effects && Object.prototype.hasOwnProperty.call(s.effects, eid) ? s.effects[eid] : undefined
+        if (e === undefined) continue                                   // missing != match
+        if (!effectMatches(e, a, cfg)) { conflict = true; continue }    // present but different tx/asset/amt/block = conflict
+        if (s.finalizedHeight >= a.height) match++                      // exact + finalized on an independent operator
+      }
+      if (conflict) why.push('observation_identity_or_reorg_mismatch')
+      if (match < P.minIndependentSources) why.push('insufficient_final_canonical_matches')
     }
-    if (conflict) why.push('reorg_or_fork_hash_mismatch')
-    if (agree < P.minIndependentSources) why.push('insufficient_canonical_agreement')
-    if (finalAgree < P.minIndependentSources) why.push('not_final_on_enough_independent_sources')
-    if (a.amountBase != null && amountAgree < P.minIndependentSources) why.push('amount_unconfirmed')
     const ok = why.length === 0
     if (!ok) why.forEach(x => reasons.add('anchor:' + x))
-    perAnchor.push({ effect_id: a.effect_id, ok, why })
+    perAnchor.push({ effect_id: eid, ok, why })
   }
   return { status: reasons.size === 0 ? 'ok' : 'pause', reasons: [...reasons],
-    evidence: { independent_sources: independent.length, sources: sourceEvidence, anchors: perAnchor } }
+    evidence: { independent_operator_groups: independent.length, required: P.minIndependentSources, sources: sourceEvidence, anchors: perAnchor } }
 }
-module.exports = { evaluate, sourceHealth }
+module.exports = { evaluate, sourceHealth, validatePolicy, hashOk }
