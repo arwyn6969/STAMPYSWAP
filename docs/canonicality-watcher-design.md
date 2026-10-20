@@ -1,4 +1,4 @@
-# Canonicality & reorg CHECKER — DESIGN v4 (pure detection-only; NOT a live enforced watchdog)
+# Canonicality & reorg CHECKER — DESIGN v5 (current) (pure detection-only; NOT a live enforced watchdog)
 Owner: review agent. Isolated branch codex/2026-10-20-canonicality-watcher. Disjoint from server.js/accounting/custody/CP-ACME/fencing. Emits {status,reasons,evidence}; no I/O; never resolves/fences/mints/releases. Only policy THROWS; all data conditions PAUSE. Operator-group independence is a config attestation, not proof.
 
 ## v4 closes the 6 v3 false-greens (Codex)
@@ -29,3 +29,8 @@ Pure logic. Provider/operator-group mappings and the manifest are trusted config
 - observedAt must be a NON-NEGATIVE integer (negative no longer passes freshness).
 - Entry discipline: POLICY validation throws (outside any catch); OBSERVATION/ANCHOR validation exceptions are converted to FIXED pause reasons (source:<code>/anchor:<code>) — Object.create(validRecord) and throwing getters pause, never crash evaluate.
 32/32 adversarial tests (all prior v1–v4 regressions + nested/unknown/oversized bounds + negative timestamp + inherited-field + throwing-getter + policy-throws-despite-bad-observations).
+
+## v5.1 — policy-contract hardening (manifest + map keys)
+- validatePolicy now returns a SANITIZED null-proto policy snapshot that evaluate() uses consistently (no accessor/inherited value re-read at evaluation time).
+- Every chain cfg, provider entry, and expectedAnchors entry is strictRecord()'d (plain own-data, known fields only, no accessor/inherited). chains/providers/expectedAnchors maps must be plain own-data maps with bounded key names (chains key <=64, providers/manifest key <=128). Unknown manifest fields, Object.create(validEntry) entries, oversized unused keys, and accessor entries are all rejected (THROW — it's policy). Valid null-proto policy maps are accepted.
+39/39 adversarial tests.

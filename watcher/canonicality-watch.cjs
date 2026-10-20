@@ -1,5 +1,5 @@
 'use strict'
-// Canonicality & reorg CHECKER v4 — PURE detection-only (NOT a live watchdog). Fixes v3 defects:
+// Canonicality & reorg CHECKER v5 — PURE detection-only (NOT a live watchdog). Fixes v3 defects:
 // (1) base58 compared EXACTLY/case-sensitively (hex only is case-normalized); (2) base58 DECODED and
 // required to be exactly 32/64 bytes + canonical; (3) NO JSON.stringify of untrusted input (bigint/
 // cyclic can't crash) — malformed inputs PAUSE with fixed reasons; (4) ALL trusted same-chain
@@ -83,38 +83,58 @@ const isInt0 = n => Number.isSafeInteger(n) && n >= 0
 const isStr = (x, max = 256) => typeof x === 'string' && x.length > 0 && x.length <= max
 const isBaseIntStr = x => typeof x === 'string' && /^\d{1,40}$/.test(x)
 const isScalar = x => (typeof x === 'string' && x.length >= 1 && x.length <= 64) || (typeof x === 'number' && Number.isFinite(x))
-function manifestEntryValid(m, P) {
-  if (!m || typeof m !== 'object' || Array.isArray(m)) return false
-  if (!isStr(m.kind, 32) || !own(P.chains, m.chain)) return false
-  const cfg = P.chains[m.chain]
-  return formOk(cfg.idForm, m.identity) && isStr(m.assetId, 128) && isInt0(m.height) && formOk(cfg.hashForm, m.blockHash) && isBaseIntStr(m.amountBase)
+function ownMapKeys(v, where, maxKeyLen) {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new TypeError(where + ' must be a plain object map')
+  const proto = Object.getPrototypeOf(v)
+  if (proto !== Object.prototype && proto !== null) throw new TypeError(where + ' must have a plain prototype')
+  const names = Object.getOwnPropertyNames(v)
+  for (const k of names) {
+    if (typeof k !== 'string' || !k.length || k.length > maxKeyLen) throw new TypeError(where + ' has an out-of-bounds key name')
+    const d = Object.getOwnPropertyDescriptor(v, k)
+    if (!d || typeof d.get === 'function' || typeof d.set === 'function' || !('value' in d)) throw new TypeError(where + ' has an accessor key')
+  }
+  return names
 }
+// Validate + return a SANITIZED null-proto policy snapshot (own-data only). evaluate() uses the
+// snapshot consistently so no accessor/inherited value is ever re-read during evaluation.
 function validatePolicy(p) {
   if (!p || typeof p !== 'object' || Array.isArray(p)) throw new TypeError('policy required')
-  strictRecord(p, POLICY_FIELDS, 'policy') // reject unknown/accessor/non-plain top-level policy fields
+  strictRecord(p, POLICY_FIELDS, 'policy')
   if (p.version !== 1) throw new TypeError('policy.version must be 1')
   if (!Number.isSafeInteger(p.minIndependentSources) || p.minIndependentSources < 2 || p.minIndependentSources > 64) throw new TypeError('minIndependentSources must be int in [2,64]')
   if (!isInt0(p.now)) throw new TypeError('now must be a non-negative integer')
   if (!Number.isSafeInteger(p.maxObsAgeMs) || p.maxObsAgeMs <= 0 || p.maxObsAgeMs > 86400000) throw new TypeError('maxObsAgeMs must be a positive integer <= 86400000')
-  if (!p.chains || typeof p.chains !== 'object' || Array.isArray(p.chains) || !Object.keys(p.chains).length) throw new TypeError('chains must be a non-empty object map')
-  if (Object.keys(p.chains).length > LIMITS.maxChains) throw new TypeError('too many chains')
-  for (const c of Object.keys(p.chains)) {
+  const snap = { version: p.version, minIndependentSources: p.minIndependentSources, now: p.now, maxObsAgeMs: p.maxObsAgeMs,
+    chains: Object.create(null), trustedProviders: Object.create(null), expectedAnchors: Object.create(null) }
+  const chainKeys = ownMapKeys(p.chains, 'chains', 64)
+  if (!chainKeys.length) throw new TypeError('chains must be non-empty')
+  if (chainKeys.length > LIMITS.maxChains) throw new TypeError('too many chains')
+  for (const c of chainKeys) {
     const cfg = strictRecord(p.chains[c], CHAINCFG_FIELDS, 'chaincfg')
     if (!isScalar(cfg.networkId) || !isScalar(cfg.protocolVersion)) throw new TypeError('chains.' + c + ' networkId/protocolVersion must be non-empty scalars')
     if (!own(FORMS, cfg.idForm) || !own(FORMS, cfg.hashForm)) throw new TypeError('chains.' + c + ' needs valid idForm/hashForm')
     if (cfg.minConfirmations != null && !isInt0(cfg.minConfirmations)) throw new TypeError('chains.' + c + '.minConfirmations must be >= 0')
+    snap.chains[c] = cfg
   }
-  if (!p.trustedProviders || typeof p.trustedProviders !== 'object' || Array.isArray(p.trustedProviders) || !Object.keys(p.trustedProviders).length) throw new TypeError('trustedProviders must be a non-empty object map')
-  if (Object.keys(p.trustedProviders).length > LIMITS.maxProviders) throw new TypeError('too many providers')
-  for (const idp of Object.keys(p.trustedProviders)) {
+  const provKeys = ownMapKeys(p.trustedProviders, 'trustedProviders', 128)
+  if (!provKeys.length) throw new TypeError('trustedProviders must be non-empty')
+  if (provKeys.length > LIMITS.maxProviders) throw new TypeError('too many providers')
+  for (const idp of provKeys) {
     const t = strictRecord(p.trustedProviders[idp], PROVIDER_FIELDS, 'provider')
     if (!isStr(t.operatorGroup, 128) || !Array.isArray(t.chains) || !t.chains.length || t.chains.length > LIMITS.maxProviderChains) throw new TypeError('trustedProviders.' + idp + ' invalid')
-    for (const c of t.chains) if (!own(p.chains, c)) throw new TypeError('trustedProviders.' + idp + ' authorizes unknown chain')
+    for (const c of t.chains) { if (!isStr(c, 64) || !own(snap.chains, c)) throw new TypeError('trustedProviders.' + idp + ' authorizes unknown chain') }
+    snap.trustedProviders[idp] = { operatorGroup: t.operatorGroup, chains: t.chains.slice() }
   }
-  if (!p.expectedAnchors || typeof p.expectedAnchors !== 'object' || Array.isArray(p.expectedAnchors)) throw new TypeError('expectedAnchors must be an object manifest')
-  const keys = Object.keys(p.expectedAnchors)
-  if (!keys.length || keys.length > LIMITS.maxExpected) throw new TypeError('expectedAnchors size out of bounds [1,' + LIMITS.maxExpected + ']')
-  for (const k of keys) { if (!isStr(k, 128)) throw new TypeError('expectedAnchors key invalid'); if (!manifestEntryValid(p.expectedAnchors[k], p)) throw new TypeError('expectedAnchors.' + k + ' content invalid') }
+  const manKeys = ownMapKeys(p.expectedAnchors, 'expectedAnchors', 128)
+  if (!manKeys.length || manKeys.length > LIMITS.maxExpected) throw new TypeError('expectedAnchors size out of bounds [1,' + LIMITS.maxExpected + ']')
+  for (const k of manKeys) {
+    const m = strictRecord(p.expectedAnchors[k], EFFECT_FIELDS, 'manifest')
+    if (!isStr(m.kind, 32) || !isStr(m.chain, 64) || !own(snap.chains, m.chain)) throw new TypeError('expectedAnchors.' + k + ' content invalid')
+    const cfg = snap.chains[m.chain]
+    if (!formOk(cfg.idForm, m.identity) || !isStr(m.assetId, 128) || !isInt0(m.height) || !formOk(cfg.hashForm, m.blockHash) || !isBaseIntStr(m.amountBase)) throw new TypeError('expectedAnchors.' + k + ' content invalid')
+    snap.expectedAnchors[k] = { kind: m.kind, chain: m.chain, identity: m.identity, assetId: m.assetId, height: m.height, blockHash: m.blockHash, amountBase: m.amountBase }
+  }
+  return snap
 }
 function sourceHealth(s, P) {
   const r = []
@@ -160,8 +180,7 @@ function effectMatches(e, m, cfg, s) {
   return true
 }
 function evaluate(anchors, sources, policy) {
-  validatePolicy(policy)
-  const P = policy, reasons = new Set(), perAnchor = [], sourceEvidence = []
+  const P = validatePolicy(policy), reasons = new Set(), perAnchor = [], sourceEvidence = []
   if (!Array.isArray(anchors)) { reasons.add('anchors_not_array'); anchors = [] }
   if (!Array.isArray(sources)) { reasons.add('sources_not_array'); sources = [] }
   if (anchors.length > LIMITS.maxAnchors) { reasons.add('too_many_anchors'); anchors = anchors.slice(0, LIMITS.maxAnchors) }

@@ -118,3 +118,28 @@ test('v5: throwing getter on providerId -> accessor rejected, evaluate does NOT 
 test('v5: malformed POLICY still throws even with bad observations present', () => {
   assert.throws(() => evaluate([A], [{}, null], Object.assign(POL(), { version: 9 })))
 })
+
+// ===== v5.1: manifest-entry + map-key policy-contract regressions =====
+test('v5.1: manifest entry with unknown 100000-char field -> throws', () => {
+  const p = POL(); p.expectedAnchors.e1 = { ...M, unknown: 'x'.repeat(100000) }
+  assert.throws(() => evaluate([A], [src(), src({ providerId: 'pB' })], p))
+})
+test('v5.1: Object.create(validManifestEntry) -> throws (non-plain prototype)', () => {
+  const p = POL(); p.expectedAnchors.e1 = Object.create({ ...M })
+  assert.throws(() => evaluate([A], [src(), src({ providerId: 'pB' })], p))
+})
+test('v5.1: manifest entry with accessor field -> throws (not invoked)', () => {
+  const p = POL(); const e = { ...M }; let called = false
+  Object.defineProperty(e, 'extra', { enumerable: true, get() { called = true; throw new Error('boom') } })
+  p.expectedAnchors.e1 = e
+  assert.throws(() => evaluate([A], [src(), src({ providerId: 'pB' })], p))
+  assert.equal(called, false)
+})
+test('v5.1: 100000-char chain key -> throws', () => { const p = POL(); p.chains['c'.repeat(100000)] = { networkId: 1, protocolVersion: 1, idForm: 'evm', hashForm: 'evm' }; assert.throws(() => evaluate([A], [src()], p)) })
+test('v5.1: 100000-char provider key -> throws', () => { const p = POL(); p.trustedProviders['p'.repeat(100000)] = { operatorGroup: 'gZ', chains: ['base-mainnet'] }; assert.throws(() => evaluate([A], [src()], p)) })
+test('v5.1: 100000-char manifest key -> throws', () => { const p = POL(); p.expectedAnchors['e'.repeat(100000)] = { ...M }; assert.throws(() => evaluate([A], [src()], p)) })
+test('v5.1: VALID null-proto policy maps -> ok (positive)', () => {
+  const np = o => { const n = Object.create(null); for (const k of Object.keys(o)) n[k] = o[k]; return n }
+  const p = POL(); p.chains = np(p.chains); p.trustedProviders = np(p.trustedProviders); p.expectedAnchors = np(p.expectedAnchors)
+  assert.equal(evaluate([A], [src(), src({ providerId: 'pB' })], p).status, 'ok')
+})
